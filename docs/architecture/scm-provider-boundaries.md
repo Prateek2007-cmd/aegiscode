@@ -36,6 +36,43 @@ with null canonical references. Unresolved discovery permits unrelated edits but
 
 ## Local declarations and runtime capabilities
 
+Review discovery adapters may implement the neutral paged discovery capability in addition to the
+bounded legacy list capability. The existing registry returns the same scoped adapter. Each native
+request reads at most 100 reviews. Scheduled discovery shares a 15-second deadline and a 10,000 raw
+observation bound across selected connection preparation, scoped repository enumeration, native pages
+and revision enrichment. Cancellation interrupts the observation even when an SDK task does not complete
+cooperatively. An expired deadline does not return partial discovery. The configured connection reviewer
+filters native requests; an absent configured reviewer permits all open and draft reviews.
+Adapters validate native continuation evidence and rebuild requests from saved source coordinates.
+Provider next-link URLs are never used as HTTP destinations. Raw page coverage precedes reviewer
+and destination filtering. Overlapping identities are deduplicated, while repeated pages and invalid
+continuations produce incomplete discovery.
+
+Selected scheduled repository enumeration requires terminal coverage. A missing later page or a full
+installation repository page at the traversal bound refuses the configuration observation. Native
+repository names support legacy and mixed filters. Repository-only Azure DevOps grants permit selected
+project enumeration; each discovered repository still requires its matching enabled grant. Stub crawl
+maintenance uses the stub status service, while saved automation retains its authority validation service.
+
+Native connection verification, repository enumeration and query URI construction do not consistently
+retain deployment prefixes. Scheduled discovery uses these native drivers; saved base-path compatibility
+does not establish deployment-prefix support for every native operation.
+
+The shared overview refresh bounds traversal to 15 seconds, 10,000 raw observations and 2 MiB of stored
+source content. A storage or traversal bound does not establish terminal provider coverage. Source
+completion is nullable for older cached payloads without that evidence. Collected counts describe
+eligible observations, not provider totals. Visible metadata has separate completion and timestamps.
+A complete listing with no eligible rows establishes an empty result. Failed or incomplete observations
+do not establish absence. Legacy list capability evaluates at most 10,000 raw observations under the
+provider deadline, selects eligible reviews in descending review-number order before its 100-row
+compatibility bound, and retains unknown source completion. An oversized legacy result reports capacity
+failure using the provider's original observation count.
+
+Scheduled preparation runs between a short initial admission check and a final admission lease.
+Current target identity, lifecycle, revision and selected authority are checked under the final lease
+before queue admission. Automation changes confirm their saved target snapshot under the same lease;
+the API returns that operation snapshot even when a later mutation advances the saved revision.
+
 Native modules register credential-free source, configuration, identity, review-preparation and ingress
 policies through module entry points. Native configuration policies also declare immutable readiness
 profiles. Application aggregates these declarations, including the generic unknown-family result.

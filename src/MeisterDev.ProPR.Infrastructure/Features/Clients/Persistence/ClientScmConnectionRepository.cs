@@ -37,6 +37,14 @@ public sealed class ClientScmConnectionRepository(
 
     private const string SecretPurpose = "ClientScmConnectionSecret";
 
+    public async Task<IReadOnlyList<ClientScmConnectionDto>> GetOperationalSelectionCandidatesAsync(Guid clientId, CancellationToken ct = default)
+    {
+        var records = await this.WithReadDbAsync(
+            db => db.ClientScmConnections.AsNoTracking()
+                .Where(connection => connection.ClientId == clientId).OrderBy(connection => connection.Id).ToListAsync(ct), ct).ConfigureAwait(false);
+        return records.Select(ToDto).ToArray();
+    }
+
     public async Task<IReadOnlyList<ClientScmConnectionDto>> GetByClientIdAsync(
         Guid clientId,
         CancellationToken ct = default)

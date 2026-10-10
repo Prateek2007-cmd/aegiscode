@@ -30,13 +30,89 @@ public sealed class ClientReviewTargetsController(
     ILicensingCapabilityService? licensingCapabilityService = null,
     IScmProviderRegistry? providerRegistry = null,
     IClientScmScopeRepository? scopes = null,
-    IClientPullRequestOverviewService? overview = null) : ControllerBase
+    IClientPullRequestOverviewService? overview = null,
+    IReviewTargetAutomationService? automation = null) : ControllerBase
 {
-    /// <summary>Returns a rich pull request page with shared source freshness and immutable generation navigation.</summary>
+    /// <summary>Conditionally enables or pauses automatic reviews for an owned saved repository target.</summary>
+    /// <param name="clientId">Owning client identifier.</param>
+    /// <param name="targetId">Saved repository target identifier.</param>
+    /// <param name="request">Saved revision, explicit activity and selected connection for enable.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <response code="200">Activity and advanced revision confirmed under the operation's admission lease.</response>
+    /// <response code="400">Activity, revision or enable connection is missing or invalid.</response>
+    /// <response code="403">The caller cannot administer this client or enable authority is unavailable.</response>
+    /// <response code="404">The client does not own this canonical saved target.</response>
+    /// <response code="409">The target changed or automatic review configuration is unavailable.</response>
+    /// <response code="503">The write could not be confirmed.</response>
+    [HttpPatch("{targetId:guid}/automation")]
+    [ProducesResponseType(typeof(ClientReviewTargetResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ChangeAutomation(
+        Guid clientId, Guid targetId, [FromBody] ChangeClientReviewTargetAutomationRequest request, CancellationToken ct = default)
+    {
+        var denied = AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator);
+        if (denied is not null)
+        {
+            return denied;
+        }
+
+        if (request.IsActive is null || !long.TryParse(
+                request.ExpectedRevision, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var revision) || revision < 1 ||
+            request.ExpectedRevision != revision.ToString(System.Globalization.CultureInfo.InvariantCulture) ||
+            request.IsActive.Value && (request.ConnectionId is null || request.ConnectionId == Guid.Empty))
+        {
+            return this.BadRequest(new { error = "Provide the saved revision, automatic review activity and an enable connection." });
+        }
+
+        var unavailable = await this.RequireCapabilityAsync(ct);
+        if (unavailable is not null)
+        {
+            return unavailable;
+        }
+
+        if (automation is null)
+        {
+            return this.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        var result = await automation.ChangeAsync(clientId, targetId, revision, request.IsActive.Value, request.ConnectionId, ct);
+        if (result.Status == ReviewTargetAutomationResult.NotFound)
+        {
+            return this.NotFound();
+        }
+
+        if (result.Status == ReviewTargetAutomationResult.Unavailable)
+        {
+            return this.StatusCode(
+                StatusCodes.Status403Forbidden, new { error = "Automatic review authority is unavailable. Check the connection and repository scopes." });
+        }
+
+        if (result.Status != ReviewTargetAutomationResult.Changed)
+        {
+            return this.Conflict(new { error = "The saved repository changed. Reload saved configuration before retrying." });
+        }
+
+        var current = result.SavedTarget;
+        if (current is null || current.Id != targetId || current.ClientId != clientId || current.IsActive != request.IsActive.Value ||
+            current.ReviewTargetRevision != revision + 1 || request.IsActive.Value && current.ReviewTargetLifecycle != ReviewTargetLifecycle.Enabled ||
+            ToTarget(current) is not { } saved)
+        {
+            return this.Conflict(new { error = "Could not confirm automatic review activity. Reload saved configuration before retrying." });
+        }
+
+        return this.Ok(saved);
+    }
+
+    /// <summary>Returns collected pull requests with explicit upstream coverage, shared source freshness and immutable generation navigation.</summary>
     /// <param name="clientId">Owning client identifier.</param>
     /// <param name="request">Authorized source selections, page bounds and retained generation cursor.</param>
     /// <param name="ct">Caller cancellation token; shared provider work retains its bounded lifetime.</param>
-    /// <response code="200">Pull requests, metadata, source outcomes and refresh availability; bounded capacity refusals return no rows or cursor and a null total.</response>
+    /// <response code="200">Collected pull requests, independent listing and metadata coverage, source counts and refresh availability; bounded capacity refusals return no rows or cursor and a null total.</response>
     /// <response code="400">The page bounds or retained generation are invalid or obsolete.</response>
     /// <response code="403">Current client or source access is unavailable.</response>
     /// <response code="409">The crawl configuration capability is unavailable.</response>
@@ -1045,6 +1121,24 @@ public sealed record ClientReviewTargetResponse(
     IReadOnlyList<string> TargetBranchPatterns,
     string Lifecycle = "enabled",
     string Revision = "1");
+
+/// <summary>Revision-conditional automatic-review activity change.</summary>
+/// <param name="expectedRevision">Current positive canonical saved revision.</param>
+/// <param name="isActive">Required desired activity; false pauses automatic reviews.</param>
+/// <param name="connectionId">Owned eligible connection required only when enabling.</param>
+public sealed class ChangeClientReviewTargetAutomationRequest(string expectedRevision, bool? isActive, Guid? connectionId = null)
+{
+    /// <summary>Current positive canonical saved revision.</summary>
+    [Required, MaxLength(19), RegularExpression("^[1-9][0-9]{0,18}$")]
+    public string ExpectedRevision { get; init; } = expectedRevision;
+
+    /// <summary>Required desired activity; false pauses automatic reviews.</summary>
+    [Required]
+    public bool? IsActive { get; init; } = isActive;
+
+    /// <summary>Owned eligible connection required only when enabling.</summary>
+    public Guid? ConnectionId { get; init; } = connectionId;
+}
 
 /// <summary>A repository reachable through a verified provider connection.</summary>
 public sealed record ClientReviewTargetRepositoryResponse(

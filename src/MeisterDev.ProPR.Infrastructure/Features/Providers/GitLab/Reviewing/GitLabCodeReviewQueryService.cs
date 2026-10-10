@@ -22,9 +22,12 @@ internal sealed class GitLabCodeReviewQueryService(
     public async Task<ReviewDiscoveryItemDto?> GetReviewAsync(
         Guid clientId,
         CodeReviewRef review,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? selected = null)
     {
-        var context = await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct);
+        var context = selected is null
+            ? await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct)
+            : await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, selected, ct);
         using var request = GitLabConnectionVerifier.CreateAuthenticatedRequest(
             GitLabConnectionVerifier.BuildApiUri(
                 review.Repository.Host,
@@ -101,7 +104,8 @@ internal sealed class GitLabCodeReviewQueryService(
         {
             "opened" => CodeReviewState.Open,
             "merged" => CodeReviewState.Merged,
-            _ => CodeReviewState.Closed,
+            "closed" => CodeReviewState.Closed,
+            _ => throw new InvalidOperationException("The provider returned an unknown review state."),
         };
     }
 

@@ -20,6 +20,13 @@ internal sealed class GitLabDiscoveryService(
 {
     public ScmProvider Provider => ScmProvider.GitLab;
 
+    public async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesAsync(
+        ConnectionDiscoveryContext context, string savedScope, string savedProject, CancellationToken ct = default)
+    {
+        var native = await connectionVerifier.VerifyAsync(context, ct).ConfigureAwait(false);
+        return await this.ListRepositoriesCoreAsync(native, new(this.Provider, savedScope), savedProject, ct, requireComplete: true).ConfigureAwait(false);
+    }
+
     public ConnectionDiscoveryCoordinates GetConfigurationCoordinates(ConnectionDiscoveryContext context, ConnectionDiscoveryScope scope, string? projectId) =>
         string.IsNullOrWhiteSpace(projectId) || projectId == scope.ScopeKey
             ? new(null, context.Host.HostBaseUrl, scope.ScopeKey)
@@ -106,7 +113,7 @@ internal sealed class GitLabDiscoveryService(
         => await this.ListRepositoriesCoreAsync(await connectionVerifier.VerifyAsync(clientId, host, ct), host, scopePath, ct).ConfigureAwait(false);
 
     private async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesCoreAsync(
-        GitLabConnectionVerifier.GitLabConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct)
+        GitLabConnectionVerifier.GitLabConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct, bool requireComplete = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scopePath);
         var normalizedScopePath = scopePath.Trim();
@@ -133,7 +140,7 @@ internal sealed class GitLabDiscoveryService(
                 pageSize,
                 "repository",
                 pageCt,
-                filter),
+                filter, requireComplete),
             project => project.Id.ToString(CultureInfo.InvariantCulture),
             $"GitLab's project listing for {normalizedScopePath}",
             ct);
@@ -159,7 +166,7 @@ internal sealed class GitLabDiscoveryService(
         int pageSize,
         string collectionKind,
         CancellationToken ct,
-        string? filter = null)
+        string? filter = null, bool requireComplete = false)
     {
         var pageQuery = string.Create(CultureInfo.InvariantCulture, $"per_page={pageSize}&page={page}");
         var query = string.IsNullOrEmpty(filter) ? pageQuery : $"{pageQuery}&{filter}";
@@ -169,7 +176,7 @@ internal sealed class GitLabDiscoveryService(
             context.Connection.Secret);
         using var response = await httpClientFactory.CreateClient("GitLabProvider").SendAsync(request, ct);
 
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        if (response.StatusCode == HttpStatusCode.NotFound && !requireComplete)
         {
             return new ProviderRestPager.RestPage<T>([], HasMore: false);
         }
@@ -199,7 +206,7 @@ internal sealed class GitLabDiscoveryService(
             host,
             project.Id.ToString(CultureInfo.InvariantCulture),
             ownerOrNamespace,
-            projectPath);
+            projectPath, projectPath.Split('/').Last());
     }
 
     private sealed record GitLabGroupResponse(

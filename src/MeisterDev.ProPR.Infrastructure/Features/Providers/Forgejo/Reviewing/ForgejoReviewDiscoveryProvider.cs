@@ -15,7 +15,7 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.Reviewing;
 
 internal sealed class ForgejoReviewDiscoveryProvider(
     ForgejoConnectionVerifier connectionVerifier,
-    IHttpClientFactory httpClientFactory) : IReviewDiscoveryProvider
+    IHttpClientFactory httpClientFactory) : IReviewDiscoveryPageProvider
 {
     public ScmProvider Provider => ScmProvider.Forgejo;
 
@@ -26,6 +26,18 @@ internal sealed class ForgejoReviewDiscoveryProvider(
         CancellationToken ct = default,
         ReviewDiscoveryContext? context = null)
     {
+        return (await this.ListOpenReviewsPageAsync(clientId, repository, reviewer, ct: ct, context: context)).Items;
+    }
+
+    public async Task<ReviewDiscoveryPageDto> ListOpenReviewsPageAsync(
+        Guid clientId,
+        RepositoryRef repository,
+        ReviewerIdentity? reviewer,
+        string? continuation = null,
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? context = null)
+    {
+        var page = ReviewDiscoveryPaging.PageNumber(continuation);
         var authentication = context is null
             ? await connectionVerifier.VerifyAsync(clientId, repository.Host, ct).ConfigureAwait(false)
             : await connectionVerifier.VerifyAsync(clientId, repository.Host, context, ct).ConfigureAwait(false);
@@ -33,9 +45,9 @@ internal sealed class ForgejoReviewDiscoveryProvider(
             ForgejoConnectionVerifier.BuildApiUri(
                 repository.Host,
                 $"/repos/{ForgejoCodeReviewQueryService.BuildRepositoryPath(repository)}/pulls",
-                "state=open&limit=100"),
+                "state=open&limit=100" + (page == 1 ? "" : $"&page={page}")),
             authentication.Connection.Secret);
-        using var response = await httpClientFactory.CreateClient("ForgejoProvider").SendAsync(request, ct);
+        using var response = await httpClientFactory.CreateClient("ForgejoProvider").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.Support.ForgejoReadFailures.ThrowIfDeniedOrThrottled(response);
         if (!response.IsSuccessStatusCode)
@@ -43,15 +55,21 @@ internal sealed class ForgejoReviewDiscoveryProvider(
             throw new InvalidOperationException($"Forgejo review discovery failed with status {(int)response.StatusCode}.");
         }
 
-        var payload = await response.Content
-                          .ReadFromJsonAsync<IReadOnlyList<ForgejoCodeReviewQueryService.ForgejoPullRequestResponse>>(ct)
-                      ?? [];
+        var payload = await ReviewDiscoveryPaging.ReadAsync<ForgejoCodeReviewQueryService.ForgejoPullRequestResponse>(response, ct).ConfigureAwait(false);
+        var total = ReviewDiscoveryPaging.Total(response, "X-Total-Count");
+        var next = ReviewDiscoveryPaging.Next(response, request.RequestUri!, page, payload.Count, total: total, continuation: continuation);
+        var ids = payload.Select(item => item.Id.ToString(CultureInfo.InvariantCulture)).ToArray();
+        if (ids.Any(id => !long.TryParse(id, out var value) || value <= 0))
+        {
+            throw new InvalidOperationException("The provider returned an invalid discovery identity.");
+        }
 
-        return payload
+        var items = payload
             .Where(item => reviewer is null || ContainsRequestedReviewer(item, reviewer))
             .Select(item => ToDiscoveryItem(repository, item, reviewer))
             .ToList()
             .AsReadOnly();
+        return new(items, next, payload.Count, ids) { TotalCount = total };
     }
 
     private static bool ContainsRequestedReviewer(

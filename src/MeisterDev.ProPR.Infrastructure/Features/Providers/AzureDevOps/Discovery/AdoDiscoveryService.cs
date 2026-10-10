@@ -12,6 +12,8 @@ using Microsoft.TeamFoundation.Wiki.WebApi;
 using Microsoft.VisualStudio.Services.WebApi;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.Security;
 using MeisterDev.ProPR.ProCursor.Contracts.Sources;
+using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.Support;
 
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.Discovery;
@@ -27,6 +29,39 @@ public class AdoDiscoveryService(
     private const string AzureDevOpsProvider = "azureDevOps";
 
     public ScmProvider Provider => ScmProvider.AzureDevOps;
+
+    internal async Task<IReadOnlyList<RepositoryRef>> ListScheduledProjectRepositoriesAsync(
+        Guid clientId, Guid connectionId, string savedOrganization, string savedProject, CancellationToken ct)
+    {
+        var selected = await connectionRepository.GetOperationalConnectionByIdAsync(clientId, connectionId, ct).ConfigureAwait(false);
+        if (selected is null || selected.Id != connectionId || selected.ClientId != clientId || !selected.IsActive ||
+            selected.ProviderFamily != this.Provider ||
+            !new AdoReviewSourcePolicy().IsSelectedScopeCompatible(selected.HostBaseUrl, savedOrganization))
+        {
+            throw new InvalidOperationException("The selected connection is not available for the saved organization.");
+        }
+
+        var credentials = AdoProviderAdapterHelpers.ToAdoCredentials(selected);
+        AdoProviderAdapterHelpers.EnsureRuntimeCredentialsAvailable(savedOrganization, credentials);
+        var connection = await connectionFactory.GetOverviewConnectionAsync(savedOrganization, credentials!, ct).ConfigureAwait(false);
+        var projects = await this.GetProjectsAsync(connection, ct).ConfigureAwait(false);
+        var matches = projects.Where(project => string.Equals(project.Id.ToString(), savedProject, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length == 0)
+        {
+            matches = projects.Where(project => string.Equals(project.Name, savedProject, StringComparison.OrdinalIgnoreCase)).ToArray();
+        }
+
+        if (matches.Length != 1)
+        {
+            throw new InvalidOperationException("The saved project does not resolve to one project.");
+        }
+
+        var project = matches[0];
+        var repositories = await this.GetRepositoriesAsync(connection, project.Id.ToString(), ct).ConfigureAwait(false);
+        return repositories.Select(repository => new RepositoryRef(
+            new(this.Provider, savedOrganization), repository.Id.ToString(),
+            project.Id.ToString(), project.Id.ToString(), repository.Name, project.Name)).ToArray();
+    }
 
     public Task<GuidedSourceSelection> ResolveGuidedSourceAsync(
         Guid clientId, Guid scopeId, string projectId, ProCursorSourceKind sourceKind,

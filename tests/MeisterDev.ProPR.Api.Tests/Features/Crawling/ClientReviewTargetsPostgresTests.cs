@@ -37,6 +37,41 @@ namespace MeisterDev.ProPR.Api.Tests.Features.Crawling;
 [Collection("RepositoryTargetPostgresIntegration")]
 public sealed class ClientReviewTargetsPostgresTests(PostgresContainerFixture fixture)
 {
+    [Xunit.Fact]
+    public async Task Automation_ConditionalWriteAdvancesRevisionWithoutChangingPolicyOrLifecycle()
+    {
+        Assert.True(fixture.IsAvailable, "The isolated PostgreSQL fixture is required for automation regressions.");
+        await using var db = new MeisterProPRDbContext(this.LockTestOptions(out _));
+        var clientId = Guid.NewGuid();
+        db.Clients.Add(
+            new ClientRecord
+            {
+                Id = clientId, TenantId = TenantCatalog.SystemTenantId, DisplayName = "Automation fixture", IsActive = true, CreatedAt = DateTimeOffset.UtcNow
+            });
+        try
+        {
+            await db.SaveChangesAsync();
+            var repository = new CrawlConfigurationRepository(db);
+            var target = await repository.AddReviewTargetAsync(
+                clientId, ScmProvider.GitHub, "https://automation.example.test", "owner", "123", "repo", targetBranchPatterns: ["main"]);
+            await using (var admission = await repository.AcquireReviewTargetAdmissionAsync(clientId))
+            {
+                Assert.True(await ((ICrawlConfigurationRepository)repository).ChangeReviewTargetAutomationUnderAdmissionAsync(target.Id, clientId, 1, true));
+                Assert.False(await ((ICrawlConfigurationRepository)repository).ChangeReviewTargetAutomationUnderAdmissionAsync(target.Id, clientId, 1, false));
+            }
+
+            var saved = await repository.GetReviewTargetPolicySnapshotAsync(target.Id, clientId);
+            Assert.True(saved!.IsActive);
+            Assert.Equal(2, saved.ReviewTargetRevision);
+            Assert.Equal(ReviewTargetLifecycle.Enabled, saved.ReviewTargetLifecycle);
+            Assert.Equal(["main"], saved.RepoFilters[0].TargetBranchPatterns);
+        }
+        finally
+        {
+            await db.Clients.Where(client => client.Id == clientId).ExecuteDeleteAsync();
+        }
+    }
+
     [Xunit.Theory]
     [InlineData("revision", ReviewTargetLifecycle.Disabled)]
     [InlineData("revision", ReviewTargetLifecycle.Removed)]

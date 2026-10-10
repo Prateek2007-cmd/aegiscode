@@ -15,4 +15,5 @@ public sealed record AssignedCodeReviewRef(
     string? RepositoryDisplayName = null,
     string? SourceBranch = null,
     string? TargetBranch = null,
-    ReviewRevision? ReviewRevision = null);
+    ReviewRevision? ReviewRevision = null,
+    MeisterDev.ProPR.Application.Interfaces.ScheduledReviewAuthority? Authority = null);

@@ -24,6 +24,25 @@ public sealed class CrawlConfigurationRepository(
     : ICrawlConfigurationRepository
 {
     /// <inheritdoc />
+    public async Task<bool> ChangeReviewTargetAutomationUnderAdmissionAsync(
+        Guid targetId, Guid clientId, long expectedRevision, bool isActive, CancellationToken ct = default)
+    {
+        if (expectedRevision < 1 || expectedRevision == long.MaxValue)
+        {
+            return false;
+        }
+
+        var changed = await dbContext.CrawlConfigurations.Where(c => c.Id == targetId && c.ClientId == clientId &&
+                                                                     c.ReviewTargetRevision == expectedRevision && c.ReviewTargetRevision < long.MaxValue &&
+                                                                     (!isActive || c.ReviewTargetLifecycle == ReviewTargetLifecycle.Enabled) &&
+                                                                     c.RepoFilters.Count == 1 && c.RepoFilters.Any(f => f.CanonicalSourceRef != null))
+            .ExecuteUpdateAsync(
+                set => set.SetProperty(c => c.IsActive, isActive)
+                    .SetProperty(c => c.ReviewTargetRevision, c => c.ReviewTargetRevision + 1), ct).ConfigureAwait(false);
+        return changed == 1;
+    }
+
+    /// <inheritdoc />
     public Task<IAsyncDisposable> AcquireReviewTargetAdmissionAsync(Guid clientId, CancellationToken ct = default)
     {
         var source = (NpgsqlConnection)dbContext.Database.GetDbConnection();

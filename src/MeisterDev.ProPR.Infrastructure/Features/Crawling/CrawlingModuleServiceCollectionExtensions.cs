@@ -26,6 +26,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Crawling;
 
@@ -81,6 +82,17 @@ public static class CrawlingModuleServiceCollectionExtensions
         }
 
         services.AddAzureDevOpsCrawlingServices(configuration);
+        if (configuration.HasDatabaseConnectionString())
+        {
+            services.AddScoped<IScheduledReviewAuthorityService, Execution.ScheduledReviewAuthorityService>();
+            services.AddScoped<IReviewTargetAutomationService, ReviewTargetAutomationService>();
+            if (!configuration.GetValue<bool>("ADO_STUB_PR"))
+            {
+                services.RemoveAll<IAssignedReviewDiscoveryService>();
+                services.AddScoped<IAssignedReviewDiscoveryService, Execution.ScheduledReviewDiscoveryService>();
+            }
+        }
+
         services.AddScoped<IPullRequestSynchronizationService, PullRequestSynchronizationService>();
         services.AddScoped<MeisterDev.ProPR.Application.Features.Crawling.Configuration.IReviewConfigurationSelectionService,
             MeisterDev.ProPR.Application.Features.Crawling.Configuration.ReviewConfigurationSelectionService>();
@@ -93,7 +105,19 @@ public static class CrawlingModuleServiceCollectionExtensions
         services.AddScoped<HandleProviderWebhookDeliveryHandler>();
 
         services.AddScoped<IWebhookSecretGenerator, WebhookSecretGenerator>();
-        services.AddScoped<IPrCrawlService, PrCrawlService>();
+        services.AddScoped<IPrCrawlService>(sp => new PrCrawlService(
+            sp.GetRequiredService<ICrawlConfigurationRepository>(),
+            sp.GetRequiredService<IAssignedReviewDiscoveryService>(),
+            sp.GetRequiredService<IJobRepository>(),
+            sp.GetRequiredService<IPrStatusFetcher>(),
+            sp.GetRequiredService<ILogger<PrCrawlService>>(),
+            sp.GetRequiredService<IPullRequestSynchronizationService>(),
+            sp.GetService<IProviderActivationService>(),
+            sp.GetService<IClientRegistry>(),
+            sp.GetService<IScmProviderRegistry>(),
+            configuration.GetValue<bool>("ADO_STUB_PR")
+                ? null
+                : sp.GetService<IScheduledReviewAuthorityService>()));
 
         return services;
     }

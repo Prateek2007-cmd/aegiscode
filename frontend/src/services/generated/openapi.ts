@@ -8225,6 +8225,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/clients/{clientId}/review-targets/{targetId}/automation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Conditionally enables or pauses automatic reviews for an owned saved repository target. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Owning client identifier. */
+                    clientId: string;
+                    /** @description Saved repository target identifier. */
+                    targetId: string;
+                };
+                cookie?: never;
+            };
+            /** @description Saved revision, explicit activity and selected connection for enable. */
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ChangeClientReviewTargetAutomationRequest"];
+                    "text/json": components["schemas"]["ChangeClientReviewTargetAutomationRequest"];
+                    "application/*+json": components["schemas"]["ChangeClientReviewTargetAutomationRequest"];
+                };
+            };
+            responses: {
+                /** @description Activity and advanced revision confirmed under the operation's admission lease. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ClientReviewTargetResponse"];
+                        "application/json": components["schemas"]["ClientReviewTargetResponse"];
+                        "text/json": components["schemas"]["ClientReviewTargetResponse"];
+                    };
+                };
+                /** @description Activity, revision or enable connection is missing or invalid. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The caller cannot administer this client or enable authority is unavailable. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The client does not own this canonical saved target. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The target changed or automatic review configuration is unavailable. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The write could not be confirmed. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/clients/{clientId}/review-targets/overview": {
         parameters: {
             query?: never;
@@ -8234,7 +8335,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Returns a rich pull request page with shared source freshness and immutable generation navigation. */
+        /** Returns collected pull requests with explicit upstream coverage, shared source freshness and immutable generation navigation. */
         post: {
             parameters: {
                 query?: never;
@@ -8254,7 +8355,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Pull requests, metadata, source outcomes and refresh availability; bounded capacity refusals return no rows or cursor and a null total. */
+                /** @description Collected pull requests, independent listing and metadata coverage, source counts and refresh availability; bounded capacity refusals return no rows or cursor and a null total. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -21199,6 +21300,18 @@ export interface components {
             provider?: string | null;
             value?: string | null;
         };
+        /** @description Revision-conditional automatic-review activity change. */
+        ChangeClientReviewTargetAutomationRequest: {
+            /** @description Current positive canonical saved revision. */
+            expectedRevision: string;
+            /** @description Required desired activity; false pauses automatic reviews. */
+            isActive: boolean;
+            /**
+             * Format: uuid
+             * @description Owned eligible connection required only when enabling.
+             */
+            connectionId?: string | null;
+        };
         /** @description A conditional saved repository lifecycle transition. */
         ChangeClientReviewTargetLifecycleRequest: {
             expectedRevision?: string | null;
@@ -21344,6 +21457,13 @@ export interface components {
             listedAt?: string | null;
             /** Format: date-time */
             nextRefreshAt?: string;
+            /** @description True only when all native pages were read. Null denotes older observations without coverage evidence. */
+            isComplete?: boolean | null;
+            /**
+             * Format: int32
+             * @description Number of distinct eligible rows collected for this source, independent of upstream totals.
+             */
+            collectedRows?: number | null;
         };
         /** @description An immutable cumulative page with explicit freshness and coverage. */
         ClientPullRequestOverviewPage: {
@@ -21371,6 +21491,8 @@ export interface components {
             status?: string | null;
             /** Format: int32 */
             perSourceLimit?: number;
+            /** @description Whether all selected sources have complete upstream coverage within the snapshot bounds. */
+            isComplete?: boolean;
         };
         /** @description Client-scoped source selection, generation navigation and row bounds. */
         ClientPullRequestOverviewRequest: {

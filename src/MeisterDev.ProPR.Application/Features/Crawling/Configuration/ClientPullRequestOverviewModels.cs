@@ -48,7 +48,14 @@ public sealed record ClientPullRequestOverviewOutcome(
     string Status,
     string? FailureKind,
     DateTimeOffset? ListedAt,
-    DateTimeOffset NextRefreshAt);
+    DateTimeOffset NextRefreshAt)
+{
+    /// <summary>True only when all native pages were read. Null denotes older observations without coverage evidence.</summary>
+    public bool? IsComplete { get; init; }
+
+    /// <summary>Number of distinct eligible rows collected for this source, independent of upstream totals.</summary>
+    public int? CollectedRows { get; init; }
+}
 
 /// <summary>An immutable cumulative page with explicit freshness and coverage.</summary>
 public sealed record ClientPullRequestOverviewPage(
@@ -66,7 +73,11 @@ public sealed record ClientPullRequestOverviewPage(
     bool IsStale,
     DateTimeOffset? NextRefreshAt,
     string Status = "available",
-    int PerSourceLimit = 100);
+    int PerSourceLimit = 10000)
+{
+    /// <summary>Whether all selected sources have complete upstream coverage within the snapshot bounds.</summary>
+    public bool IsComplete { get; init; }
+}
 
 /// <summary>Invalid, obsolete or unauthorized overview request.</summary>
 public sealed class ClientPullRequestOverviewException(string kind) : Exception("The pull request page is unavailable.")

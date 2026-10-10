@@ -59,7 +59,6 @@ Guided crawl, webhook, mention and ProCursor configuration starts with a saved c
 The connection supplies its accessible scopes, native hierarchy and source capabilities. ProCursor
 knowledge-source creation is available for connections with a registered knowledge-source capability.
 
-
 ## Documentation
 
 Open a pull request from **Reviews** to inspect its review history, discussion, and retained diffs. The

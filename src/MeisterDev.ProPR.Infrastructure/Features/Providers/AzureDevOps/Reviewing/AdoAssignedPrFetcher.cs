@@ -7,6 +7,8 @@ using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.Support;
 using Microsoft.Extensions.FileSystemGlobbing;
 using Microsoft.Extensions.Logging;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
@@ -18,9 +20,11 @@ public sealed partial class AdoAssignedPrFetcher(
     VssConnectionFactory connectionFactory,
     IClientScmConnectionRepository connectionRepository,
     ILogger<AdoAssignedPrFetcher> logger,
-    IClientRegistry? clientRegistry = null) : IAssignedReviewDiscoveryService
+    IClientRegistry? clientRegistry = null,
+    TimeProvider? timeProvider = null) : IAssignedReviewDiscoveryService
 {
     private static readonly ActivitySource ActivitySource = new("MeisterProPR.Infrastructure");
+    private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
 
     /// <summary>
     ///     Resolves a <see cref="GitHttpClient" /> for the given organization URL.
@@ -33,13 +37,17 @@ public sealed partial class AdoAssignedPrFetcher(
         CrawlConfigurationDto config,
         CancellationToken cancellationToken = default)
     {
-        var configuredReviewer = await this.ResolveConfiguredReviewerAsync(config, cancellationToken);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15), this._clock);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var discoveryToken = linked.Token;
+        discoveryToken.ThrowIfCancellationRequested();
+        var configuredReviewer = await AwaitSdkAsync(this.ResolveConfiguredReviewerAsync(config, discoveryToken), discoveryToken);
 
         using var activity = ActivitySource.StartActivity("AdoAssignedPrFetcher.GetAssignedOpenPullRequests");
         activity?.SetTag("ado.org", config.ProviderScopePath);
         activity?.SetTag("ado.project", config.ProviderProjectKey);
 
-        var gitClient = await this.ResolveGitClientAsync(config, cancellationToken);
+        var gitClient = await AwaitSdkAsync(this.ResolveGitClientAsync(config, discoveryToken), discoveryToken);
         var host = new ProviderHostRef(ScmProvider.AzureDevOps, config.ProviderScopePath);
 
         var criteria = new GitPullRequestSearchCriteria
@@ -52,12 +60,23 @@ public sealed partial class AdoAssignedPrFetcher(
             criteria.ReviewerId = configuredReviewer.ReviewerId.Value;
         }
 
-        var prs = await gitClient.GetPullRequestsByProjectAsync(
-            config.ProviderProjectKey,
-            criteria,
-            top: 200,
-            userState: null,
-            cancellationToken: cancellationToken);
+        var discovered = await ProviderRestPager.LoadAllAsync(
+            async (page, size, ct) =>
+            {
+                var raw = await AwaitSdkAsync(
+                    gitClient.GetPullRequestsByProjectAsync(
+                        config.ProviderProjectKey, criteria, skip: page == 1 ? null : (page - 1) * size,
+                        top: size, userState: null, cancellationToken: ct), ct);
+                if (raw.Count > size || raw.Any(pr => pr.PullRequestId <= 0))
+                {
+                    throw new InvalidOperationException("The provider returned invalid assigned pull request discovery.");
+                }
+
+                return new ProviderRestPager.RestPage<GitPullRequest>(raw, raw.Count == size);
+            },
+            pr => pr.PullRequestId.ToString(CultureInfo.InvariantCulture), "assigned pull requests",
+            discoveryToken, pageSize: 200, maxPages: 100);
+        var prs = discovered.ToList();
 
         activity?.SetTag("ado.prs_found", prs.Count);
 
@@ -81,6 +100,7 @@ public sealed partial class AdoAssignedPrFetcher(
         var results = new List<AssignedCodeReviewRef>(prs.Count);
         foreach (var pr in prs)
         {
+            discoveryToken.ThrowIfCancellationRequested();
             try
             {
                 var repositoryId = pr.Repository?.Id.ToString();
@@ -89,13 +109,14 @@ public sealed partial class AdoAssignedPrFetcher(
                     continue;
                 }
 
-                var iterations = await gitClient.GetPullRequestIterationsAsync(
-                    config.ProviderProjectKey,
-                    repositoryId,
-                    pr.PullRequestId,
-                    false,
-                    null,
-                    cancellationToken);
+                var iterations = await AwaitSdkAsync(
+                    gitClient.GetPullRequestIterationsAsync(
+                        config.ProviderProjectKey,
+                        repositoryId,
+                        pr.PullRequestId,
+                        false,
+                        null,
+                        discoveryToken), discoveryToken);
 
                 var latestIteration = iterations.Count > 0 ? iterations.Max(i => i.Id ?? 1) : 1;
                 ReviewRevision? reviewRevision = null;
@@ -107,9 +128,10 @@ public sealed partial class AdoAssignedPrFetcher(
                         repositoryId,
                         pr.PullRequestId,
                         latestIteration,
-                        cancellationToken);
+                        discoveryToken);
                 }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+                catch (Exception ex) when (ex is not OperationCanceledException && !discoveryToken.IsCancellationRequested &&
+                                           !AdoReadFailures.IsThrottled(ex) && !AdoReadFailures.DeniedStatus(ex).HasValue)
                 {
                     LogReviewRevisionFetchWarning(logger, pr.PullRequestId, latestIteration, ex);
                 }
@@ -138,13 +160,25 @@ public sealed partial class AdoAssignedPrFetcher(
                         StripRefsHeads(pr.TargetRefName ?? string.Empty),
                         reviewRevision));
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && !discoveryToken.IsCancellationRequested &&
+                                       !AdoReadFailures.IsThrottled(ex) && !AdoReadFailures.DeniedStatus(ex).HasValue)
             {
                 LogIterationFetchWarning(logger, pr.PullRequestId, ex);
             }
         }
 
+        discoveryToken.ThrowIfCancellationRequested();
         return results;
+    }
+
+    private static async Task<T> AwaitSdkAsync<T>(Task<T> work, CancellationToken ct)
+    {
+        _ = work.ContinueWith(
+            task => _ = task.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        var result = await work.WaitAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        return result;
     }
 
     private async Task<ConfiguredReviewer> ResolveConfiguredReviewerAsync(
@@ -209,12 +243,13 @@ public sealed partial class AdoAssignedPrFetcher(
             return null;
         }
 
-        var latestIteration = await gitClient.GetPullRequestIterationAsync(
-            projectId,
-            repositoryId,
-            pullRequestId,
-            latestIterationId,
-            cancellationToken: ct);
+        var latestIteration = await AwaitSdkAsync(
+            gitClient.GetPullRequestIterationAsync(
+                projectId,
+                repositoryId,
+                pullRequestId,
+                latestIterationId,
+                cancellationToken: ct), ct);
 
         var headSha = latestIteration.SourceRefCommit?.CommitId;
         var baseSha = latestIteration.CommonRefCommit?.CommitId;

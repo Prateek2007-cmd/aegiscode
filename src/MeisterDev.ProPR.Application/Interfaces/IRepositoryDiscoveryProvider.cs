@@ -9,6 +9,10 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// <summary>Lists provider scopes and repositories through a provider-neutral contract.</summary>
 public interface IRepositoryDiscoveryProvider
 {
+    /// <summary>Lists repositories only within the saved scope and project using the selected connection.</summary>
+    Task<IReadOnlyList<RepositoryRef>> ListRepositoriesAsync(
+        ConnectionDiscoveryContext context, string savedScope, string savedProject, CancellationToken ct = default);
+
     /// <summary>The provider family implemented by this adapter.</summary>
     ScmProvider Provider { get; }
 

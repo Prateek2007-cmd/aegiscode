@@ -7,6 +7,7 @@ using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
 using Microsoft.VisualStudio.Services.Common;
 using NSubstitute;
@@ -20,6 +21,166 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 /// </summary>
 public sealed class AdoAssignedPrFetcherTests
 {
+    [Theory]
+    [InlineData("iterations")]
+    [InlineData("revision")]
+    public async Task AssignedDiscovery_DeadlineDoesNotReturnPartialResultsAfterNonCooperativeEnrichment(string phase)
+    {
+        var clock = new FakeTimeProvider();
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        git.GetPullRequestsByProjectAsync(
+                Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), Arg.Any<int?>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(7));
+                return new List<GitPullRequest> { MakePr(1, Guid.NewGuid()), MakePr(2, Guid.NewGuid()) };
+            });
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var iterations = new TaskCompletionSource<List<GitPullRequestIteration>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var revision = new TaskCompletionSource<GitPullRequestIteration>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken sdkToken = default;
+        git.GetPullRequestIterationsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), false, null, Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                if (phase == "iterations" && call.ArgAt<int>(2) == 2)
+                {
+                    sdkToken = call.ArgAt<CancellationToken>(5);
+                    started.TrySetResult();
+                    return iterations.Task;
+                }
+
+                return Task.FromResult(new List<GitPullRequestIteration> { new() { Id = 1 } });
+            });
+        git.GetPullRequestIterationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                if (call.ArgAt<int>(2) == 1)
+                {
+                    return Task.FromResult(
+                        new GitPullRequestIteration
+                        {
+                            SourceRefCommit = new GitCommitRef { CommitId = "head" },
+                            CommonRefCommit = new GitCommitRef { CommitId = "base" },
+                        });
+                }
+
+                sdkToken = call.ArgAt<CancellationToken>(5);
+                started.TrySetResult();
+                return revision.Task;
+            });
+        var operation = BuildSut(git, timeProvider: clock).ListAssignedOpenReviewsAsync(DefaultConfig);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromSeconds(8));
+            Assert.True(sdkToken.IsCancellationRequested);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            iterations.TrySetResult([new() { Id = 1 }]);
+            revision.TrySetResult(new());
+            try
+            {
+                await operation.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AssignedDiscovery_CallerCancellationBoundsNonCooperativeIterationRead()
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        git.GetPullRequestsByProjectAsync(
+                Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), Arg.Any<int?>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(new List<GitPullRequest> { MakePr(1, Guid.NewGuid()) });
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new TaskCompletionSource<List<GitPullRequestIteration>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        git.GetPullRequestIterationsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), false, null, Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                started.TrySetResult();
+                return pending.Task;
+            });
+        using var caller = new CancellationTokenSource();
+        var operation = BuildSut(git).ListAssignedOpenReviewsAsync(DefaultConfig, caller.Token);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            caller.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => operation.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            pending.TrySetResult([]);
+        }
+    }
+
+    [Theory]
+    [InlineData("iterations", System.Net.HttpStatusCode.Forbidden)]
+    [InlineData("revision", System.Net.HttpStatusCode.Unauthorized)]
+    [InlineData("iterations", System.Net.HttpStatusCode.TooManyRequests)]
+    [InlineData("revision", System.Net.HttpStatusCode.TooManyRequests)]
+    public async Task AssignedDiscovery_EnrichmentPreservesTypedAccessAndThrottleFailures(string phase, System.Net.HttpStatusCode status)
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        git.GetPullRequestsByProjectAsync(
+                Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), Arg.Any<int?>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(new List<GitPullRequest> { MakePr(1, Guid.NewGuid()) });
+        Exception failure = status == System.Net.HttpStatusCode.TooManyRequests
+            ? new MeisterDev.ProPR.Infrastructure.Features.Providers.Common.ProviderThrottledException()
+            : new HttpRequestException("Denied", null, status);
+        git.GetPullRequestIterationsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), false, null, Arg.Any<CancellationToken>())
+            .Returns(_ => phase == "iterations"
+                ? Task.FromException<List<GitPullRequestIteration>>(failure)
+                : Task.FromResult(new List<GitPullRequestIteration> { new() { Id = 1 } }));
+        git.GetPullRequestIterationAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<GitPullRequestIteration>(failure));
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => BuildSut(git).ListAssignedOpenReviewsAsync(DefaultConfig));
+        Assert.Same(failure, thrown);
+    }
+
+    [Fact]
+    public async Task AssignedDiscovery_FiltersAfterRawPagesAndReachesCandidate237()
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        var repositoryId = Guid.NewGuid();
+        git.GetPullRequestsByProjectAsync(
+                Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), Arg.Any<int?>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(call => Enumerable.Range((call.ArgAt<int?>(3) ?? 0) + 1, call.ArgAt<int?>(3) is null or 0 ? 200 : 37)
+                .Select(number => new GitPullRequest
+                {
+                    PullRequestId = number,
+                    Repository = new GitRepository { Id = repositoryId, Name = number == 237 ? "selected" : "other" },
+                }).ToList());
+        git.GetPullRequestIterationsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), false, null, Arg.Any<CancellationToken>())
+            .Returns(new List<GitPullRequestIteration>());
+        var result = await BuildSut(git).ListAssignedOpenReviewsAsync(DefaultConfig with { RepoFilters = [new(Guid.NewGuid(), "selected", [])] });
+        Assert.Equal(237, Assert.Single(result).CodeReview.Number);
+        await git.Received(1).GetPullRequestsByProjectAsync(
+            Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), null, 200, 200, null, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AssignedDiscovery_IterationCancellationPropagates()
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        git.GetPullRequestsByProjectAsync(
+                Arg.Any<string>(), Arg.Any<GitPullRequestSearchCriteria>(), Arg.Any<int?>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(new List<GitPullRequest> { MakePr(1, Guid.NewGuid()) });
+        git.GetPullRequestIterationsAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), false, null, Arg.Any<CancellationToken>())
+            .Returns(_ => Task.FromException<List<GitPullRequestIteration>>(new OperationCanceledException()));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BuildSut(git).ListAssignedOpenReviewsAsync(DefaultConfig));
+    }
+
     private static readonly Guid DefaultReviewerId = Guid.NewGuid();
 
     private static readonly CrawlConfigurationDto DefaultConfig = new(
@@ -46,7 +207,7 @@ public sealed class AdoAssignedPrFetcherTests
             true);
     }
 
-    private static AdoAssignedPrFetcher BuildSut(GitHttpClient gitClient, IClientRegistry? clientRegistry = null)
+    private static AdoAssignedPrFetcher BuildSut(GitHttpClient gitClient, IClientRegistry? clientRegistry = null, TimeProvider? timeProvider = null)
     {
         var factory = new VssConnectionFactory(Substitute.For<TokenCredential>());
         var connectionRepository = Substitute.For<IClientScmConnectionRepository>();
@@ -66,7 +227,8 @@ public sealed class AdoAssignedPrFetcherTests
             factory,
             connectionRepository,
             NullLogger<AdoAssignedPrFetcher>.Instance,
-            reviewerRegistry);
+            reviewerRegistry,
+            timeProvider);
         fetcher.GitClientResolver = (_, _) => Task.FromResult(gitClient);
         return fetcher;
     }

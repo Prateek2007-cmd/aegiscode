@@ -20,6 +20,13 @@ internal sealed class ForgejoDiscoveryService(
 {
     public ScmProvider Provider => ScmProvider.Forgejo;
 
+    public async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesAsync(
+        ConnectionDiscoveryContext context, string savedScope, string savedProject, CancellationToken ct = default)
+    {
+        var native = await connectionVerifier.VerifyAsync(context, ct).ConfigureAwait(false);
+        return await this.ListRepositoriesCoreAsync(native, new(this.Provider, savedScope), savedProject, ct, requireComplete: true).ConfigureAwait(false);
+    }
+
     public ConnectionDiscoveryCoordinates GetConfigurationCoordinates(ConnectionDiscoveryContext context, ConnectionDiscoveryScope scope, string? projectId) =>
         string.IsNullOrWhiteSpace(projectId) || projectId == scope.ScopeKey
             ? new(null, context.Host.HostBaseUrl, scope.ScopeKey)
@@ -103,7 +110,7 @@ internal sealed class ForgejoDiscoveryService(
         => await this.ListRepositoriesCoreAsync(await connectionVerifier.VerifyAsync(clientId, host, ct), host, scopePath, ct).ConfigureAwait(false);
 
     private async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesCoreAsync(
-        ForgejoConnectionVerifier.ForgejoConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct)
+        ForgejoConnectionVerifier.ForgejoConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct, bool requireComplete = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scopePath);
         var normalizedScope = scopePath.Trim();
@@ -127,7 +134,7 @@ internal sealed class ForgejoDiscoveryService(
                 page,
                 pageSize,
                 "repository",
-                pageCt),
+                pageCt, requireComplete),
             repository => repository.Id.ToString(CultureInfo.InvariantCulture),
             $"Forgejo's repository listing for {normalizedScope}",
             ct);
@@ -152,7 +159,7 @@ internal sealed class ForgejoDiscoveryService(
         int page,
         int pageSize,
         string collectionKind,
-        CancellationToken ct)
+        CancellationToken ct, bool requireComplete = false)
     {
         // The first page asks for a size and no page number, which is the request a single-page collection
         // made before this read was paginated.
@@ -164,7 +171,7 @@ internal sealed class ForgejoDiscoveryService(
             context.Connection.Secret);
         using var response = await httpClientFactory.CreateClient("ForgejoProvider").SendAsync(request, ct);
 
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        if (response.StatusCode == HttpStatusCode.NotFound && !requireComplete)
         {
             return new ProviderRestPager.RestPage<T>([], HasMore: false);
         }
@@ -198,7 +205,7 @@ internal sealed class ForgejoDiscoveryService(
             host,
             repository.Id.ToString(CultureInfo.InvariantCulture),
             owner,
-            projectPath);
+            projectPath, projectPath.Split('/').Last());
     }
 
     private sealed record ForgejoOrganizationResponse(

@@ -25,6 +25,21 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Crawling;
 [Collection("PostgresIntegration4")]
 public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixture fixture)
 {
+    private sealed class DeadlineLegacyList(IReadOnlyList<ReviewDiscoveryItemDto> items, FakeTimeProvider clock)
+        : IReadOnlyList<ReviewDiscoveryItemDto>
+    {
+        public int Count => items.Count;
+        public ReviewDiscoveryItemDto this[int index] => items[index];
+
+        public IEnumerator<ReviewDiscoveryItemDto> GetEnumerator()
+        {
+            clock.Advance(TimeSpan.FromSeconds(15));
+            return items.GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => this.GetEnumerator();
+    }
+
     [SkippableTheory]
     [InlineData(1, "success")]
     [InlineData(30, "success")]
@@ -66,6 +81,25 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
     [InlineData(30, "persistedAuthority")]
     [InlineData(1, "graphqlForbidden")]
     [InlineData(1, "graphqlRateLimited")]
+    [InlineData(237, "pagination")]
+    [InlineData(237, "filteredPagination")]
+    [InlineData(237, "laterThrottle")]
+    [InlineData(237, "laterDenial")]
+    [InlineData(237, "repeatedPage")]
+    [InlineData(1, "legacyCoverage")]
+    [InlineData(237, "legacyFiltered")]
+    [InlineData(237, "legacyOrder")]
+    [InlineData(10050, "legacyCapacity")]
+    [InlineData(237, "legacyDeadline")]
+    [InlineData(237, "legacyDuplicates")]
+    [InlineData(1, "oldCacheCoverage")]
+    [InlineData(237, "laterTimeout")]
+    [InlineData(10000, "capacityPagination")]
+    [InlineData(1500, "globalCapacityPagination")]
+    [InlineData(237, "partialReload")]
+    [InlineData(237, "partialPolicyReload")]
+    [InlineData(10050, "terminalRawCapacity")]
+    [InlineData(10000, "terminalRawExact")]
     public async Task IndependentServicesShareProviderRefreshAndReturnMetadataInThePage(int reviewCount, string scenario)
     {
         if (scenario is "graphqlForbidden" or "graphqlRateLimited")
@@ -92,13 +126,18 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         var target = new CrawlConfigurationDto(
             targetId, client, ScmProvider.GitHub, "https://github.com", "team", 60, false,
             DateTimeOffset.UtcNow, [new(Guid.NewGuid(), "repo", [], new("GitHub", "repo-1"))]);
+        if (scenario is "filteredPagination" or "legacyFiltered" or "partialPolicyReload" or "terminalRawCapacity" or "terminalRawExact")
+        {
+            target = target with { RepoFilters = [target.RepoFilters[0] with { TargetBranchPatterns = ["main"] }] };
+        }
+
         configurations.GetReviewTargetPolicySnapshotAsync(Arg.Any<Guid>(), client, Arg.Any<CancellationToken>()).Returns(call =>
         {
             authorityCompleted?.Invoke();
             return
                 scenario is "duplicate" or "responseCapacity"
                     ? target with { Id = call.ArgAt<Guid>(0) }
-                    : scenario is "coverage" or "coverageCaller" or "authenticationDenial"
+                    : scenario is "coverage" or "coverageCaller" or "authenticationDenial" or "globalCapacityPagination"
                         ? target with
                         {
                             Id = call.ArgAt<Guid>(0),
@@ -122,13 +161,14 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         var scopes = Substitute.For<IClientScmScopeRepository>();
         var scope = new ClientScmScopeDto(
             Guid.NewGuid(), client, connectionId, "repository", "repo-1", "team/repo", "repo", "verified", true, now, null, now, now);
-        var targetIds = scenario is "coverage" or "coverageCaller" or "duplicate" or "responseCapacity" or "authenticationDenial"
+        var targetIds = scenario is "coverage" or "coverageCaller" or "duplicate" or "responseCapacity" or "authenticationDenial" or "globalCapacityPagination"
             ? Enumerable.Range(0, scenario == "authenticationDenial" ? 3 : scenario == "responseCapacity" ? 100 : 10).Select(_ => Guid.NewGuid()).Order()
                 .ToArray()
             : [targetId];
-        scopes.GetByConnectionIdAsync(client, connectionId, Arg.Any<CancellationToken>()).Returns(_ => scenario is "coverage" or "coverageCaller"
-            ? targetIds.Select(id => scope with { ExternalScopeId = id.ToString() }).ToArray()
-            : new[] { scope });
+        scopes.GetByConnectionIdAsync(client, connectionId, Arg.Any<CancellationToken>()).Returns(_ =>
+            scenario is "coverage" or "coverageCaller" or "globalCapacityPagination"
+                ? targetIds.Select(id => scope with { ExternalScopeId = id.ToString() }).ToArray()
+                : new[] { scope });
         if (scenario == "authenticationDenial")
         {
             scopes.GetByConnectionIdAsync(client, Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(call =>
@@ -210,7 +250,7 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
                         : new[] { item, item with { SourceBranch = "z" } });
                 }
 
-                return (IReadOnlyList<ReviewDiscoveryItemDto>)Enumerable.Range(1, reviewCount).Select(number => new ReviewDiscoveryItemDto(
+                var items = Enumerable.Range(1, reviewCount).Select(number => new ReviewDiscoveryItemDto(
                     ScmProvider.GitHub, repository, new(repository, CodeReviewPlatformKind.PullRequest, number.ToString(), number),
                     CodeReviewState.Open,
                     scenario is "revision" or "duplicate" or "provenance"
@@ -222,8 +262,23 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
                     null, scenario == "responseCapacity" && refreshed ? new string('\uffff', 512) : "Update",
                     scenario == "responseCapacity" && refreshed ? "https://github.com/" + new string('a', 2029) : null,
                     scenario == "responseCapacity" && refreshed ? new string('\uffff', 512) : "feature",
+                    scenario == "legacyFiltered" && number <= 200 ? "other" :
                     scenario == "responseCapacity" && refreshed ? new string('\uffff', 512) : "main",
                     scenario == "responseCapacity" && refreshed ? new string('\uffff', 256) : null)).ToArray();
+                if (scenario == "legacyDuplicates")
+                {
+                    var duplicate = items[^1] with { TargetBranch = "a", AuthorName = "A", WebUrl = "https://github.com/team/repo/pull/237?a" };
+                    items = items.Concat(Enumerable.Repeat(items[^1], 100)).Concat(
+                    [
+                        duplicate with { TargetBranch = "b" },
+                        duplicate with { AuthorName = "Z" },
+                        duplicate with { ReviewState = CodeReviewState.Draft },
+                        duplicate with { WebUrl = "https://github.com/team/repo/pull/237?z" },
+                        duplicate,
+                    ]).ToArray();
+                }
+
+                return scenario == "legacyDeadline" ? new DeadlineLegacyList(items, clock) : (IReadOnlyList<ReviewDiscoveryItemDto>)items;
             });
         var metadata = Substitute.For<IReviewOverviewProvider>();
         metadata.GetOverviewAsync(client, Arg.Any<CodeReviewRef>(), Arg.Any<ReviewDiscoveryContext>(), Arg.Any<CancellationToken>())
@@ -281,6 +336,65 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         var registry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
         registry.GetReviewSourcePolicy(Arg.Any<ScmProvider>()).Returns(call => ReviewSourcePolicies.Get(call.Arg<ScmProvider>()));
         registry.GetReviewDiscoveryProvider(ScmProvider.GitHub).Returns(discovery);
+        var pagedCalls = 0;
+        if (!scenario.StartsWith("legacy", StringComparison.Ordinal))
+        {
+            var paged = Substitute.For<IReviewDiscoveryPageProvider>();
+            paged.ListOpenReviewsAsync(client, Arg.Any<RepositoryRef>(), null, Arg.Any<CancellationToken>(), Arg.Any<ReviewDiscoveryContext>())
+                .Returns(call => discovery.ListOpenReviewsAsync(
+                    client, call.ArgAt<RepositoryRef>(1), null,
+                    call.ArgAt<CancellationToken>(3), call.ArgAt<ReviewDiscoveryContext>(4)));
+            paged.ListOpenReviewsPageAsync(
+                    client, Arg.Any<RepositoryRef>(), null, Arg.Any<string?>(), Arg.Any<CancellationToken>(), Arg.Any<ReviewDiscoveryContext>())
+                .Returns(async call =>
+                {
+                    pagedCalls++;
+                    var continuation = call.ArgAt<string?>(3);
+                    if (continuation is not null && (scenario == "laterThrottle" || scenario is "partialReload" or "partialPolicyReload" && refreshed))
+                    {
+                        throw new MeisterDev.ProPR.Infrastructure.Features.Providers.Common.ProviderThrottledException();
+                    }
+
+                    if (continuation is not null && scenario == "laterTimeout")
+                    {
+                        throw new OperationCanceledException();
+                    }
+
+                    if (continuation is not null && scenario == "laterDenial")
+                    {
+                        throw new HttpRequestException("Denied", null, HttpStatusCode.Forbidden);
+                    }
+
+                    var all = await discovery.ListOpenReviewsAsync(
+                        client, call.ArgAt<RepositoryRef>(1), null,
+                        call.ArgAt<CancellationToken>(4), call.ArgAt<ReviewDiscoveryContext>(5));
+                    var offset = continuation is null ? 0 : int.Parse(continuation);
+                    var size = scenario is "terminalRawCapacity" or "terminalRawExact" && offset < 9950
+                        ? Math.Min(100, 9950 - offset)
+                        : 100;
+                    var rows = all.Skip(scenario == "repeatedPage" ? 0 : offset).Take(size).ToArray();
+                    if (scenario == "filteredPagination")
+                    {
+                        rows = rows.Select(row => row with { TargetBranch = row.CodeReview.Number <= 200 ? "other" : "main" }).ToArray();
+                    }
+
+                    if (scenario == "partialPolicyReload" && refreshed)
+                    {
+                        rows = rows.Select(row => row.CodeReview.Number == 1 ? row with { TargetBranch = "other" } : row).ToArray();
+                    }
+
+                    if (scenario is "terminalRawCapacity" or "terminalRawExact")
+                    {
+                        rows = rows.Select(row => row with { TargetBranch = row.CodeReview.Number == 1 ? "main" : "other" }).ToArray();
+                    }
+
+                    return new ReviewDiscoveryPageDto(
+                        rows, offset + rows.Length < all.Count ? (offset + rows.Length).ToString() : null,
+                        rows.Length, rows.Select(row => row.CodeReview.ExternalReviewId).ToArray());
+                });
+            registry.GetReviewDiscoveryProvider(ScmProvider.GitHub).Returns(paged);
+        }
+
         registry.GetReviewOverviewProvider(ScmProvider.GitHub).Returns(metadata);
         var graphqlRequests = 0;
         if (scenario is "graphqlForbidden" or "graphqlRateLimited")
@@ -338,6 +452,17 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         services.AddSingleton<IClientPullRequestOverviewStore>(provider =>
         {
             var durable = new ClientPullRequestOverviewStore(provider.GetRequiredService<IDbContextFactory<MeisterProPRDbContext>>(), clock);
+            if (scenario == "oldCacheCoverage")
+            {
+                return new RefusingStore(
+                    durable, () => { }, false, transformSource: content =>
+                    {
+                        var node = System.Text.Json.Nodes.JsonNode.Parse(content)!.AsObject();
+                        node.Remove("isComplete");
+                        return node.ToJsonString();
+                    });
+            }
+
             if (scenario is "persistedCapacity" or "persistedAuthority")
             {
                 return new RefusingStore(
@@ -528,6 +653,148 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         else
         {
             pages = await Task.WhenAll(first, second);
+        }
+
+        if (scenario == "globalCapacityPagination")
+        {
+            Assert.All(
+                pages, page =>
+                {
+                    Assert.Equal("capacity", page.Status);
+                    Assert.Null(page.TotalRows);
+                    Assert.Empty(page.Items);
+                    Assert.Empty(page.Cursor);
+                    var json = System.Text.Json.JsonSerializer.SerializeToElement(
+                        page, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+                    Assert.False(json.GetProperty("isComplete").GetBoolean());
+                });
+            return;
+        }
+
+        if (scenario is "partialReload" or "partialPolicyReload")
+        {
+            Assert.Equal(237, pages[0].TotalRows);
+            var service = scopeA.ServiceProvider.GetRequiredService<ClientPullRequestOverviewService>();
+            clock.Advance(TimeSpan.FromSeconds(61));
+            refreshed = true;
+            var reload = await service.ReadAsync(client, request with { Cursor = pages[0].Cursor, Reload = true }, default);
+            Assert.Equal(scenario == "partialPolicyReload" ? 236 : 237, reload.TotalRows);
+            Assert.Equal("throttled", Assert.Single(reload.Sources).FailureKind);
+            Assert.Equal(pages[0].ExpiresAt, reload.ExpiresAt);
+            Assert.All(reload.Items, row => Assert.Equal(now, row.ListedAt));
+            var mixed = await service.ReadAsync(client, request with { Cursor = reload.Cursor, Page = 6 }, default);
+            Assert.All(mixed.Items.Where(row => row.Number > 100), row => Assert.Equal(now, row.ListedAt));
+            Assert.All(mixed.Items.Where(row => row.Number <= 100), row => Assert.Equal(now.AddSeconds(61), row.ListedAt));
+            if (scenario == "partialPolicyReload")
+            {
+                var last = await service.ReadAsync(client, request with { Cursor = reload.Cursor, Page = 10 }, default);
+                Assert.DoesNotContain(last.Items, row => row.Number == 1);
+                Assert.Contains(last.Items, row => row.Number == 2 && row.ListedAt == now.AddSeconds(61));
+            }
+
+            return;
+        }
+
+        if (scenario is "terminalRawCapacity" or "terminalRawExact")
+        {
+            Assert.All(
+                pages, page =>
+                {
+                    Assert.Equal(1, page.TotalRows);
+                    Assert.Equal(scenario == "terminalRawExact", page.IsComplete);
+                    Assert.Equal(scenario == "terminalRawExact" ? null : "capacity", Assert.Single(page.Sources).FailureKind);
+                });
+            Assert.Equal(101, pagedCalls);
+            return;
+        }
+
+        if (scenario == "capacityPagination")
+        {
+            Assert.All(
+                pages, page =>
+                {
+                    Assert.InRange(page.TotalRows!.Value, 101, 9999);
+                    var json = System.Text.Json.JsonSerializer.SerializeToElement(
+                        page, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+                    Assert.False(json.GetProperty("isComplete").GetBoolean());
+                    Assert.Equal("capacity", Assert.Single(page.Sources).FailureKind);
+                    Assert.Equal(page.TotalRows, json.GetProperty("sources")[0].GetProperty("collectedRows").GetInt32());
+                });
+            return;
+        }
+
+        if (scenario == "legacyDeadline")
+        {
+            Assert.All(
+                pages, page =>
+                {
+                    Assert.Empty(page.Items);
+                    Assert.Equal("timeout", Assert.Single(page.Sources).FailureKind);
+                    Assert.False(page.IsComplete);
+                });
+            return;
+        }
+
+        if (scenario is "legacyFiltered" or "legacyOrder" or "legacyCapacity" or "legacyDuplicates")
+        {
+            Assert.All(
+                pages, page =>
+                {
+                    Assert.Equal(scenario == "legacyFiltered" ? 37 : 100, page.TotalRows);
+                    Assert.Equal(scenario == "legacyCapacity" ? 10000 : 237, page.Items[0].Number);
+                    if (scenario == "legacyDuplicates")
+                    {
+                        Assert.Equal("a", page.Items[0].TargetBranch);
+                        Assert.Equal("A", page.Items[0].AuthorName);
+                        Assert.Equal("open", page.Items[0].State);
+                        Assert.Equal("https://github.com/team/repo/pull/237?a", page.Items[0].WebUrl);
+                        Assert.Equal(page.Items.Count, page.Items.Select(item => item.Number).Distinct().Count());
+                    }
+
+                    Assert.False(page.IsComplete);
+                    var outcome = Assert.Single(page.Sources);
+                    if (scenario == "legacyCapacity")
+                    {
+                        Assert.Equal("capacity", outcome.FailureKind);
+                        Assert.False(outcome.IsComplete);
+                    }
+                    else
+                    {
+                        Assert.Null(outcome.IsComplete);
+                    }
+                });
+            Assert.Equal(0, pagedCalls);
+            return;
+        }
+
+        if (scenario is "pagination" or "filteredPagination" or "laterThrottle" or "laterTimeout" or "laterDenial" or "repeatedPage" or "legacyCoverage"
+            or "oldCacheCoverage")
+        {
+            var expected = scenario == "filteredPagination" ? 37 :
+                scenario is "laterThrottle" or "laterTimeout" or "repeatedPage" ? 100 :
+                scenario == "laterDenial" ? 0 : reviewCount;
+            Assert.All(pages, page => Assert.Equal(expected, page.TotalRows));
+            var json = System.Text.Json.JsonSerializer.SerializeToElement(
+                pages[0], new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            Assert.Equal(scenario is "pagination" or "filteredPagination", json.GetProperty("isComplete").GetBoolean());
+            Assert.Equal(expected, json.GetProperty("sources")[0].GetProperty("collectedRows").GetInt32());
+            Assert.Equal(
+                scenario == "legacyCoverage" ? 0 : scenario == "oldCacheCoverage" ? 1 : scenario is "pagination" or "filteredPagination" ? 3 : 2, pagedCalls);
+            if (scenario == "oldCacheCoverage")
+            {
+                Assert.Equal(System.Text.Json.JsonValueKind.Null, json.GetProperty("sources")[0].GetProperty("isComplete").ValueKind);
+            }
+
+            if (expected > 100)
+            {
+                var service = scopeA.ServiceProvider.GetRequiredService<ClientPullRequestOverviewService>();
+                var later = await service.ReadAsync(client, request with { Cursor = pages[0].Cursor, Page = 6 }, default);
+                Assert.Contains(later.Items, row => row.Number == 101);
+                await service.ReadAsync(client, request with { Reload = true }, default);
+                Assert.Equal(3, pagedCalls);
+            }
+
+            return;
         }
 
         if (scenario is "graphqlForbidden" or "graphqlRateLimited")
@@ -768,6 +1035,14 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
             Assert.Contains(reload.Items, row => row.TargetId == targetIds[1]);
             Assert.Equal("failed", reload.Sources.Single(source => source.TargetId == targetIds[1]).Status);
             Assert.Equal(2, reload.Sources.Count(source => source.Status == "pending"));
+            Assert.All(
+                reload.Sources.Where(source => source.Status == "pending"), source =>
+                {
+                    Assert.Equal(false, source.IsComplete);
+                    Assert.Equal(1, source.CollectedRows);
+                    Assert.Equal(complete.Sources.Single(previous => previous.TargetId == source.TargetId).ListedAt, source.ListedAt);
+                    Assert.Equal(now, Assert.Single(reload.Items.Where(row => row.TargetId == source.TargetId)).ListedAt);
+                });
             var continued = await service.ReadAsync(client, request with { Cursor = reload.Cursor, LoadMore = true }, default);
             Assert.Equal(9, continued.TotalRows);
             Assert.Equal(10, continued.Sources.Count);
@@ -1321,7 +1596,8 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
         Action mutate,
         bool refuseGeneration = true,
         Action? afterPage = null,
-        bool refusePage = false) : IClientPullRequestOverviewStore
+        bool refusePage = false,
+        Func<string, string>? transformSource = null) : IClientPullRequestOverviewStore
     {
         public Task<string?> ReadInvalidationAsync(Guid client, CancellationToken ct) => inner.ReadInvalidationAsync(client, ct);
 
@@ -1331,7 +1607,10 @@ public sealed partial class ClientPullRequestOverviewTests(PostgresContainerFixt
 
         public Task<bool> CompleteAsync(
             Guid client, string key, Guid owner, string fingerprint, string? content, string? failure, DateTimeOffset now, CancellationToken ct) =>
-            inner.CompleteAsync(client, key, owner, fingerprint, content, failure, now, ct);
+            inner.CompleteAsync(
+                client, key, owner, fingerprint,
+                content is not null && !key.StartsWith("m:", StringComparison.Ordinal) && transformSource is not null ? transformSource(content) : content,
+                failure, now, ct);
 
         public Task<bool> SaveGenerationAsync(
             Guid client, Guid generation, string binding, string content, DateTimeOffset now, CancellationToken ct, DateTimeOffset? expiresAt = null)

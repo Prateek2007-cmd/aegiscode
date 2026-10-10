@@ -18,11 +18,36 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 
 namespace MeisterDev.ProPR.Infrastructure.Tests.Repositories;
 
 public sealed class ClientScmConnectionRepositoryTests : IDisposable
 {
+    [Fact]
+    public async Task OperationalSelectionCandidates_IncludeDisabledFamiliesWithoutDecryptingSecrets()
+    {
+        var client = await this.SeedClientAsync();
+        var selected = await this._repository.AddAsync(
+            client.Id, ScmProvider.GitHub, "https://scm.example.test", ScmAuthenticationKind.PersonalAccessToken,
+            null, null, "Selected", "fixture", true);
+        var alternate = await this._repository.AddAsync(
+            client.Id, ScmProvider.GitLab, "https://scm.example.test", ScmAuthenticationKind.PersonalAccessToken,
+            null, null, "Alternate", "fixture", true);
+        var activation = NSubstitute.Substitute.For<IProviderActivationService>();
+        activation.GetEnabledProvidersAsync(NSubstitute.Arg.Any<CancellationToken>()).Returns(new HashSet<ScmProvider> { ScmProvider.GitHub });
+        var codec = NSubstitute.Substitute.For<ISecretProtectionCodec>();
+        var repository = new ClientScmConnectionRepository(this._dbContext, codec, activation);
+
+        Assert.Single(await repository.GetByClientIdAsync(client.Id));
+        var candidates = await ((IClientScmConnectionRepository)repository).GetOperationalSelectionCandidatesAsync(client.Id);
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Contains(candidates, candidate => candidate.Id == selected!.Id);
+        Assert.Contains(candidates, candidate => candidate.Id == alternate!.Id);
+        codec.DidNotReceiveWithAnyArgs().Unprotect(default!, default!);
+    }
+
     private readonly MeisterProPRDbContext _dbContext;
     private readonly ClientScmConnectionRepository _repository;
 

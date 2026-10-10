@@ -16,7 +16,7 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Reviewing;
 
 internal sealed class GitHubReviewDiscoveryProvider(
     GitHubConnectionVerifier connectionVerifier,
-    IHttpClientFactory httpClientFactory) : IReviewDiscoveryProvider
+    IHttpClientFactory httpClientFactory) : IReviewDiscoveryPageProvider
 {
     public ScmProvider Provider => ScmProvider.GitHub;
 
@@ -27,6 +27,18 @@ internal sealed class GitHubReviewDiscoveryProvider(
         CancellationToken ct = default,
         ReviewDiscoveryContext? context = null)
     {
+        return (await this.ListOpenReviewsPageAsync(clientId, repository, reviewer, ct: ct, context: context)).Items;
+    }
+
+    public async Task<ReviewDiscoveryPageDto> ListOpenReviewsPageAsync(
+        Guid clientId,
+        RepositoryRef repository,
+        ReviewerIdentity? reviewer,
+        string? continuation = null,
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? context = null)
+    {
+        var page = ReviewDiscoveryPaging.PageNumber(continuation);
         var authentication = context is null
             ? await connectionVerifier.VerifyAsync(clientId, repository.Host, ct).ConfigureAwait(false)
             : await connectionVerifier.VerifyAsync(clientId, repository.Host, context, ct).ConfigureAwait(false);
@@ -34,9 +46,9 @@ internal sealed class GitHubReviewDiscoveryProvider(
             GitHubConnectionVerifier.BuildApiUri(
                 repository.Host,
                 $"/repos/{BuildRepositoryPath(repository)}/pulls",
-                "state=open&per_page=100"),
+                "state=open&per_page=100" + (page == 1 ? "" : $"&page={page}")),
             ct: ct);
-        using var response = await httpClientFactory.CreateClient("GitHubProvider").SendAsync(request, ct);
+        using var response = await httpClientFactory.CreateClient("GitHubProvider").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Support.GitHubReadFailures.ThrowIfDeniedOrThrottled(response);
         if (!response.IsSuccessStatusCode)
@@ -44,14 +56,20 @@ internal sealed class GitHubReviewDiscoveryProvider(
             throw new InvalidOperationException($"GitHub review discovery failed with status {(int)response.StatusCode}.");
         }
 
-        var payload = await response.Content.ReadFromJsonAsync<IReadOnlyList<GitHubPullRequestResponse>>(ct)
-                      ?? [];
+        var payload = await ReviewDiscoveryPaging.ReadAsync<GitHubPullRequestResponse>(response, ct).ConfigureAwait(false);
+        var next = ReviewDiscoveryPaging.Next(response, request.RequestUri!, page, payload.Count, continuation: continuation);
+        var ids = payload.Select(item => item.Id.ToString(CultureInfo.InvariantCulture)).ToArray();
+        if (ids.Any(id => !long.TryParse(id, out var value) || value <= 0))
+        {
+            throw new InvalidOperationException("The provider returned an invalid discovery identity.");
+        }
 
-        return payload
+        var items = payload
             .Where(item => reviewer is null || ContainsRequestedReviewer(item, reviewer))
             .Select(item => ToDiscoveryItem(repository, item))
             .ToList()
             .AsReadOnly();
+        return new(items, next, payload.Count, ids);
     }
 
     private static bool ContainsRequestedReviewer(GitHubPullRequestResponse payload, ReviewerIdentity reviewer)

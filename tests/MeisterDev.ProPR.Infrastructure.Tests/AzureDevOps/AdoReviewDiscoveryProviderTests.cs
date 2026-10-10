@@ -19,6 +19,78 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 public sealed class AdoReviewDiscoveryProviderTests
 {
     [Theory]
+    [InlineData("head", "base")]
+    [InlineData(null, "base")]
+    [InlineData("head", null)]
+    [InlineData(null, null)]
+    public async Task PagedAzureDiscovery_UsesListedCommitEvidenceWithoutIterationReads(string? head, string? target)
+    {
+        var connectionId = Guid.NewGuid();
+        var row = this.PullRequest();
+        row.LastMergeSourceCommit = head is null ? null : new GitCommitRef { CommitId = head };
+        row.LastMergeTargetCommit = target is null ? null : new GitCommitRef { CommitId = target };
+        this._git.GetPullRequestsAsync(
+                "project", this._repositoryId, Arg.Any<GitPullRequestSearchCriteria>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), 100, Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns([row]);
+        var result = await this.CreateProvider(this.SelectedConnection(connectionId)).ListOpenReviewsPageAsync(
+            this._clientId, this.Repository(), null, context: new(connectionId, "https://dev.azure.com/acme"));
+        var item = Assert.Single(result.Items);
+        if (head is null || target is null)
+        {
+            Assert.Null(item.ReviewRevision);
+        }
+        else
+        {
+            Assert.NotNull(item.ReviewRevision);
+            Assert.Equal(head, item.ReviewRevision.HeadSha);
+            Assert.Equal(target, item.ReviewRevision.BaseSha);
+            Assert.Null(item.ReviewRevision.ProviderRevisionId);
+        }
+
+        await this._git.DidNotReceiveWithAnyArgs().GetPullRequestIterationsAsync(default(string)!, default(string)!, default, default, default!, default);
+        await this._git.DidNotReceiveWithAnyArgs().GetPullRequestIterationAsync(default(string)!, default(string)!, default, default, default!, default);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PagedAzureDiscovery_UsesRawOffsetsAndReaches237(bool filteredFirstPages)
+    {
+        var connectionId = Guid.NewGuid();
+        var sut = this.CreateProvider(this.SelectedConnection(connectionId));
+        this._git.GetPullRequestsAsync(
+                "project", this._repositoryId, Arg.Any<GitPullRequestSearchCriteria>(),
+                Arg.Any<int?>(), Arg.Any<int?>(), 100, Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(call => Enumerable.Range((call.ArgAt<int?>(4) ?? 0) + 1, call.ArgAt<int?>(4) == 200 ? 37 : 100)
+                .Select(number =>
+                {
+                    var row = this.PullRequest();
+                    row.PullRequestId = number;
+                    if (filteredFirstPages && number <= 200)
+                    {
+                        row.Repository = new GitRepository { Id = Guid.NewGuid() };
+                    }
+
+                    return row;
+                }).ToList());
+        var paged = Assert.IsAssignableFrom<IReviewDiscoveryPageProvider>(sut);
+        var items = new List<ReviewDiscoveryItemDto>();
+        string? continuation = null;
+        do
+        {
+            var result = await paged.ListOpenReviewsPageAsync(
+                this._clientId, this.Repository(), null, continuation, context: new(connectionId, "https://dev.azure.com/acme"));
+            items.AddRange(result.Items);
+            continuation = result.Continuation;
+        } while (continuation is not null);
+
+        Assert.Equal(filteredFirstPages ? 37 : 237, items.Count);
+        Assert.Contains(items, item => item.CodeReview.Number == 237);
+        await this._git.DidNotReceiveWithAnyArgs().GetPullRequestIterationsAsync(default(string)!, default(string)!, default, default, default!, default);
+    }
+
+    [Theory]
     [InlineData(System.Net.HttpStatusCode.Unauthorized)]
     [InlineData(System.Net.HttpStatusCode.Forbidden)]
     [InlineData(System.Net.HttpStatusCode.TooManyRequests)]

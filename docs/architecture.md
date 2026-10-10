@@ -62,11 +62,34 @@ additional provider families. Runner symbol requests use its existing proxy boun
 
 ## Crawl synchronization and locks
 
+Manual pull request overview refreshes consume the optional paged capability on the existing review
+discovery adapters. One fenced source refresh owns the entire native page sequence and its shared
+60-second cooldown. Native pagination headers and continuations remain inside provider adapters.
+The rich page contract distinguishes complete upstream listing coverage from collected row counts and
+visible-row metadata completeness. Deadline and storage limits produce incomplete coverage.
+
+Scheduled discovery traverses native pages for Azure DevOps, GitHub, GitLab and Forgejo through the
+registered adapters. Saved canonical filters retain repository identity; legacy names resolve uniquely
+within the saved project, owner or group. Complete observations precede synchronization. A page failure,
+throttle, cancellation or traversal bound prevents absent-job maintenance for that configuration.
+
 The crawler requires the shared pull-request synchronizer. It uses that service for discovered
-pull requests and lifecycle checks on jobs absent from discovery. For canonical review targets,
-provider preparation runs before the admission lease. The crawler rereads current target policy
-under the lease and completes synchronization with the current source and temperature settings.
+pull requests and lifecycle checks on jobs absent from discovery. Scheduled intake selects one owned,
+active, verified connection with matching grants and captures its non-secret configuration and configured
+reviewer identity. Active alternative selectors cause refusal. A short target admission lease validates
+saved target identity and authority before provider preparation. Preparation runs without the lease,
+so target mutations can complete during provider reads. A final lease covers current target and authority
+checks and queue admission. Connection edits do not share that lease. Queued credential resolution may observe later
+rotation. Known native closed or merged status permits absent-job maintenance; missing or unknown status
+does not establish closure.
 The synchronizer owns duplicate-safe job persistence, revision decisions and thread maintenance.
+
+Automatic-review activity is independent of manual-review lifecycle. The revision-conditional automation
+endpoint changes only activity and revision. Enabling requires current eligible connection authority;
+pausing an owned saved target does not require credentials or current grants. Creation, restore and
+manual lifecycle enable leave automatic reviews paused. Successful automation responses contain the
+saved target snapshot confirmed under the operation's admission lease. Later mutations do not change
+that response's activity or revision.
 
 PostgreSQL advisory locks use shared helpers with explicit bigint, `hashtext` and two-integer key
 protocols. Callers own key derivation, transactions, isolation and retries. Transaction locks retain

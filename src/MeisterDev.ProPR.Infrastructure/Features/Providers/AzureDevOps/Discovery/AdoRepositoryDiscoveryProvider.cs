@@ -16,6 +16,50 @@ internal sealed class AdoRepositoryDiscoveryProvider(
 {
     public ScmProvider Provider => ScmProvider.AzureDevOps;
 
+    public async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesAsync(
+        ConnectionDiscoveryContext context, string savedScope, string savedProject, CancellationToken ct = default)
+    {
+        await this.ValidateConnectionAsync(context, ct).ConfigureAwait(false);
+        var scopes = await scopeRepository.GetByConnectionIdAsync(context.ClientId, context.ConnectionId, ct).ConfigureAwait(false);
+        var scope = scopes
+            .SingleOrDefault(candidate => candidate.ClientId == context.ClientId && candidate.ConnectionId == context.ConnectionId &&
+                                          candidate.IsEnabled && candidate.ScopeType.Equals("organization", StringComparison.OrdinalIgnoreCase) &&
+                                          string.Equals(candidate.ScopePath.TrimEnd('/'), savedScope.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+        if (scope is null)
+        {
+            if (discoveryService is not AdoDiscoveryService native || !scopes.Any(candidate =>
+                    candidate.ClientId == context.ClientId && candidate.ConnectionId == context.ConnectionId && candidate.IsEnabled &&
+                    candidate.ScopeType.Equals("repository", StringComparison.OrdinalIgnoreCase) &&
+                    candidate.ScopePath.Trim('/').StartsWith(savedProject.Trim('/') + "/", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("The saved project is not available on the selected connection.");
+            }
+
+            return await native.ListScheduledProjectRepositoriesAsync(context.ClientId, context.ConnectionId, savedScope, savedProject, ct)
+                .ConfigureAwait(false);
+        }
+
+        var projects = await discoveryService.ListProjectOptionsAsync(context.ClientId, scope.Id, ct, context.ConnectionId).ConfigureAwait(false);
+        var matches = projects.Where(project => string.Equals(project.ProjectId, savedProject, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matches.Length == 0)
+        {
+            matches = projects.Where(project => string.Equals(project.ProjectName, savedProject, StringComparison.OrdinalIgnoreCase)).ToArray();
+        }
+
+        if (matches.Length != 1)
+        {
+            throw new InvalidOperationException("The saved project does not resolve to one project.");
+        }
+
+        var project = matches[0];
+        var sources = await discoveryService.ListSourceOptionsAsync(
+            context.ClientId, scope.Id, project.ProjectId,
+            ProCursorSourceKind.Repository, ct, context.ConnectionId).ConfigureAwait(false);
+        return sources.Select(source => new RepositoryRef(
+            new(this.Provider, savedScope), source.CanonicalSourceRef.Value,
+            project.ProjectId, project.ProjectId, source.DisplayName, project.ProjectName)).ToArray();
+    }
+
     public ConnectionDiscoveryDescriptor Descriptor => new(
         this.Provider, "Organization", "Project",
         [new(ProCursorSourceKind.Repository, "Repository"), new(ProCursorSourceKind.AdoWiki, "Wiki")], true, true);

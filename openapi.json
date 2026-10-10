@@ -11584,12 +11584,167 @@
         }
       }
     },
+    "/clients/{clientId}/review-targets/{targetId}/automation": {
+      "patch": {
+        "tags": [
+          "ClientReviewTargets"
+        ],
+        "summary": "Conditionally enables or pauses automatic reviews for an owned saved repository target.",
+        "parameters": [
+          {
+            "name": "clientId",
+            "in": "path",
+            "description": "Owning client identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "description": "Saved repository target identifier.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Saved revision, explicit activity and selected connection for enable.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeClientReviewTargetAutomationRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeClientReviewTargetAutomationRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeClientReviewTargetAutomationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Activity and advanced revision confirmed under the operation's admission lease.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReviewTargetResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReviewTargetResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReviewTargetResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Activity, revision or enable connection is missing or invalid.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller cannot administer this client or enable authority is unavailable.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The client does not own this canonical saved target.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The target changed or automatic review configuration is unavailable.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The write could not be confirmed."
+          }
+        }
+      }
+    },
     "/clients/{clientId}/review-targets/overview": {
       "post": {
         "tags": [
           "ClientReviewTargets"
         ],
-        "summary": "Returns a rich pull request page with shared source freshness and immutable generation navigation.",
+        "summary": "Returns collected pull requests with explicit upstream coverage, shared source freshness and immutable generation navigation.",
         "parameters": [
           {
             "name": "clientId",
@@ -11624,7 +11779,7 @@
         },
         "responses": {
           "200": {
-            "description": "Pull requests, metadata, source outcomes and refresh availability; bounded capacity refusals return no rows or cursor and a null total.",
+            "description": "Collected pull requests, independent listing and metadata coverage, source counts and refresh availability; bounded capacity refusals return no rows or cursor and a null total.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -30854,6 +31009,34 @@
         "additionalProperties": false,
         "description": "Transport shape for a provider-aware canonical source reference."
       },
+      "ChangeClientReviewTargetAutomationRequest": {
+        "required": [
+          "expectedRevision",
+          "isActive"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "maxLength": 19,
+            "minLength": 1,
+            "pattern": "^[1-9][0-9]{0,18}$",
+            "type": "string",
+            "description": "Current positive canonical saved revision."
+          },
+          "isActive": {
+            "type": "boolean",
+            "description": "Required desired activity; false pauses automatic reviews."
+          },
+          "connectionId": {
+            "type": "string",
+            "description": "Owned eligible connection required only when enabling.",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Revision-conditional automatic-review activity change."
+      },
       "ChangeClientReviewTargetLifecycleRequest": {
         "type": "object",
         "properties": {
@@ -31121,6 +31304,17 @@
           "nextRefreshAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "isComplete": {
+            "type": "boolean",
+            "description": "True only when all native pages were read. Null denotes older observations without coverage evidence.",
+            "nullable": true
+          },
+          "collectedRows": {
+            "type": "integer",
+            "description": "Number of distinct eligible rows collected for this source, independent of upstream totals.",
+            "format": "int32",
+            "nullable": true
           }
         },
         "additionalProperties": false,
@@ -31195,6 +31389,10 @@
           "perSourceLimit": {
             "type": "integer",
             "format": "int32"
+          },
+          "isComplete": {
+            "type": "boolean",
+            "description": "Whether all selected sources have complete upstream coverage within the snapshot bounds."
           }
         },
         "additionalProperties": false,

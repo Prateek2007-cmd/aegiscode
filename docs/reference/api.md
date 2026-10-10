@@ -90,6 +90,7 @@ same project or namespace.
 | `GET /management` | Accepts `search`, `provider`, `status` (`enabled` or `disabled`), `page` and `pageSize` (default 25, maximum 100). | ProPR returns saved metadata without SCM access, excluding removed targets, ordered by repository name and ID. |
 | `GET /management/{targetId}` | The target must belong to the client. | ProPR returns the saved target, including removed state. Missing or foreign targets return 404. Use this read to resolve uncertain lifecycle writes. |
 | `PATCH /{targetId}/lifecycle` | Supply `expectedRevision` and `lifecycle` (`enabled`, `disabled`, `removed`). Removal also requires the saved repository name in `confirmationName`. | A stale revision returns 409. Every lifecycle write leaves crawling off; already accepted reviews and history remain recorded. |
+| `PATCH /{targetId}/automation` | Supply `expectedRevision` and explicit `isActive`; enabling also requires a nonempty `connectionId` with current authority. | The response contains activity and revision confirmed under the operation's admission lease, even when a later mutation changes saved state. Pausing requires no connection or provider credentials. Stale revisions return 409; unavailable enable authority returns 403. |
 
 Azure DevOps uses the saved organization URL as `scopePath` and requires `providerScopePath` on the
 selected connection's origin. Enabled organization metadata must belong to that exact connection;
@@ -133,7 +134,7 @@ Backend-relative OpenAPI paths omit the ingress `/api` prefix.
 | Pages | `pageSize` defaults to 25 and permits at most 100. Pages above one require a generation cursor. |
 | Loading | `loadMore` creates a cumulative generation returned at page 1. `reload` uses the displayed generation cursor; omitting it starts a new read. |
 | Timing | Observations are fresh for 60 seconds. Refresh attempts share a 60-second cooldown, including failures. Generation eligibility is at most 15 minutes and cannot exceed original listing or metadata deadlines. |
-| Coverage | Each load covers at most 8 sources, each source at most 100 pull requests, and each generation at most 100 sources. Partial coverage and remaining sources are explicit; observed rows are not a complete inventory. |
+| Coverage | Each load attempts at most 8 sources and consumes native pages under one source refresh. Each generation covers at most 100 sources. Source `isComplete` is true only after terminal native coverage; null denotes older observations without coverage evidence. Source `collectedRows` counts distinct eligible observations. Page `isComplete` reports complete listing coverage for all selected sources, independent of visible metadata completeness. `totalRows` counts collected display rows, not an upstream total. |
 | Response capacity | Serialized responses are limited to 2 MiB. Capacity refusal returns no items or actionable cursor and `totalRows: null`, with source outcomes and next permitted refresh time. Unavailable totals are not zero. |
 | Expiry | Expired navigation requires a new read. Replacements cannot reactivate an expired cursor. |
 | Confirmed denial | `accessDenied` invalidates affected observations and retained cursors. Metadata-only permission denial keeps eligible listing rows with unavailable counts. |

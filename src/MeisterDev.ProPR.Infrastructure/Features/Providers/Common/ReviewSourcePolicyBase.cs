@@ -16,6 +16,15 @@ internal abstract class ReviewSourcePolicyBase
 {
     public abstract ScmProvider Provider { get; }
 
+    public virtual bool MatchesScheduledScopeGrant(CrawlConfigurationDto target, ClientScmScopeDto scope) =>
+        scope.ScopeType.Equals("repository", StringComparison.OrdinalIgnoreCase) &&
+        scope.ScopePath.Trim('/').StartsWith(target.ProviderProjectKey.Trim('/') + "/", StringComparison.OrdinalIgnoreCase);
+
+    public virtual bool MatchesScheduledRepositoryGrant(CrawlConfigurationDto target, RepositoryRef repository, ClientScmScopeDto scope) =>
+        this.MatchesScheduledScopeGrant(target, scope) &&
+        string.Equals(scope.ExternalScopeId, repository.ExternalRepositoryId, StringComparison.Ordinal) &&
+        string.Equals(scope.ScopePath.Trim('/'), repository.ProjectPath.Trim('/'), StringComparison.OrdinalIgnoreCase);
+
     public virtual ProCursorReviewContextDto? PrepareProCursorSymbolContext(
         RepositoryRef repository, string sourceBranch, int pullRequestNumber, int observationSequence) => null;
 

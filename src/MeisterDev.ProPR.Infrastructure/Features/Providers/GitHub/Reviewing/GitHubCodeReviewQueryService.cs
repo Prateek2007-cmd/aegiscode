@@ -28,9 +28,12 @@ internal sealed class GitHubCodeReviewQueryService(
     public async Task<ReviewDiscoveryItemDto?> GetReviewAsync(
         Guid clientId,
         CodeReviewRef review,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? selected = null)
     {
-        var context = await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct);
+        var context = selected is null
+            ? await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct)
+            : await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, selected, ct);
         using var request = await context.CreateAuthenticatedRequestAsync(
             GitHubConnectionVerifier.BuildApiUri(
                 review.Repository.Host,
@@ -138,9 +141,12 @@ internal sealed class GitHubCodeReviewQueryService(
             return CodeReviewState.Merged;
         }
 
-        return string.Equals(payload.State, "open", StringComparison.OrdinalIgnoreCase)
-            ? CodeReviewState.Open
-            : CodeReviewState.Closed;
+        return payload.State?.Trim().ToLowerInvariant() switch
+        {
+            "open" => CodeReviewState.Open,
+            "closed" => CodeReviewState.Closed,
+            _ => throw new InvalidOperationException("The provider returned an unknown review state."),
+        };
     }
 
     private static bool IsBot(GitHubReviewerResponse reviewer)

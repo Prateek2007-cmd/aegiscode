@@ -20,6 +20,13 @@ internal sealed class GitHubDiscoveryService(
 {
     public ScmProvider Provider => ScmProvider.GitHub;
 
+    public async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesAsync(
+        ConnectionDiscoveryContext context, string savedScope, string savedProject, CancellationToken ct = default)
+    {
+        var native = await connectionVerifier.VerifyAsync(context, ct).ConfigureAwait(false);
+        return await this.ListRepositoriesCoreAsync(native, new(this.Provider, savedScope), savedProject, ct, requireComplete: true).ConfigureAwait(false);
+    }
+
     public ConnectionDiscoveryCoordinates GetConfigurationCoordinates(ConnectionDiscoveryContext context, ConnectionDiscoveryScope scope, string? projectId) =>
         string.IsNullOrWhiteSpace(projectId) || projectId == scope.ScopeKey
             ? new(null, context.Host.HostBaseUrl, scope.ScopeKey)
@@ -124,14 +131,14 @@ internal sealed class GitHubDiscoveryService(
         => await this.ListRepositoriesCoreAsync(await connectionVerifier.VerifyAsync(clientId, host, ct), host, scopePath, ct).ConfigureAwait(false);
 
     private async Task<IReadOnlyList<RepositoryRef>> ListRepositoriesCoreAsync(
-        GitHubConnectionVerifier.GitHubConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct)
+        GitHubConnectionVerifier.GitHubConnectionContext context, ProviderHostRef host, string scopePath, CancellationToken ct, bool requireComplete = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scopePath);
         var normalizedScopePath = scopePath.Trim();
 
         if (context.Connection.AuthenticationKind == ScmAuthenticationKind.AppInstallation)
         {
-            var installationRepositories = await this.ListInstallationRepositoriesAsync(context, host, ct);
+            var installationRepositories = await this.ListInstallationRepositoriesAsync(context, host, ct, requireComplete);
             return installationRepositories
                 .Where(repository => !string.IsNullOrWhiteSpace(repository.FullName)
                                      && !string.IsNullOrWhiteSpace(repository.Owner?.Login)
@@ -143,7 +150,7 @@ internal sealed class GitHubDiscoveryService(
                     host,
                     repository.Id.ToString(CultureInfo.InvariantCulture),
                     repository.Owner!.Login!.Trim(),
-                    repository.FullName!.Trim()))
+                    repository.FullName!.Trim(), repository.FullName.Trim().Split('/').Last()))
                 .ToList()
                 .AsReadOnly();
         }
@@ -170,7 +177,7 @@ internal sealed class GitHubDiscoveryService(
                 pageSize,
                 "repository",
                 pageCt,
-                filter),
+                filter, requireComplete),
             repository => repository.Id.ToString(CultureInfo.InvariantCulture),
             $"GitHub's repository listing for {normalizedScopePath}",
             ct);
@@ -182,7 +189,7 @@ internal sealed class GitHubDiscoveryService(
                 host,
                 repository.Id.ToString(CultureInfo.InvariantCulture),
                 repository.Owner!.Login!.Trim(),
-                repository.FullName!.Trim()))
+                repository.FullName!.Trim(), repository.FullName.Trim().Split('/').Last()))
             .ToList()
             .AsReadOnly();
     }
@@ -201,7 +208,7 @@ internal sealed class GitHubDiscoveryService(
         int pageSize,
         string collectionKind,
         CancellationToken ct,
-        string? filter = null)
+        string? filter = null, bool requireComplete = false)
     {
         var pageQuery = string.Create(
             CultureInfo.InvariantCulture,
@@ -213,7 +220,7 @@ internal sealed class GitHubDiscoveryService(
             ct: ct);
         using var response = await httpClientFactory.CreateClient("GitHubProvider").SendAsync(request, ct);
 
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        if (response.StatusCode == HttpStatusCode.NotFound && !requireComplete)
         {
             return new ProviderRestPager.RestPage<T>([], HasMore: false);
         }
@@ -230,9 +237,10 @@ internal sealed class GitHubDiscoveryService(
     private async Task<IReadOnlyList<GitHubRepositoryResponse>> ListInstallationRepositoriesAsync(
         GitHubConnectionVerifier.GitHubConnectionContext context,
         ProviderHostRef host,
-        CancellationToken ct)
+        CancellationToken ct, bool requireComplete = false)
     {
         var repositories = new List<GitHubRepositoryResponse>();
+        var complete = false;
 
         for (var page = 1; page <= 10; page++)
         {
@@ -254,14 +262,21 @@ internal sealed class GitHubDiscoveryService(
 
             if (payload.Repositories.Count == 0)
             {
+                complete = true;
                 break;
             }
 
             repositories.AddRange(payload.Repositories);
             if (payload.Repositories.Count < 100)
             {
+                complete = true;
                 break;
             }
+        }
+
+        if (requireComplete && !complete)
+        {
+            throw new InvalidOperationException("The installation repository listing did not establish complete coverage within its page bound.");
         }
 
         return repositories.AsReadOnly();

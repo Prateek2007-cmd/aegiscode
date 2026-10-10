@@ -158,6 +158,15 @@ internal sealed class AdoReviewSourcePolicy : ReviewSourcePolicyBase, IReviewSou
         scope.ScopePath.Trim('/').Equals(
             $"{target.ProviderProjectKey.TrimEnd('/')}/{target.RepoFilters[0].RepositoryName}", StringComparison.OrdinalIgnoreCase);
 
+    public override bool MatchesScheduledScopeGrant(CrawlConfigurationDto target, ClientScmScopeDto scope) =>
+        this.MatchesOrganizationScope(scope, target.ProviderScopePath) || base.MatchesScheduledScopeGrant(target, scope);
+
+    public override bool MatchesScheduledRepositoryGrant(CrawlConfigurationDto target, RepositoryRef repository, ClientScmScopeDto scope) =>
+        this.MatchesOrganizationScope(scope, target.ProviderScopePath) ||
+        scope.ScopeType.Equals("repository", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(scope.ExternalScopeId, repository.ExternalRepositoryId, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(scope.ScopePath.Trim('/'), target.ProviderProjectKey.Trim('/') + "/" + repository.RepositoryName, StringComparison.OrdinalIgnoreCase);
+
     public string GetRepositoryDiscoveryScope(string targetScope, string project) => targetScope;
 
     public bool MatchesRepository(CrawlConfigurationDto target, RepositoryRef repository)

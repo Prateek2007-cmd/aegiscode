@@ -17,7 +17,8 @@ public interface ICodeReviewQueryService
     Task<ReviewDiscoveryItemDto?> GetReviewAsync(
         Guid clientId,
         CodeReviewRef review,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? context = null);
 
     /// <summary>Resolves the latest normalized revision for one provider-native review request.</summary>
     Task<ReviewRevision?> GetLatestRevisionAsync(

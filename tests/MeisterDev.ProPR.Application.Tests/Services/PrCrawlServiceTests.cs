@@ -21,6 +21,164 @@ namespace MeisterDev.ProPR.Application.Tests.Services;
 /// <summary>Unit tests for <see cref="PrCrawlService" /> using NSubstitute.</summary>
 public sealed class PrCrawlServiceTests
 {
+    [Theory]
+    [InlineData("scope")]
+    [InlineData("project")]
+    [InlineData("filter")]
+    [InlineData("unchanged")]
+    [InlineData("authority")]
+    public async Task ScheduledBroadAdmission_RejectsChangedSavedCoordinatesBeforePreparation(string changed)
+    {
+        var config = DefaultConfig;
+        var connection = new ClientScmConnectionDto(
+            Guid.NewGuid(), config.ClientId, config.Provider, config.ProviderScopePath,
+            ScmAuthenticationKind.PersonalAccessToken, "Fixture", true, "verified", null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var grant = new ClientScmScopeDto(
+            Guid.NewGuid(), config.ClientId, connection.Id, "organization", "org", config.ProviderScopePath,
+            "org", "verified", true, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var evidence = new ScheduledReviewAuthority(connection, [grant], null, config);
+        var discovered = MakePr() with { Authority = evidence };
+        var current = changed switch
+        {
+            "scope" => config with { ProviderScopePath = "https://other.example.test" },
+            "project" => config with { ProviderProjectKey = "other" },
+            "filter" => config with { RepoFilters = [new(Guid.NewGuid(), "other", ["release/*"])] },
+            _ => config,
+        };
+        this._crawlConfigs.GetAllActiveAsync(Arg.Any<CancellationToken>()).Returns([config]);
+        this._crawlConfigs.GetReviewTargetPolicySnapshotAsync(config.Id, config.ClientId, Arg.Any<CancellationToken>()).Returns(current);
+        this._crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, Arg.Any<CancellationToken>()).Returns(Substitute.For<IAsyncDisposable>());
+        this._prFetcher.ListAssignedOpenReviewsAsync(config, Arg.Any<CancellationToken>()).Returns([discovered]);
+        var authority = Substitute.For<IScheduledReviewAuthorityService>();
+        authority.IsCurrentAsync(evidence, Arg.Any<CancellationToken>()).Returns(changed != "authority");
+        var synchronization = Substitute.For<IPullRequestSynchronizationService>();
+        var completed = false;
+        synchronization.PrepareAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>()).Returns(call =>
+            new PreparedPullRequestSynchronization(
+                call.Arg<PullRequestSynchronizationRequest>(), (_, _) =>
+                {
+                    completed = true;
+                    return Task.FromResult(
+                        new PullRequestSynchronizationOutcome(
+                            PullRequestSynchronizationReviewDecision.None, PullRequestSynchronizationLifecycleDecision.None, []));
+                }));
+        var crawler = new PrCrawlService(
+            this._crawlConfigs, this._prFetcher, this._jobs, this._statusFetcher,
+            NullLogger<PrCrawlService>.Instance, synchronization, providerRegistry: SourcePolicyRegistry(), scheduledAuthority: authority);
+
+        await crawler.CrawlAsync();
+
+        Assert.Equal(changed == "unchanged", completed);
+        if (changed != "unchanged")
+        {
+            await synchronization.DidNotReceiveWithAnyArgs().PrepareAsync(default!, default);
+        }
+        else
+        {
+            await synchronization.Received(1).PrepareAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>());
+        }
+    }
+
+    [Theory]
+    [InlineData("pause")]
+    [InlineData("authority")]
+    [InlineData("unchanged")]
+    public async Task ScheduledAdmission_PreparationAllowsConcurrentMutationAndRechecksBeforeCompletion(string mutation)
+    {
+        var config = DefaultConfig;
+        var current = config;
+        var connection = new ClientScmConnectionDto(
+            Guid.NewGuid(), config.ClientId, config.Provider, config.ProviderScopePath,
+            ScmAuthenticationKind.PersonalAccessToken, "Fixture", true, "verified", null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var grant = new ClientScmScopeDto(
+            Guid.NewGuid(), config.ClientId, connection.Id, "organization", "org", config.ProviderScopePath,
+            "org", "verified", true, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var evidence = new ScheduledReviewAuthority(connection, [grant], null, config);
+        this._crawlConfigs.GetAllActiveAsync(Arg.Any<CancellationToken>()).Returns([config]);
+        this._crawlConfigs.GetReviewTargetPolicySnapshotAsync(config.Id, config.ClientId, Arg.Any<CancellationToken>()).Returns(_ => current);
+        using var admission = new SemaphoreSlim(1);
+
+        async Task<IAsyncDisposable> AcquireAsync(CancellationToken ct)
+        {
+            await admission.WaitAsync(ct);
+            return new AdmissionLease(admission);
+        }
+
+        this._crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, Arg.Any<CancellationToken>())
+            .Returns(call => AcquireAsync(call.Arg<CancellationToken>()));
+        this._prFetcher.ListAssignedOpenReviewsAsync(config, Arg.Any<CancellationToken>()).Returns([MakePr() with { Authority = evidence }]);
+        var authorityCurrent = true;
+        var authority = Substitute.For<IScheduledReviewAuthorityService>();
+        authority.IsCurrentAsync(evidence, Arg.Any<CancellationToken>()).Returns(_ => authorityCurrent);
+        var synchronization = Substitute.For<IPullRequestSynchronizationService>();
+        var preparing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = 0;
+        var completionHeldAdmission = false;
+        synchronization.PrepareAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>()).Returns(async call =>
+        {
+            preparing.SetResult();
+            await resume.Task;
+            return new PreparedPullRequestSynchronization(
+                call.Arg<PullRequestSynchronizationRequest>(), (_, _) =>
+                {
+                    completed++;
+                    completionHeldAdmission = admission.CurrentCount == 0;
+                    return Task.FromResult(
+                        new PullRequestSynchronizationOutcome(
+                            PullRequestSynchronizationReviewDecision.None, PullRequestSynchronizationLifecycleDecision.None, []));
+                });
+        });
+        var crawler = new PrCrawlService(
+            this._crawlConfigs, this._prFetcher, this._jobs, this._statusFetcher, NullLogger<PrCrawlService>.Instance,
+            synchronization, providerRegistry: SourcePolicyRegistry(), scheduledAuthority: authority);
+        var crawl = crawler.CrawlAsync();
+        await preparing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var mutationAcquired = await admission.WaitAsync(TimeSpan.FromSeconds(1));
+        try
+        {
+            if (mutationAcquired)
+            {
+                if (mutation == "pause")
+                {
+                    current = current with { IsActive = false, ReviewTargetRevision = current.ReviewTargetRevision + 1 };
+                }
+                else if (mutation == "authority")
+                {
+                    authorityCurrent = false;
+                }
+            }
+        }
+        finally
+        {
+            if (mutationAcquired)
+            {
+                admission.Release();
+            }
+
+            resume.SetResult();
+            await crawl.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.True(mutationAcquired, "Target mutation must acquire admission while provider preparation is pending.");
+        Assert.Equal(mutation == "unchanged" ? 1 : 0, completed);
+        if (mutation == "unchanged")
+        {
+            Assert.True(completionHeldAdmission);
+        }
+
+        await this._crawlConfigs.Received(2).AcquireReviewTargetAdmissionAsync(config.ClientId, Arg.Any<CancellationToken>());
+    }
+
+    private sealed class AdmissionLease(SemaphoreSlim admission) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            admission.Release();
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private static readonly Guid DefaultReviewerId = Guid.NewGuid();
 
     private static readonly CrawlConfigurationDto DefaultConfig = new(

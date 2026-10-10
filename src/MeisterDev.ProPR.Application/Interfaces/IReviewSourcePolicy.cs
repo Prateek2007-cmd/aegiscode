@@ -74,6 +74,12 @@ public interface IReviewSourcePolicy
     /// <summary>Matches an enabled scope's native coordinates to the target.</summary>
     bool MatchesGrant(CrawlConfigurationDto target, ClientScmScopeDto scope);
 
+    /// <summary>Matches saved scope coverage before resolving repositories in an administrative crawl configuration.</summary>
+    bool MatchesScheduledScopeGrant(CrawlConfigurationDto target, ClientScmScopeDto scope);
+
+    /// <summary>Matches current grant coverage for one repository discovered within saved crawl coordinates.</summary>
+    bool MatchesScheduledRepositoryGrant(CrawlConfigurationDto target, RepositoryRef repository, ClientScmScopeDto scope);
+
     /// <summary>Selects the scope passed to provider repository discovery.</summary>
     string GetRepositoryDiscoveryScope(string targetScope, string project);
 

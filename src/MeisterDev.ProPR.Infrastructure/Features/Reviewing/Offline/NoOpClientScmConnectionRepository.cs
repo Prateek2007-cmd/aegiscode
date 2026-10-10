@@ -14,6 +14,11 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline;
 /// </summary>
 public sealed class NoOpClientScmConnectionRepository : IClientScmConnectionRepository
 {
+    public Task<IReadOnlyList<ClientScmConnectionDto>> GetOperationalSelectionCandidatesAsync(Guid clientId, CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<ClientScmConnectionDto>>([]);
+    }
+
     public Task<IReadOnlyList<ClientScmConnectionDto>> GetByClientIdAsync(Guid clientId, CancellationToken ct = default)
     {
         return Task.FromResult<IReadOnlyList<ClientScmConnectionDto>>([]);

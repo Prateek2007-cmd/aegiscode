@@ -22,9 +22,12 @@ internal sealed class ForgejoCodeReviewQueryService(
     public async Task<ReviewDiscoveryItemDto?> GetReviewAsync(
         Guid clientId,
         CodeReviewRef review,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ReviewDiscoveryContext? selected = null)
     {
-        var context = await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct);
+        var context = selected is null
+            ? await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, ct)
+            : await connectionVerifier.VerifyAsync(clientId, review.Repository.Host, selected, ct);
         using var request = ForgejoConnectionVerifier.CreateAuthenticatedRequest(
             ForgejoConnectionVerifier.BuildApiUri(
                 review.Repository.Host,
@@ -98,14 +101,17 @@ internal sealed class ForgejoCodeReviewQueryService(
             return CodeReviewState.Merged;
         }
 
-        if (payload.Draft)
+        if (payload.Draft && string.Equals(payload.State, "open", StringComparison.OrdinalIgnoreCase))
         {
             return CodeReviewState.Draft;
         }
 
-        return string.Equals(payload.State, "open", StringComparison.OrdinalIgnoreCase)
-            ? CodeReviewState.Open
-            : CodeReviewState.Closed;
+        return payload.State?.Trim().ToLowerInvariant() switch
+        {
+            "open" => CodeReviewState.Open,
+            "closed" => CodeReviewState.Closed,
+            _ => throw new InvalidOperationException("The provider returned an unknown review state."),
+        };
     }
 
     internal static bool ContainsAssignedReviewer(

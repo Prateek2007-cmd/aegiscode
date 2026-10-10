@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.DTOs;
+using System.Globalization;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -19,7 +20,7 @@ internal sealed partial class AdoReviewDiscoveryProvider(
     IClientScmConnectionRepository connectionRepository,
     IClientScmScopeRepository scopeRepository,
     VssConnectionFactory connectionFactory,
-    ILogger<AdoReviewDiscoveryProvider>? logger = null) : IReviewDiscoveryProvider
+    ILogger<AdoReviewDiscoveryProvider>? logger = null) : IReviewDiscoveryPageProvider
 {
     private readonly ILogger<AdoReviewDiscoveryProvider> _logger = logger ?? NullLogger<AdoReviewDiscoveryProvider>.Instance;
     internal Func<string, CancellationToken, Task<GitHttpClient>>? GitClientResolver { get; set; }
@@ -33,7 +34,34 @@ internal sealed partial class AdoReviewDiscoveryProvider(
         CancellationToken ct = default,
         ReviewDiscoveryContext? context = null)
     {
+        return (await this.ReadPageAsync(clientId, repository, reviewer, null, ct, context, false)).Items;
+    }
+
+    public Task<ReviewDiscoveryPageDto> ListOpenReviewsPageAsync(
+        Guid clientId, RepositoryRef repository, ReviewerIdentity? reviewer, string? continuation = null,
+        CancellationToken ct = default, ReviewDiscoveryContext? context = null)
+    {
+        if (context is null)
+        {
+            throw new InvalidOperationException("Paged discovery requires a selected connection and scope.");
+        }
+
+        return this.ReadPageAsync(clientId, repository, reviewer, continuation, ct, context, true);
+    }
+
+    private async Task<ReviewDiscoveryPageDto> ReadPageAsync(
+        Guid clientId,
+        RepositoryRef repository,
+        ReviewerIdentity? reviewer,
+        string? continuation,
+        CancellationToken ct,
+        ReviewDiscoveryContext? context,
+        bool paged)
+    {
         EnsureAzureDevOps(repository.Host);
+        var page = ReviewDiscoveryPaging.PageNumber(continuation);
+        var rawIds = new List<string>();
+        string? next = null;
 
         var projectId = ResolveProjectId(repository);
         var itemsByNumber = new Dictionary<int, ReviewDiscoveryItemDto>();
@@ -110,9 +138,17 @@ internal sealed partial class AdoReviewDiscoveryProvider(
                     projectId,
                     repository.ExternalRepositoryId,
                     criteria,
+                    skip: page == 1 ? null : (page - 1) * 100,
                     top: 100,
                     userState: null,
                     cancellationToken: ct).ConfigureAwait(false);
+                if (paged && (pullRequests.Count > 100 || pullRequests.Any(pr => pr.PullRequestId <= 0)))
+                {
+                    throw new InvalidOperationException("The provider returned an invalid discovery page.");
+                }
+
+                rawIds.AddRange(pullRequests.Select(pr => pr.PullRequestId.ToString(CultureInfo.InvariantCulture)));
+                next = pullRequests.Count == 100 ? (page + 1).ToString(CultureInfo.InvariantCulture) : null;
 
                 foreach (var pullRequest in pullRequests.Where(pr => MatchesRepository(pr, repository))
                              .Take(context is null ? int.MaxValue : 100))
@@ -125,12 +161,24 @@ internal sealed partial class AdoReviewDiscoveryProvider(
                     ReviewRevision? revision = null;
                     try
                     {
-                        revision = await GetLatestRevisionAsync(
-                            gitClient,
-                            projectId,
-                            repository.ExternalRepositoryId,
-                            pullRequest.PullRequestId,
-                            ct).ConfigureAwait(false);
+                        if (paged)
+                        {
+                            var head = pullRequest.LastMergeSourceCommit?.CommitId;
+                            var basis = pullRequest.LastMergeTargetCommit?.CommitId;
+                            if (!string.IsNullOrWhiteSpace(head) && !string.IsNullOrWhiteSpace(basis))
+                            {
+                                revision = new ReviewRevision(head, basis, null, null, $"{basis}...{head}");
+                            }
+                        }
+                        else
+                        {
+                            revision = await GetLatestRevisionAsync(
+                                gitClient,
+                                projectId,
+                                repository.ExternalRepositoryId,
+                                pullRequest.PullRequestId,
+                                ct).ConfigureAwait(false);
+                        }
                     }
                     catch (Exception ex) when (context is not null && ex is not OperationCanceledException && !ct.IsCancellationRequested)
                     {
@@ -172,6 +220,11 @@ internal sealed partial class AdoReviewDiscoveryProvider(
                     {
                         throw AdoReadFailures.Denial(status, AdoReadFailures.IsConnectionDenied(ex));
                     }
+
+                    if (paged)
+                    {
+                        throw new InvalidOperationException("The provider could not list open pull requests.", ex);
+                    }
                 }
 
                 LogCandidateUnavailable(this._logger, clientId);
@@ -183,10 +236,11 @@ internal sealed partial class AdoReviewDiscoveryProvider(
             throw new InvalidOperationException("The provider could not list open pull requests.");
         }
 
-        return itemsByNumber.Values
+        var items = itemsByNumber.Values
             .OrderBy(item => item.CodeReview.Number)
             .ToList()
             .AsReadOnly();
+        return new(items, next, rawIds.Count, rawIds);
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Azure DevOps review discovery candidate failed for client {ClientId}.")]

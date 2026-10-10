@@ -32,6 +32,7 @@ public static class TenantMachineOperationPolicy
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.GetManagementTargets)),
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.GetManagementTarget)),
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.ChangeLifecycle)),
+            Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.ChangeAutomation)),
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.CreateTarget)),
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.UpdateTargetPolicy)),
             Action<ClientReviewTargetsController>(nameof(ClientReviewTargetsController.GetRepositories)),

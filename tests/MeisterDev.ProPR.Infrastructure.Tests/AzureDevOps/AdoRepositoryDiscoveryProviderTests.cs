@@ -10,6 +10,57 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 
 public sealed class AdoRepositoryDiscoveryProviderTests
 {
+    [Theory]
+    [InlineData("project-1")]
+    [InlineData("project one")]
+    [InlineData("unmatched")]
+    public async Task ScheduledSelectedEnumeration_ListsOnlyTheSavedProjectByIdOrName(string savedProject)
+    {
+        var clientId = Guid.NewGuid();
+        var connectionId = Guid.NewGuid();
+        var scopeId = Guid.NewGuid();
+        var host = new ProviderHostRef(ScmProvider.AzureDevOps, "https://dev.azure.com");
+        var connections = Substitute.For<IClientScmConnectionRepository>();
+        connections.GetOperationalConnectionByIdAsync(clientId, connectionId, Arg.Any<CancellationToken>()).Returns(
+            new ClientScmConnectionCredentialDto(
+                connectionId, clientId, host.Provider, host.HostBaseUrl, ScmAuthenticationKind.PersonalAccessToken, "Fixture", "fixture", true));
+        var scopes = Substitute.For<IClientScmScopeRepository>();
+        var now = DateTimeOffset.UtcNow;
+        scopes.GetByConnectionIdAsync(clientId, connectionId, Arg.Any<CancellationToken>()).Returns(
+        [
+            new ClientScmScopeDto(
+                scopeId, clientId, connectionId, "organization", "org", "https://dev.azure.com/org", "org", "verified", true, null, null, now, now)
+        ]);
+        var discovery = Substitute.For<IProviderAdminDiscoveryService>();
+        discovery.ListProjectOptionsAsync(clientId, scopeId, Arg.Any<CancellationToken>(), connectionId).Returns(
+        [
+            new ScmDiscoveryProjectOption(scopeId, "project-2", "Project Two"), new ScmDiscoveryProjectOption(scopeId, "project-1", "Project One")
+        ]);
+        discovery.ListSourceOptionsAsync(clientId, scopeId, "project-1", ProCursorSourceKind.Repository, Arg.Any<CancellationToken>(), connectionId).Returns(
+        [
+            new ScmDiscoverySourceOption("repository", new CanonicalSourceReferenceDto("AzureDevOps", "repo-1"), "same-name", null)
+        ]);
+        var adapter = new AdoRepositoryDiscoveryProvider(connections, scopes, discovery);
+
+        if (savedProject == "unmatched")
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                adapter.ListRepositoriesAsync(new(clientId, connectionId, host), "https://dev.azure.com/org", savedProject));
+            await discovery.DidNotReceiveWithAnyArgs().ListSourceOptionsAsync(default, default, default!, default, default, default);
+            return;
+        }
+
+        var repository = Assert.Single(await adapter.ListRepositoriesAsync(new(clientId, connectionId, host), "https://dev.azure.com/org", savedProject));
+
+        Assert.Equal("project-1", repository.OwnerOrNamespace);
+        Assert.Equal("repo-1", repository.ExternalRepositoryId);
+        await discovery.Received(1).ListSourceOptionsAsync(
+            clientId, scopeId, "project-1", ProCursorSourceKind.Repository, Arg.Any<CancellationToken>(), connectionId);
+        await discovery.DidNotReceive().ListSourceOptionsAsync(
+            clientId, scopeId, "project-2", ProCursorSourceKind.Repository, Arg.Any<CancellationToken>(), connectionId);
+        await connections.DidNotReceiveWithAnyArgs().GetOperationalConnectionAsync(default, default!, default);
+    }
+
     [Fact]
     public async Task SelectedConnection_SourceDiscoveryUsesItsOwnedScopeAndCredentialIdentity()
     {

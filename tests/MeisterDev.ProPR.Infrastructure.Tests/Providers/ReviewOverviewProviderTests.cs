@@ -22,6 +22,252 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Providers;
 public sealed class ReviewOverviewProviderTests
 {
     [Theory]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next; rel=\"\"", "2:1")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next; rel=prev", "2:1")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=prev; rel=next", null)]
+    public void LinkContinuation_UsesOnlyFirstRelationParameter(string header, string? expected)
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.TryAddWithoutValidation("Link", header);
+
+        Assert.Equal(expected, ReviewDiscoveryPaging.Next(response, new("https://scm.example.test/pulls?page=1"), 1, 1));
+    }
+
+    [Theory]
+    [InlineData("<https://scm.example.test/pulls?page=2>; title=\"next page\"; rel=\"next\"")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=\"next\"; title=\"reviews, pending\"")]
+    [InlineData("<https://scm.example.test/pulls?label=a,b&page=2>; rel=next")]
+    [InlineData(
+        "<https://scm.example.test/pulls?page=2>; title=\"reviews, \\\"pending\\\"\"; rel=\"prev next\", <https://scm.example.test/pulls?page=1>; rel=prev")]
+    [InlineData("</pulls?page=2>; type=\"application/json\"; rel=next; title*=UTF-8'en'Next%20page")]
+    public void LinkContinuation_AcceptsValidParameterOrderAndQuotedValues(string header)
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.TryAddWithoutValidation("Link", header);
+
+        Assert.Equal("2:1", ReviewDiscoveryPaging.Next(response, new("https://scm.example.test/pulls?page=1"), 1, 1));
+    }
+
+    [Theory]
+    [InlineData("<https://foreign.example.test/pulls?page=2>; title=\"next\"; rel=next")]
+    [InlineData("<https://scm.example.test/other?page=2>; rel=next")]
+    [InlineData("<https://user@scm.example.test/pulls?page=2>; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2#fragment>; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=3>; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2&page=2>; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next, <https://scm.example.test/pulls?page=2>; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; title=\"unterminated; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next; title=\"value\"garbage")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next,")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=\"\"; rel=next")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next; rel=\"unterminated")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; title=\"next page\"")]
+    [InlineData("<https://scm.example.test/pulls?page=2>; rel=next, <https://scm.example.test/pulls?page=2>; title=\"next page\"")]
+    public void LinkContinuation_RejectsMalformedOrUntrustedEvidence(string header)
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        response.Headers.TryAddWithoutValidation("Link", header);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ReviewDiscoveryPaging.Next(response, new("https://scm.example.test/pulls?page=1"), 1, 1));
+    }
+
+    [Theory]
+    [InlineData(ScmProvider.GitHub)]
+    [InlineData(ScmProvider.GitLab)]
+    [InlineData(ScmProvider.Forgejo)]
+    public async Task PagedDiscovery_Reaches237ReviewsWithBoundedNativeRequests(ScmProvider provider)
+    {
+        var fixture = new Fixture(provider);
+        var calls = 0;
+        fixture.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/user", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            calls++;
+            var page = calls;
+            var parameters = request.RequestUri.Query.TrimStart('?').Split('&').Select(value => value.Split('=', 2)).ToArray();
+            if (page == 1)
+            {
+                Assert.DoesNotContain(parameters, value => value[0] == "page");
+            }
+            else
+            {
+                Assert.Equal(page.ToString(), Assert.Single(parameters.Where(value => value[0] == "page"))[1]);
+            }
+
+            Assert.Equal("100", Assert.Single(parameters.Where(value => value[0] is "per_page" or "limit"))[1]);
+            return Json(Enumerable.Range((page - 1) * 100 + 1, page == 3 ? 37 : 100).Select(number => DiscoveryPayload(number, provider)).ToArray());
+        };
+        var paged = Assert.IsAssignableFrom<IReviewDiscoveryPageProvider>(fixture.Discovery);
+        var items = new List<ReviewDiscoveryItemDto>();
+        string? continuation = null;
+        do
+        {
+            var result = await paged.ListOpenReviewsPageAsync(fixture.ClientId, fixture.Review.Repository, null, continuation, context: fixture.Context);
+            items.AddRange(result.Items);
+            continuation = result.Continuation;
+        } while (continuation is not null);
+
+        Assert.Equal(3, calls);
+        Assert.Equal(237, items.Count);
+        Assert.Contains(items, item => item.CodeReview.Number == 237);
+        Assert.All(items, item => Assert.Equal(CodeReviewState.Open, item.ReviewState));
+    }
+
+    private static object DiscoveryPayload(int number) => DiscoveryPayload(number, ScmProvider.GitHub);
+
+    [Theory]
+    [InlineData(ScmProvider.GitLab, true)]
+    [InlineData(ScmProvider.GitLab, false)]
+    [InlineData(ScmProvider.Forgejo, false)]
+    public async Task PagedDiscovery_PreservesRawCountWhenOptionalTotalHeaderDisappears(ScmProvider provider, bool numbered)
+    {
+        var fixture = new Fixture(provider);
+        var calls = 0;
+        fixture.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/user", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var page = ++calls;
+            var response = Json(
+                Enumerable.Range((page - 1) * 100 + 1, page == 3 ? 37 : 100)
+                    .Select(number => DiscoveryPayload(number, provider)).ToArray());
+            if (page != 2)
+            {
+                response.Headers.Add(provider == ScmProvider.GitLab ? "X-Total" : "X-Total-Count", "237");
+            }
+
+            if (numbered)
+            {
+                response.Headers.Add("X-Next-Page", page == 3 ? "" : (page + 1).ToString());
+            }
+            else if (page < 3)
+            {
+                response.Headers.Add("Link", "<" + request.RequestUri.GetLeftPart(UriPartial.Path) + "?page=" + (page + 1) + ">; rel=\"next\"");
+            }
+
+            return response;
+        };
+        var paged = Assert.IsAssignableFrom<IReviewDiscoveryPageProvider>(fixture.Discovery);
+        var items = new List<ReviewDiscoveryItemDto>();
+        string? continuation = null;
+        do
+        {
+            var page = await paged.ListOpenReviewsPageAsync(fixture.ClientId, fixture.Review.Repository, null, continuation, context: fixture.Context);
+            items.AddRange(page.Items);
+            continuation = page.Continuation;
+        } while (continuation is not null);
+
+        Assert.Equal(3, calls);
+        Assert.Equal(237, items.Count);
+    }
+
+    private static object DiscoveryPayload(int number, ScmProvider provider) => new
+    {
+        id = number, number, iid = number, title = "Pull request", state = provider == ScmProvider.GitLab ? "opened" : "open",
+        head = new { @ref = "feature", sha = "head" }, @base = new { @ref = "main", sha = "base" },
+        source_branch = "feature", target_branch = "main", sha = "head",
+    };
+
+    [Fact]
+    public async Task ForgejoPagedDiscovery_UsesAccumulatedRawCoverageWhenServerClampsPageSize()
+    {
+        var fixture = new Fixture(ScmProvider.Forgejo);
+        var calls = 0;
+        fixture.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/user", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var page = ++calls;
+            var response = Json(Enumerable.Range((page - 1) * 50 + 1, page == 5 ? 37 : 50).Select(DiscoveryPayload).ToArray());
+            response.Headers.Add("X-Total-Count", "237");
+            return response;
+        };
+        var paged = Assert.IsAssignableFrom<IReviewDiscoveryPageProvider>(fixture.Discovery);
+        var items = new List<ReviewDiscoveryItemDto>();
+        string? continuation = null;
+        do
+        {
+            var result = await paged.ListOpenReviewsPageAsync(fixture.ClientId, fixture.Review.Repository, null, continuation, context: fixture.Context);
+            items.AddRange(result.Items);
+            continuation = result.Continuation;
+        } while (continuation is not null);
+
+        Assert.Equal(5, calls);
+        Assert.Equal(237, items.Count);
+    }
+
+    [Theory]
+    [InlineData(ScmProvider.GitHub, "short")]
+    [InlineData(ScmProvider.GitLab, "short")]
+    [InlineData(ScmProvider.GitLab, "linkShort")]
+    [InlineData(ScmProvider.Forgejo, "short")]
+    [InlineData(ScmProvider.GitHub, "empty")]
+    [InlineData(ScmProvider.GitLab, "empty")]
+    [InlineData(ScmProvider.Forgejo, "empty")]
+    [InlineData(ScmProvider.GitHub, "repeated")]
+    [InlineData(ScmProvider.GitLab, "repeated")]
+    [InlineData(ScmProvider.Forgejo, "repeated")]
+    [InlineData(ScmProvider.GitHub, "foreign")]
+    [InlineData(ScmProvider.Forgejo, "foreign")]
+    [InlineData(ScmProvider.GitLab, "malformed")]
+    [InlineData(ScmProvider.GitHub, "malformedLink")]
+    [InlineData(ScmProvider.Forgejo, "malformedLink")]
+    public async Task PagedDiscovery_UsesValidatedRawContinuation(ScmProvider provider, string scenario)
+    {
+        var fixture = new Fixture(provider);
+        fixture.Override = request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/user", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var response = Json(scenario == "empty" ? Array.Empty<object>() : new[] { DiscoveryPayload(1, provider) });
+            var next = scenario == "repeated" ? "1" : scenario == "malformed" ? "invalid" : "2";
+            if (provider == ScmProvider.GitLab && scenario != "linkShort")
+            {
+                response.Headers.Add("X-Next-Page", next);
+            }
+            else
+            {
+                var uri = scenario == "foreign"
+                    ? "https://foreign.example.test/pulls?page=2"
+                    : request.RequestUri.GetLeftPart(UriPartial.Path) + "?page=" + next;
+                response.Headers.Add("Link", scenario == "malformedLink" ? "invalid" : "<" + uri + ">; rel=\"next\"");
+            }
+
+            return response;
+        };
+        var paged = Assert.IsAssignableFrom<IReviewDiscoveryPageProvider>(fixture.Discovery);
+        var operation = () => paged.ListOpenReviewsPageAsync(
+            fixture.ClientId, fixture.Review.Repository,
+            new ReviewerIdentity(fixture.Review.Repository.Host, "999", "unmatched", "Unmatched", false),
+            context: fixture.Context);
+        if (scenario is not ("short" or "linkShort"))
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(operation);
+            return;
+        }
+
+        var result = await operation();
+        Assert.Empty(result.Items);
+        Assert.Equal(1, result.RawCount);
+        Assert.Equal(new[] { "1" }, result.ObservationIds);
+        Assert.Equal("2:1", result.Continuation);
+    }
+
+    [Theory]
     [InlineData("FORBIDDEN", false)]
     [InlineData("FORBIDDEN", true)]
     [InlineData("RATE_LIMITED", false)]

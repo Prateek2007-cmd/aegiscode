@@ -11,6 +11,9 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// <summary>Persists client-scoped SCM provider connections.</summary>
 public interface IClientScmConnectionRepository
 {
+    /// <summary>Returns owned non-secret selection candidates, including inactive provider families, without decrypting credentials.</summary>
+    Task<IReadOnlyList<ClientScmConnectionDto>> GetOperationalSelectionCandidatesAsync(Guid clientId, CancellationToken ct = default);
+
     /// <summary>Returns all provider connections configured for the given client.</summary>
     Task<IReadOnlyList<ClientScmConnectionDto>> GetByClientIdAsync(Guid clientId, CancellationToken ct = default);
 

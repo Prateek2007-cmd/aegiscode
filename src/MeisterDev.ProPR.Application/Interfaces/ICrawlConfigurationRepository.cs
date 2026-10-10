@@ -11,6 +11,10 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// <summary>Repository for per-client provider crawl configurations.</summary>
 public interface ICrawlConfigurationRepository
 {
+    /// <summary>Conditionally changes automatic review activity and revision. The caller must hold the client admission lease.</summary>
+    Task<bool> ChangeReviewTargetAutomationUnderAdmissionAsync(
+        Guid targetId, Guid clientId, long expectedRevision, bool isActive, CancellationToken ct = default);
+
     /// <summary>Serializes customer admission and repository target mutations across cell processes.</summary>
     Task<IAsyncDisposable> AcquireReviewTargetAdmissionAsync(Guid clientId, CancellationToken ct = default);
 

@@ -135,7 +135,9 @@ public sealed class ClientPullRequestOverviewService(
         var map = authority.ToDictionary(source => source.Pair);
         if (observations.Count > 10000)
         {
-            throw new ClientPullRequestOverviewException("invalid");
+            var capacity = CreateSnapshot(request, previous, [], sourceOutcomes, [], offset + batch.Length, clock.GetUtcNow());
+            await FinalCheckAsync(clientId, authority, invalidation, capacity.ExpiresAt, ct);
+            return BoundedResponse(Capacity(Page(capacity, "", 1, request.PageSize, clock.GetUtcNow())));
         }
 
         var rows = SelectRows(observations, map);
@@ -220,7 +222,7 @@ public sealed class ClientPullRequestOverviewService(
 
         var outcomes = previous?.Sources.ToDictionary(
             outcome => new ClientPullRequestOverviewSource(outcome.TargetId, outcome.ConnectionId),
-            outcome => reload ? outcome with { Status = "pending" } : outcome) ?? [];
+            outcome => reload ? outcome with { Status = "pending", IsComplete = false } : outcome) ?? [];
         foreach (var result in results)
         {
             observations.AddRange(result.Rows);
@@ -266,7 +268,7 @@ public sealed class ClientPullRequestOverviewService(
         {
             status = "capacity";
         }
-        else if (attemptedSources < request.Sources.Count || sourceOutcomes.Any(outcome => outcome.Status != "loaded"))
+        else if (attemptedSources < request.Sources.Count || sourceOutcomes.Any(outcome => outcome.Status != "loaded" || outcome.IsComplete != true))
         {
             status = "incomplete";
         }
@@ -412,7 +414,7 @@ public sealed class ClientPullRequestOverviewService(
         var claim = await store.AcquireAsync(clientId, source.Key, source.Fingerprint, clock.GetUtcNow(), ct, source.CacheScope);
         if (claim.Owner.HasValue)
         {
-            var work = RunSharedRefreshAsync(scopeFactory, clientId, source, claim.Owner.Value);
+            var work = RunSharedRefreshAsync(scopeFactory, clientId, source, claim.Owner.Value, claim.Content);
             await work.WaitAsync(ct);
             claim = await store.AcquireAsync(clientId, source.Key, source.Fingerprint, clock.GetUtcNow(), ct, source.CacheScope);
         }
@@ -426,7 +428,7 @@ public sealed class ClientPullRequestOverviewService(
                 claim = await store.AcquireAsync(clientId, source.Key, source.Fingerprint, clock.GetUtcNow(), ct, source.CacheScope);
                 if (claim.Owner.HasValue)
                 {
-                    await RunSharedRefreshAsync(scopeFactory, clientId, source, claim.Owner.Value).WaitAsync(ct);
+                    await RunSharedRefreshAsync(scopeFactory, clientId, source, claim.Owner.Value, claim.Content).WaitAsync(ct);
                     claim = await store.AcquireAsync(clientId, source.Key, source.Fingerprint, clock.GetUtcNow(), ct, source.CacheScope);
                 }
             }
@@ -441,22 +443,27 @@ public sealed class ClientPullRequestOverviewService(
         var status = claim.Failure is null && payload is not null ? "loaded" : claim.LeaseUntil.HasValue ? "pending" : "failed";
         return new(
             payload?.Rows ?? [], new(
-                source.Pair.TargetId, source.Pair.ConnectionId, status, claim.Failure == "authenticationDenied" ? "accessDenied" : claim.Failure,
-                payload?.ListedAt, claim.NextRefreshAt));
+                    source.Pair.TargetId, source.Pair.ConnectionId, status, claim.Failure == "authenticationDenied" ? "accessDenied" : claim.Failure,
+                    payload?.ListedAt, claim.NextRefreshAt)
+                { IsComplete = claim.Failure is null ? payload?.IsComplete : false, CollectedRows = payload?.Rows.Count ?? 0 });
     }
 
-    private static async Task RunSharedRefreshAsync(IServiceScopeFactory factory, Guid clientId, AuthorizedSource source, Guid owner)
+    private static async Task RunSharedRefreshAsync(IServiceScopeFactory factory, Guid clientId, AuthorizedSource source, Guid owner, string? retainedContent)
     {
         await using var scope = factory.CreateAsyncScope();
         var worker = scope.ServiceProvider.GetRequiredService<ClientPullRequestOverviewService>();
-        await worker.RefreshAsync(clientId, source, owner);
+        await worker.RefreshAsync(clientId, source, owner, retainedContent);
     }
 
-    private async Task RefreshAsync(Guid clientId, AuthorizedSource source, Guid owner)
+    private async Task RefreshAsync(Guid clientId, AuthorizedSource source, Guid owner, string? retainedContent)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15), clock);
         string? content = null;
         string? failure = null;
+        var rows = new List<ClientPullRequestOverviewRow>();
+        var observedNumbers = new HashSet<int>();
+        DateTimeOffset? listedAt = null;
+        bool? complete = null;
         try
         {
             await RecheckAsync(clientId, [source.Pair], [source], timeout.Token);
@@ -464,36 +471,148 @@ public sealed class ClientPullRequestOverviewService(
             var repository = providers.GetReviewSourcePolicy(source.Target.Provider).CreateRepository(
                 source.Connection.HostBaseUrl, reference.Value, source.Target.ProviderProjectKey, source.Target.RepoFilters[0].RepositoryName);
             var context = new ReviewDiscoveryContext(source.Pair.ConnectionId, source.Target.ProviderScopePath);
-            var discovered = await AwaitProviderAsync(
-                providers.GetReviewDiscoveryProvider(source.Target.Provider)
-                    .ListOpenReviewsAsync(clientId, repository, null, timeout.Token, context), timeout.Token);
-            if (discovered.Any(review => review.CodeReview.Number <= 0 || string.IsNullOrWhiteSpace(review.Title)))
+            var provider = providers.GetReviewDiscoveryProvider(source.Target.Provider);
+            var seenIds = new HashSet<string>(StringComparer.Ordinal);
+            var seenRows = new HashSet<int>();
+            var continuations = new HashSet<string>(StringComparer.Ordinal);
+            string? continuation = null;
+            var rawCount = 0;
+            int? total = null;
+            var bytes = 256;
+            do
             {
-                throw new JsonException("The provider returned invalid pull request discovery data.");
-            }
+                ReviewDiscoveryPageDto page;
+                if (provider is IReviewDiscoveryPageProvider paged)
+                {
+                    page = await AwaitProviderAsync(
+                        paged.ListOpenReviewsPageAsync(clientId, repository, null, continuation, timeout.Token, context), timeout.Token);
+                    if (page.TotalCount is < 0 || total.HasValue && page.TotalCount.HasValue && total != page.TotalCount)
+                    {
+                        throw new JsonException("The provider returned inconsistent pull request coverage.");
+                    }
 
-            var listedAt = clock.GetUtcNow();
-            var rows = new List<ClientPullRequestOverviewRow>();
-            foreach (var review in discovered.Where(review => review.Provider == source.Target.Provider &&
-                                                              review.ReviewState is CodeReviewState.Open or CodeReviewState.Draft &&
-                                                              review.Repository.ExternalRepositoryId.Equals(
-                                                                  reference.Value, StringComparison.OrdinalIgnoreCase) &&
-                                                              source.Policy.Matches(review.TargetBranch))
-                         .OrderByDescending(review => review.CodeReview.Number).Take(100))
-            {
-                rows.Add(
-                    new(
+                    total ??= page.TotalCount;
+                    if (page.RawCount is < 0 or > 100 || page.ObservationIds.Count != page.RawCount ||
+                        page.ObservationIds.Any(string.IsNullOrWhiteSpace) || page.Items.Count > page.RawCount ||
+                        page.RawCount == 0 && page.Continuation is not null)
+                    {
+                        throw new JsonException("The provider returned invalid pull request page evidence.");
+                    }
+
+                    var added = 0;
+                    foreach (var id in page.ObservationIds)
+                    {
+                        if (seenIds.Add(id))
+                        {
+                            added++;
+                        }
+                    }
+
+                    if (page.RawCount > 0 && added == 0)
+                    {
+                        throw new JsonException("The provider returned a repeated pull request page.");
+                    }
+                }
+                else
+                {
+                    var legacy = await AwaitProviderAsync(provider.ListOpenReviewsAsync(clientId, repository, null, timeout.Token, context), timeout.Token);
+                    page = new(
+                        legacy.Take(10000).Where(review =>
+                            {
+                                timeout.Token.ThrowIfCancellationRequested();
+                                return review.Provider == source.Target.Provider &&
+                                       review.ReviewState is CodeReviewState.Open or CodeReviewState.Draft &&
+                                       review.Repository.ExternalRepositoryId.Equals(reference.Value, StringComparison.OrdinalIgnoreCase) &&
+                                       source.Policy.Matches(review.TargetBranch);
+                            })
+                            .OrderByDescending(review => review.CodeReview.Number)
+                            .ThenBy(review => review.ReviewRevision?.ProviderRevisionId, StringComparer.Ordinal)
+                            .ThenBy(review => review.ReviewRevision?.HeadSha, StringComparer.Ordinal)
+                            .ThenBy(review => review.Title, StringComparer.Ordinal)
+                            .ThenBy(review => review.SourceBranch, StringComparer.Ordinal)
+                            .ThenBy(review => review.TargetBranch, StringComparer.Ordinal)
+                            .ThenBy(review => review.AuthorName, StringComparer.Ordinal)
+                            .ThenBy(review => review.ReviewState)
+                            .ThenBy(review => review.WebUrl, StringComparer.Ordinal)
+                            .DistinctBy(review => review.CodeReview.Number)
+                            .Take(100).ToArray(), null, legacy.Count, []);
+                    timeout.Token.ThrowIfCancellationRequested();
+                }
+
+                var discovered = page.Items;
+                if (discovered.Any(review => review.CodeReview.Number <= 0 || string.IsNullOrWhiteSpace(review.Title)))
+                {
+                    throw new JsonException("The provider returned invalid pull request discovery data.");
+                }
+
+                listedAt ??= clock.GetUtcNow();
+                foreach (var review in discovered.Where(review => review.Provider == source.Target.Provider &&
+                                                                  review.Repository.ExternalRepositoryId.Equals(
+                                                                      reference.Value, StringComparison.OrdinalIgnoreCase)))
+                {
+                    observedNumbers.Add(review.CodeReview.Number);
+                }
+
+                foreach (var review in discovered.Where(review => review.Provider == source.Target.Provider &&
+                                                                  review.ReviewState is CodeReviewState.Open or CodeReviewState.Draft &&
+                                                                  review.Repository.ExternalRepositoryId.Equals(
+                                                                      reference.Value, StringComparison.OrdinalIgnoreCase) &&
+                                                                  source.Policy.Matches(review.TargetBranch))
+                             .OrderByDescending(review => review.CodeReview.Number)
+                             .ThenBy(review => review.ReviewRevision?.ProviderRevisionId, StringComparer.Ordinal)
+                             .ThenBy(review => review.ReviewRevision?.HeadSha, StringComparer.Ordinal)
+                             .ThenBy(review => review.Title, StringComparer.Ordinal)
+                             .ThenBy(review => review.SourceBranch, StringComparer.Ordinal)
+                             .ThenBy(review => review.TargetBranch, StringComparer.Ordinal)
+                             .ThenBy(review => review.AuthorName, StringComparer.Ordinal)
+                             .ThenBy(review => review.ReviewState)
+                             .ThenBy(review => review.WebUrl, StringComparer.Ordinal))
+                {
+                    if (!seenRows.Add(review.CodeReview.Number))
+                    {
+                        continue;
+                    }
+
+                    var row = new ClientPullRequestOverviewRow(
                         source.Pair.TargetId, source.Pair.ConnectionId, review.CodeReview.Number, Bound(review.Title, 512) ?? "",
                         SafeWebUrl(review.WebUrl), review.ReviewState == CodeReviewState.Draft ? "draft" : "open", Bound(review.SourceBranch, 512),
                         Bound(review.TargetBranch, 512), Bound(review.AuthorName?.Contains('@') == true ? null : review.AuthorName, 256),
                         Bound(review.ReviewRevision?.HeadSha, 128), Bound(review.ReviewRevision?.ProviderRevisionId, 128), null,
-                        "unavailable", listedAt, null));
-            }
+                        "unavailable", listedAt.Value, null);
+                    var rowBytes = JsonSerializer.SerializeToUtf8Bytes(row, Json).Length + 1;
+                    if (rows.Count >= 10000 || bytes + rowBytes > 2 * 1024 * 1024)
+                    {
+                        throw new OverviewCapacityException();
+                    }
+
+                    rows.Add(row);
+                    bytes += rowBytes;
+                }
+
+                rawCount += page.RawCount;
+                continuation = page.Continuation;
+                if (rawCount > 10000 || continuation is not null && rawCount == 10000)
+                {
+                    throw new OverviewCapacityException();
+                }
+
+                if (continuation is null && total.HasValue && seenIds.Count != total)
+                {
+                    throw new JsonException("The provider returned incomplete pull request coverage.");
+                }
+
+                if (continuation is not null && (continuation.Length > 256 || !continuations.Add(continuation)))
+                {
+                    throw new JsonException("The provider returned an invalid pull request continuation.");
+                }
+
+                complete = provider is IReviewDiscoveryPageProvider ? continuation is null : null;
+            } while (continuation is not null);
 
             // Publication checks use their own bounded token after the provider deadline has elapsed.
             using var publication = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await RecheckAsync(clientId, [source.Pair], [source], publication.Token);
-            content = JsonSerializer.Serialize(new SourcePayload(rows, listedAt), Json);
+            content = JsonSerializer.Serialize(new SourcePayload(rows, listedAt!.Value, complete), Json);
         }
         catch (ClientPullRequestOverviewException)
         {
@@ -502,6 +621,10 @@ public sealed class ClientPullRequestOverviewService(
         catch (OperationCanceledException)
         {
             failure = "timeout";
+        }
+        catch (OverviewCapacityException)
+        {
+            failure = "capacity";
         }
         catch (Exception exception) when (ProviderReadFailures.DeniedStatus(exception).HasValue)
         {
@@ -514,6 +637,61 @@ public sealed class ClientPullRequestOverviewService(
         catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException or ArgumentException or JsonException)
         {
             failure = "unavailable";
+        }
+
+        if (failure is not null && failure is not ("accessDenied" or "authenticationDenied" or "configurationChanged") && listedAt.HasValue)
+        {
+            using var publication = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            try
+            {
+                await RecheckAsync(clientId, [source.Pair], [source], publication.Token);
+                if (retainedContent is not null)
+                {
+                    SourcePayload? retained = null;
+                    try
+                    {
+                        retained = JsonSerializer.Deserialize<SourcePayload>(retainedContent, Json);
+                    }
+                    catch (JsonException)
+                    {
+                        // Invalid retained content cannot establish prior authorized observations.
+                    }
+
+                    if (retained?.Rows is not null && retained.ListedAt > clock.GetUtcNow().AddMinutes(-15))
+                    {
+                        var numbers = new HashSet<int>(observedNumbers);
+                        var retainedBytes = 256 + rows.Sum(row => JsonSerializer.SerializeToUtf8Bytes(row, Json).Length + 1);
+                        foreach (var prior in retained.Rows.Where(row => row.TargetId == source.Pair.TargetId && row.ConnectionId == source.Pair.ConnectionId &&
+                                                                         row.ListedAt > clock.GetUtcNow().AddMinutes(-15)))
+                        {
+                            if (!numbers.Add(prior.Number))
+                            {
+                                continue;
+                            }
+
+                            var rowBytes = JsonSerializer.SerializeToUtf8Bytes(prior, Json).Length + 1;
+                            if (rows.Count >= 10000 || retainedBytes + rowBytes > 2 * 1024 * 1024)
+                            {
+                                break;
+                            }
+
+                            rows.Add(prior);
+                            retainedBytes += rowBytes;
+                            listedAt = prior.ListedAt < listedAt ? prior.ListedAt : listedAt;
+                        }
+                    }
+                }
+
+                content = JsonSerializer.Serialize(new SourcePayload(rows, listedAt.Value, false), Json);
+            }
+            catch (ClientPullRequestOverviewException)
+            {
+                failure = "configurationChanged";
+            }
+            catch (OperationCanceledException)
+            {
+                failure = "configurationChanged";
+            }
         }
 
         using var completion = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -735,11 +913,15 @@ public sealed class ClientPullRequestOverviewService(
             snapshot.Items.Skip((page - 1) * pageSize).Take(pageSize).ToArray(), snapshot.Sources, cursor,
             snapshot.AttemptedSources < Math.Min(snapshot.TotalSources, 100) && cursor.Length > 0 ? cursor : null,
             page, pageSize, snapshot.Items.Count, snapshot.TotalSources, snapshot.AttemptedSources, snapshot.CreatedAt,
-            snapshot.ExpiresAt, stale, next, snapshot.Status);
+            snapshot.ExpiresAt, stale, next, snapshot.Status)
+        {
+            IsComplete = snapshot.Status == "available" && snapshot.AttemptedSources == snapshot.TotalSources &&
+                         snapshot.Sources.All(source => source.IsComplete == true && source.Status == "loaded")
+        };
     }
 
     private static ClientPullRequestOverviewPage Capacity(ClientPullRequestOverviewPage page) =>
-        page with { Items = [], Cursor = "", NextCursor = null, TotalRows = null, Status = "capacity" };
+        page with { Items = [], Cursor = "", NextCursor = null, TotalRows = null, Status = "capacity", IsComplete = false };
 
     private static ClientPullRequestOverviewPage BoundedResponse(ClientPullRequestOverviewPage page) =>
         JsonSerializer.SerializeToUtf8Bytes(page, Json).Length <= 2 * 1024 * 1024 ? page : Capacity(page);
@@ -798,7 +980,9 @@ public sealed class ClientPullRequestOverviewService(
 
     private sealed class SnapshotInvalidatedException : Exception;
 
-    private sealed record SourcePayload(IReadOnlyList<ClientPullRequestOverviewRow> Rows, DateTimeOffset ListedAt);
+    private sealed record SourcePayload(IReadOnlyList<ClientPullRequestOverviewRow> Rows, DateTimeOffset ListedAt, bool? IsComplete = null);
+
+    private sealed class OverviewCapacityException : Exception;
 
     private sealed record MetadataPayload(ReviewOverviewDto Value, DateTimeOffset ObservedAt);
 

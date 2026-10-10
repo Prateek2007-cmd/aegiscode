@@ -21,7 +21,8 @@ public sealed partial class PrCrawlService(
     IPullRequestSynchronizationService pullRequestSynchronizationService,
     IProviderActivationService? providerActivationService = null,
     IClientRegistry? clientRegistry = null,
-    IScmProviderRegistry? providerRegistry = null) : IPrCrawlService
+    IScmProviderRegistry? providerRegistry = null,
+    IScheduledReviewAuthorityService? scheduledAuthority = null) : IPrCrawlService
 {
     /// <summary>
     ///     Runs one crawl cycle across all active configurations, creating review jobs for newly discovered pull requests.
@@ -45,7 +46,9 @@ public sealed partial class PrCrawlService(
             try
             {
                 assignedPrs = await prFetcher.ListAssignedOpenReviewsAsync(config, cancellationToken);
-                reviewerContext = await this.ResolveReviewerContextAsync(config, cancellationToken);
+                reviewerContext = scheduledAuthority is null
+                    ? await this.ResolveReviewerContextAsync(config, cancellationToken)
+                    : new ResolvedReviewer(null);
                 LogPrsDiscovered(logger, assignedPrs.Count, config.ProviderScopePath, config.ProviderProjectKey);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -64,7 +67,14 @@ public sealed partial class PrCrawlService(
                 LogTargetAdmissionError(logger, config.Id, ex);
             }
 
-            await this.DetectAbandonedJobsAsync(config, assignedPrs, cancellationToken);
+            try
+            {
+                await this.DetectAbandonedJobsAsync(config, assignedPrs, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogTargetAdmissionError(logger, config.Id, ex);
+            }
         }
     }
 
@@ -94,7 +104,7 @@ public sealed partial class PrCrawlService(
                     Repository = pr.Repository,
                     CodeReview = pr.CodeReview,
                     ReviewRevision = pr.ReviewRevision,
-                    RequestedReviewerIdentity = reviewerContext.ConfiguredTriggerReviewer,
+                    RequestedReviewerIdentity = pr.Authority is not null ? pr.Authority.Reviewer : reviewerContext.ConfiguredTriggerReviewer,
                     CandidateIterationId = pr.RevisionId,
                     PrTitle = pr.ReviewTitle,
                     RepositoryName = pr.RepositoryDisplayName,
@@ -105,6 +115,39 @@ public sealed partial class PrCrawlService(
                     InvalidProCursorSourceIds = config.InvalidProCursorSourceIds ?? [],
                     ReviewTemperature = config.ReviewTemperature,
                 };
+                if (scheduledAuthority is not null)
+                {
+                    if (pr.Authority is null)
+                    {
+                        continue;
+                    }
+
+                    await using (var initialAdmission =
+                                 await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, cancellationToken).ConfigureAwait(false))
+                    {
+                        var before = await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false);
+                        if (before is null || !await scheduledAuthority.IsCurrentAsync(pr.Authority, cancellationToken).ConfigureAwait(false))
+                        {
+                            continue;
+                        }
+                    }
+
+                    var selectedPrepared = await pullRequestSynchronizationService.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
+                    await using var selectedAdmission =
+                        await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, cancellationToken).ConfigureAwait(false);
+                    var after = await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false);
+                    if (after is not null && await scheduledAuthority.IsCurrentAsync(pr.Authority, cancellationToken).ConfigureAwait(false))
+                    {
+                        await selectedPrepared.CompleteAsync(
+                                new PullRequestReviewSettings(
+                                    after.ProCursorSourceScopeMode,
+                                    after.ProCursorSourceIds ?? [], after.InvalidProCursorSourceIds ?? [], after.ReviewTemperature), cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    continue;
+                }
+
                 if (!canonical)
                 {
                     if (await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false) is not null)
@@ -139,7 +182,7 @@ public sealed partial class PrCrawlService(
         CancellationToken ct)
     {
         var canonical = discovered.RepoFilters.Count == 1 && discovered.RepoFilters[0].CanonicalSourceRef is not null;
-        var current = canonical
+        var current = canonical || scheduledAuthority is not null
             ? await crawlConfigs.GetReviewTargetPolicySnapshotAsync(discovered.Id, discovered.ClientId, ct).ConfigureAwait(false)
             : discovered;
         if (current is null || current.ClientId != discovered.ClientId || current.Id != discovered.Id)
@@ -157,7 +200,7 @@ public sealed partial class PrCrawlService(
             return null;
         }
 
-        if (!canonical)
+        if (!canonical && scheduledAuthority is null)
         {
             return current;
         }
@@ -180,6 +223,45 @@ public sealed partial class PrCrawlService(
             return null;
         }
 
+        if (current.OrganizationScopeId != discovered.OrganizationScopeId || current.RepoFilters.Count != discovered.RepoFilters.Count ||
+            current.RepoFilters.Where((filter, index) => filter.Id != discovered.RepoFilters[index].Id ||
+                                                         filter.RepositoryName != discovered.RepoFilters[index].RepositoryName ||
+                                                         !Equals(filter.CanonicalSourceRef, discovered.RepoFilters[index].CanonicalSourceRef) ||
+                                                         !filter.TargetBranchPatterns.SequenceEqual(
+                                                             discovered.RepoFilters[index].TargetBranchPatterns, StringComparer.Ordinal)).Any())
+        {
+            return null;
+        }
+
+        if (providerRegistry is null)
+        {
+            return null;
+        }
+
+        var sourcePolicy = providerRegistry.GetReviewSourcePolicy(current.Provider);
+        if (scheduledAuthority is not null && (pr.Authority is null ||
+                                               !pr.Authority.Grants.Any(grant => sourcePolicy.MatchesScheduledRepositoryGrant(current, pr.Repository, grant))))
+        {
+            return null;
+        }
+
+        if (!canonical)
+        {
+            var matching = current.RepoFilters.FirstOrDefault(filter => filter.CanonicalSourceRef is not null
+                ? sourcePolicy.MatchesCapturedRepository(
+                    filter.CanonicalSourceRef.Value, filter.RepositoryName, current.ProviderProjectKey,
+                    pr.Repository.ExternalRepositoryId, pr.Repository.ProjectPath)
+                : sourcePolicy.MatchesRepositoryName(filter.RepositoryName, pr.Repository.RepositoryName ?? pr.Repository.ProjectPath));
+            if (current.RepoFilters.Count > 0 && matching is null)
+            {
+                return null;
+            }
+
+            return matching is null || DestinationBranchPolicy.TryCreate(matching.TargetBranchPatterns, out var branches) && branches!.Matches(pr.TargetBranch)
+                ? current
+                : null;
+        }
+
         if (current.RepoFilters.Count != 1 || current.RepoFilters[0].CanonicalSourceRef is null)
         {
             return null;
@@ -191,11 +273,6 @@ public sealed partial class PrCrawlService(
         }
 
         var filter = current.RepoFilters[0];
-        if (providerRegistry is null)
-        {
-            return null;
-        }
-
         var repositoryMatches = providerRegistry.GetReviewSourcePolicy(current.Provider).MatchesRepository(current, pr.Repository);
 
         if (!repositoryMatches || !DestinationBranchPolicy.TryCreate(filter.TargetBranchPatterns, out var policy))
@@ -236,13 +313,60 @@ public sealed partial class PrCrawlService(
 
             LogAbandonmentCheckStarted(logger, activeJob.Id, activeJob.PullRequestId);
 
-            var status = await prStatusFetcher.GetStatusAsync(
-                config.ProviderScopePath,
-                config.ProviderProjectKey,
-                activeJob.RepositoryId,
-                activeJob.PullRequestId,
-                config.ClientId,
-                cancellationToken);
+            PrStatus status;
+            if (scheduledAuthority is not null && providerRegistry is not null)
+            {
+                try
+                {
+                    var authority = await scheduledAuthority.ResolveAsync(config, ct: cancellationToken).ConfigureAwait(false);
+                    var repository = providerRegistry.GetReviewSourcePolicy(config.Provider).CreateCapturedRepository(
+                        config.ProviderScopePath, activeJob.RepositoryId, config.ProviderProjectKey, activeJob.PrRepositoryName ?? activeJob.RepositoryId);
+                    if (activeJob.Provider == config.Provider && activeJob.RepositoryProjectPath is not null)
+                    {
+                        repository = activeJob.RepositoryReference;
+                    }
+
+                    if (!authority.Grants.Any(grant =>
+                            providerRegistry.GetReviewSourcePolicy(config.Provider).MatchesScheduledRepositoryGrant(config, repository, grant)))
+                    {
+                        continue;
+                    }
+
+                    var review = new CodeReviewRef(
+                        repository, CodeReviewPlatformKind.PullRequest, activeJob.PullRequestId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        activeJob.PullRequestId);
+                    var observed = await providerRegistry.GetCodeReviewQueryService(config.Provider).GetReviewAsync(
+                        config.ClientId, review, cancellationToken, authority.DiscoveryContext).ConfigureAwait(false);
+                    if (observed is null ||
+                        observed.ReviewState is not (CodeReviewState.Open or CodeReviewState.Draft or CodeReviewState.Closed or CodeReviewState.Merged) ||
+                        !await scheduledAuthority.IsCurrentAsync(authority, cancellationToken).ConfigureAwait(false))
+                    {
+                        continue;
+                    }
+
+                    status = observed.ReviewState switch
+                    {
+                        CodeReviewState.Merged => PrStatus.Completed,
+                        CodeReviewState.Closed => PrStatus.Abandoned,
+                        _ => PrStatus.Active,
+                    };
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    LogTargetAdmissionError(logger, config.Id, ex);
+                    continue;
+                }
+            }
+            else
+            {
+                status = await prStatusFetcher.GetStatusAsync(
+                    config.ProviderScopePath,
+                    config.ProviderProjectKey,
+                    activeJob.RepositoryId,
+                    activeJob.PullRequestId,
+                    config.ClientId,
+                    cancellationToken);
+            }
 
             await this.TrySynchronizeAsync(
                 new PullRequestSynchronizationRequest
