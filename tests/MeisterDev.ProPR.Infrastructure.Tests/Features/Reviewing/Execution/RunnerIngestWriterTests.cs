@@ -64,7 +64,8 @@ public sealed class RunnerIngestWriterTests
             [
                 new RunnerFileOutcome(
                     "src/a.cs", true, false, "looks fine", null, ["pass-1"],
-                    [new ReviewComment("src/a.cs", 3, CommentSeverity.Warning, "Bounded?")]),
+                    [new ReviewComment("src/a.cs", 3, CommentSeverity.Warning, "Bounded?")],
+                    WithheldFindings: [new(new ReviewComment("src/a.cs", 7, CommentSeverity.Warning, "Withheld candidate."), "judge_output_limit")]),
             ]);
 
         Assert.NotNull(written);
@@ -72,6 +73,30 @@ public sealed class RunnerIngestWriterTests
         var comment = Assert.Single(written.Comments!);
         Assert.Equal("Bounded?", comment.Message);
         Assert.Equal(3, comment.LineNumber);
+        Assert.Equal("judge_output_limit", Assert.Single(written.WithheldFindings!).ReasonCode);
+    }
+
+    [Fact]
+    public async Task ACompletedCheckpointReplay_PreservesTheOriginalWithheldEvidence()
+    {
+        var job = Job();
+        this._jobs.AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            job.FileReviewResults.Add(call.Arg<ReviewFileResult>());
+            return Task.CompletedTask;
+        });
+        var writer = this.CreateWriter(job);
+        var outcome = new RunnerFileOutcome(
+            "src/a.cs", true, false, "Summary", null, [], [],
+            WithheldFindings: [new(new ReviewComment("src/a.cs", 3, CommentSeverity.Warning, "Potential issue."), "judge_output_limit")]);
+
+        await writer.WriteFileResultsAsync(JobId, [outcome]);
+        await writer.WriteFileResultsAsync(JobId, [outcome]);
+
+        var stored = Assert.Single(job.FileReviewResults);
+        Assert.Equal(outcome.WithheldFindings![0], Assert.Single(stored.WithheldFindings!));
+        await this._jobs.Received(1).AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
+        await this._jobs.DidNotReceive().UpdateFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

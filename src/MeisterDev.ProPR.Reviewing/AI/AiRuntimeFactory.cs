@@ -3,6 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using MeisterDev.Ai.Providers.Contracts;
+using MeisterDev.Ai.Providers.Catalog;
 using MeisterDev.Ai.Providers.Resilience;
 using MeisterDev.Ai.Providers.Runtime;
 using MeisterDev.ProPR.Application.AI;
@@ -57,6 +58,8 @@ public sealed class AiRuntimeFactory(
         return new ResolvedAiChatRuntime(connection, model, binding, wrapped, capabilities)
         {
             LogicalModelName = logicalModelName,
+            SupportsLowReasoningEffort = BundledModelReasoningSupport.SupportsLowEffort(model.RemoteModelId)
+                                         && driver.SupportsLowReasoningEffort(binding.ProtocolMode),
         };
     }
 

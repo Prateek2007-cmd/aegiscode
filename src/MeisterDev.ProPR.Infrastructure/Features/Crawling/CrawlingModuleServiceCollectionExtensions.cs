@@ -2,28 +2,29 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
-using MeisterDev.ProPR.CodeInsights.Contracts;
+using MeisterDev.ProPR.Application.Features.Crawling.Configuration;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Commands.HandleProviderWebhookDelivery;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
-using MeisterDev.ProPR.Application.Features.Crawling.Configuration;
+using MeisterDev.ProPR.Application.Services;
+using MeisterDev.ProPR.CodeInsights.Contracts;
+using MeisterDev.ProPR.Infrastructure.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Crawling.Configuration;
 using MeisterDev.ProPR.Infrastructure.Features.Crawling.Configuration.Persistence;
-using MeisterDev.ProPR.Application.Services;
-using MeisterDev.ProPR.Infrastructure.DependencyInjection;
+using MeisterDev.ProPR.Infrastructure.Features.Crawling.Execution;
 using MeisterDev.ProPR.Infrastructure.Features.Crawling.Webhooks.Persistence;
 using MeisterDev.ProPR.Infrastructure.Features.Crawling.Webhooks.Security;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Repositories;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -84,24 +85,26 @@ public static class CrawlingModuleServiceCollectionExtensions
         services.AddAzureDevOpsCrawlingServices(configuration);
         if (configuration.HasDatabaseConnectionString())
         {
-            services.AddScoped<IScheduledReviewAuthorityService, Execution.ScheduledReviewAuthorityService>();
+            services.AddScoped<IScheduledReviewAuthorityService, ScheduledReviewAuthorityService>();
             services.AddScoped<IReviewTargetAutomationService, ReviewTargetAutomationService>();
             if (!configuration.GetValue<bool>("ADO_STUB_PR"))
             {
                 services.RemoveAll<IAssignedReviewDiscoveryService>();
-                services.AddScoped<IAssignedReviewDiscoveryService, Execution.ScheduledReviewDiscoveryService>();
+                services.AddScoped<IAssignedReviewDiscoveryService, ScheduledReviewDiscoveryService>();
             }
         }
 
         services.AddScoped<IPullRequestSynchronizationService, PullRequestSynchronizationService>();
-        services.AddScoped<MeisterDev.ProPR.Application.Features.Crawling.Configuration.IReviewConfigurationSelectionService,
-            MeisterDev.ProPR.Application.Features.Crawling.Configuration.ReviewConfigurationSelectionService>();
+        services.AddScoped<IReviewConfigurationSelectionService,
+            ReviewConfigurationSelectionService>();
 
         // The close observation both seal paths share. It lives here, not in the code-insight module, because
         // deciding whether a comment is ProPR's own needs the posted-comment provenance and the
         // thread-ownership resolver. Registered unconditionally: it observes nothing when the code-insight
         // harvester is absent, and the sweep and the lifecycle pass both take it as optional.
         services.AddScoped<ICodeInsightCloseObserver, PullRequestCloseObserver>();
+        services.AddScoped<ICodeInsightHistoricalObserver, PullRequestCloseObserver>();
+        services.AddScoped<ICodeInsightProviderFeedbackReader, CodeInsightProviderFeedbackReader>();
         services.AddScoped<HandleProviderWebhookDeliveryHandler>();
 
         services.AddScoped<IWebhookSecretGenerator, WebhookSecretGenerator>();

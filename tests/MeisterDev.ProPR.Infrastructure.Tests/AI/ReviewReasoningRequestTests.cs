@@ -11,6 +11,37 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 public class ReviewReasoningRequestTests
 {
     [Fact]
+    public void OrdinaryReviewReasoning_DoesNotChangeItsStandardTransportOptions()
+    {
+        var options = new ChatOptions().ApplyReasoning(false, ReviewReasoningEffort.Low);
+
+        Assert.Null(options.Reasoning);
+    }
+
+    [Fact]
+    public void ResolvedReasoning_StatesLowEffortForBothOpenAiTransports()
+    {
+        var options = new ChatOptions().ApplyResolvedReasoning(false, ReviewReasoningEffort.Low);
+
+        Assert.Equal(ReasoningEffort.Low, options.Reasoning!.Effort);
+#pragma warning disable OPENAI001 // Responses reasoning options are an evaluation-stage API surface.
+        var raw = Assert.IsType<CreateResponseOptions>(options.RawRepresentationFactory!(null!));
+        Assert.Equal(ResponseReasoningEffortLevel.Low, raw.ReasoningOptions!.ReasoningEffortLevel);
+        Assert.Null(raw.ReasoningOptions.ReasoningSummaryVerbosity);
+#pragma warning restore OPENAI001
+    }
+
+    [Fact]
+    public void AResolvedDefaultEffort_ClearsPreviouslyStatedStandardEffort()
+    {
+        var options = new ChatOptions { Reasoning = new ReasoningOptions { Effort = ReasoningEffort.High } };
+
+        options.ApplyResolvedReasoning(false, ReviewReasoningEffort.None);
+
+        Assert.Null(options.Reasoning);
+    }
+
+    [Fact]
     public void ApplyReasoning_CaptureOffAndEffortNone_LeavesRawRepresentationUnset()
     {
         var options = new ChatOptions();

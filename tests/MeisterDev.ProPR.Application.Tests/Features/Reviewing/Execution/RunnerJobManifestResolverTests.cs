@@ -26,6 +26,20 @@ namespace MeisterDev.ProPR.Application.Tests.Features.Reviewing.Execution;
 
 public sealed class RunnerJobManifestResolverTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheManifest_CarriesResolvedLowEffortSupport(bool supported)
+    {
+        var runtime = Runtime("reviewer-default");
+        runtime.SupportsLowReasoningEffort.Returns(supported);
+        this._runtimes.ResolveChatRuntimeAsync(Arg.Any<Guid>(), Arg.Any<AiPurpose>(), Arg.Any<CancellationToken>()).Returns(runtime);
+
+        var resolution = await this.CreateResolver().ResolveAsync(RequestFor(JobWithRevision()));
+
+        Assert.Equal(supported, resolution.Manifest!.DefaultModel.SupportsLowReasoningEffort);
+    }
+
     private readonly IClientRegistry _clients = Substitute.For<IClientRegistry>();
     private readonly IRepositoryExclusionFetcher _exclusions = Substitute.For<IRepositoryExclusionFetcher>();
     private readonly IRepositoryInstructionFetcher _instructions = Substitute.For<IRepositoryInstructionFetcher>();

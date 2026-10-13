@@ -308,7 +308,8 @@ public sealed partial class RunnerJobManifestResolver(
             runtime.Model.MaxContextTokens,
             runtime.Model.SupportsPromptCaching,
             runtime.Model.SupportsToolUse,
-            runtime.Model.SupportsStructuredOutput);
+            runtime.Model.SupportsStructuredOutput,
+            runtime.SupportsLowReasoningEffort);
     }
 
     /// <summary>

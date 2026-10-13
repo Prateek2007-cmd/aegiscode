@@ -15,6 +15,12 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// </remarks>
 public interface ICodeInsightMissHarvester
 {
+    /// <summary>Preserves consistent historical concern evidence and acknowledges completed retention.</summary>
+    Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
+    {
+        return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
+    }
+
     /// <summary>
     ///     Considers one observed thread, excludes reviewer-owned threads, and refreshes changed human
     ///     evidence with bounded judgement and dimension-enrichment retries.

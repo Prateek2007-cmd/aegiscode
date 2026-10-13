@@ -42,6 +42,20 @@ public sealed class CodeInsightsOptions
     /// <summary>Jobs whose roll-ups one catch-up sweep may project. Floored at one.</summary>
     public int BackfillMaxJobs { get; set; } = 50;
 
+    /// <summary>Pull requests refreshed from provider evidence per catch-up cycle.</summary>
+    public int ProviderEvidenceBackfillMaxPullRequests { get; set; } = 25;
+
+    public int ProviderEvidenceLeaseMinutes { get; set; } = 15;
+    public int ProviderEvidenceRetryCooldownMinutes { get; set; } = 360;
+
+    /// <summary>Seconds admitted for one provider-evidence sweep, clamped to 10 through 600.</summary>
+    public int ProviderEvidenceSweepBudgetSeconds { get; set; } = 300;
+
+    public int EffectiveProviderEvidenceBackfillMaxPullRequests => Math.Clamp(this.ProviderEvidenceBackfillMaxPullRequests, 1, 250);
+    public TimeSpan ProviderEvidenceLease => TimeSpan.FromMinutes(Math.Clamp(this.ProviderEvidenceLeaseMinutes, 1, 60));
+    public TimeSpan ProviderEvidenceRetryCooldown => TimeSpan.FromMinutes(Math.Clamp(this.ProviderEvidenceRetryCooldownMinutes, 10, 1440));
+    public TimeSpan ProviderEvidenceSweepBudget => TimeSpan.FromSeconds(Math.Clamp(this.ProviderEvidenceSweepBudgetSeconds, 10, 600));
+
     /// <summary>Pull requests one catch-up sweep may seal.</summary>
     public int SealSweepMaxPullRequests { get; set; } = 25;
 

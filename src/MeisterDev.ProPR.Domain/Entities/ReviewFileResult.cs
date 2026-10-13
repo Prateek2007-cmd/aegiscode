@@ -80,6 +80,9 @@ public class ReviewFileResult
     /// <summary>The AI review comments for this file, or null until completion.</summary>
     public IReadOnlyList<ReviewComment>? Comments { get; private set; }
 
+    /// <summary>Findings withheld from publication, retained with the checkpoint for evidence collection.</summary>
+    public IReadOnlyList<WithheldReviewFinding>? WithheldFindings { get; private set; }
+
     /// <summary>
     ///     How pre-flight context-window budgeting treated this file: reviewed normally, degraded to
     ///     diff-only, or skipped because even the minimal payload exceeded the model window.
@@ -112,6 +115,7 @@ public class ReviewFileResult
         result.IsCarriedForward = true;
         result.PerFileSummary = prior.PerFileSummary;
         result.Comments = prior.Comments;
+        result.WithheldFindings = prior.WithheldFindings;
         return result;
     }
 
@@ -126,6 +130,7 @@ public class ReviewFileResult
         result.IsComplete = true;
         result.PerFileSummary = prior.PerFileSummary;
         result.Comments = prior.Comments;
+        result.WithheldFindings = prior.WithheldFindings;
         result.ResumedFromJobId = prior.JobId;
         result.ResumedFromFileResultId = prior.Id;
         result._reviewedPassKeys = [.. prior._reviewedPassKeys];
@@ -141,10 +146,12 @@ public class ReviewFileResult
     ///     The configured passes that contributed, so a later resume can tell whether this result still
     ///     matches the client's configuration.
     /// </param>
+    /// <param name="withheldFindings">Generated findings excluded from publication by verification or the final gate.</param>
     public void MarkCompleted(
         string summary,
         IReadOnlyList<ReviewComment> comments,
-        IReadOnlyList<string>? reviewedPassKeys = null)
+        IReadOnlyList<string>? reviewedPassKeys = null,
+        IReadOnlyList<WithheldReviewFinding>? withheldFindings = null)
     {
         if (this.IsFailed)
         {
@@ -159,6 +166,7 @@ public class ReviewFileResult
         this.IsComplete = true;
         this.PerFileSummary = summary;
         this.Comments = comments;
+        this.WithheldFindings = withheldFindings is null ? [] : [.. withheldFindings];
         this._reviewedPassKeys = reviewedPassKeys is null ? [] : [.. reviewedPassKeys];
     }
 
@@ -227,6 +235,7 @@ public class ReviewFileResult
         this.ErrorMessage = null;
         this.PerFileSummary = null;
         this.Comments = null;
+        this.WithheldFindings = null;
         this.ContextBudgetOutcome = ReviewContextBudgetOutcome.Normal;
     }
 }

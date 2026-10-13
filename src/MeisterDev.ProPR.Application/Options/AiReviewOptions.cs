@@ -7,14 +7,14 @@ using MeisterDev.ProPR.CodeAnalysis;
 namespace MeisterDev.ProPR.Application.Options;
 
 /// <summary>
-///     Configuration options for the agentic AI review loop. Validated on application startup.
+///     Configuration options for the agentic AI review loop. Evidence-judge output budgets are validated on startup.
 /// </summary>
 /// <remarks>
 ///     Only options whose summary names an <c>AI_*</c> environment variable are overridable at runtime
 ///     (wired in <c>InfrastructureServiceExtensions.ConfigureAiReviewOptions</c>). The remaining options are
 ///     fixed tuning defaults with no configuration binding.
 /// </remarks>
-public sealed class AiReviewOptions
+public sealed class AiReviewOptions : IValidatableObject
 {
     /// <summary>Maximum number of agentic loop iterations per review. Bound to <c>AI_MAX_REVIEW_ITERATIONS</c>.</summary>
     [Range(1, 100, ErrorMessage = "MaxIterations must be between 1 and 100.")]
@@ -104,6 +104,40 @@ public sealed class AiReviewOptions
     /// <summary>Maximum output tokens for high-complexity file reviews and non-file review paths.</summary>
     [Range(512, 32768, ErrorMessage = "MaxOutputTokensHigh must be between 512 and 32768.")]
     public int MaxOutputTokensHigh { get; set; } = 8192;
+
+    /// <summary>
+    ///     Reasoning-inclusive output budget for each evidence-judge model turn.
+    ///     Bound to <c>AI_EVIDENCE_JUDGE_MAX_OUTPUT_TOKENS</c>.
+    /// </summary>
+    [Range(512, 32768, ErrorMessage = "EvidenceJudgeMaxOutputTokens must be between 512 and 32768.")]
+    public int EvidenceJudgeMaxOutputTokens { get; set; } = 4000;
+
+    /// <summary>
+    ///     Larger reasoning-inclusive output budget after an evidence-judge turn exhausts its initial budget.
+    ///     Bound to <c>AI_EVIDENCE_JUDGE_RETRY_MAX_OUTPUT_TOKENS</c>.
+    /// </summary>
+    [Range(512, 32768, ErrorMessage = "EvidenceJudgeRetryMaxOutputTokens must be between 512 and 32768.")]
+    public int EvidenceJudgeRetryMaxOutputTokens { get; set; } = 8000;
+
+    /// <summary>Whether both evidence-judge budgets are bounded and the retry budget exceeds the initial budget.</summary>
+    public bool HasValidEvidenceJudgeOutputBudgets()
+    {
+        return this.EvidenceJudgeMaxOutputTokens is >= 512 and <= 32768
+               && this.EvidenceJudgeRetryMaxOutputTokens is >= 512 and <= 32768
+               && this.EvidenceJudgeRetryMaxOutputTokens > this.EvidenceJudgeMaxOutputTokens;
+    }
+
+    /// <summary>Validates the relationship between the evidence judge's initial and retry budgets.</summary>
+    /// <param name="validationContext">The context of the options being validated.</param>
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (this.EvidenceJudgeRetryMaxOutputTokens <= this.EvidenceJudgeMaxOutputTokens)
+        {
+            yield return new ValidationResult(
+                "EvidenceJudgeRetryMaxOutputTokens must exceed EvidenceJudgeMaxOutputTokens.",
+                [nameof(this.EvidenceJudgeMaxOutputTokens), nameof(this.EvidenceJudgeRetryMaxOutputTokens)]);
+        }
+    }
 
     /// <summary>Maximum characters retained from one bulky tool result before replay summarisation metadata is recorded.</summary>
     [Range(1024, 200000, ErrorMessage = "MaxToolResultReplayCharacters must be between 1024 and 200000.")]

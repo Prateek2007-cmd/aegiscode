@@ -283,6 +283,7 @@ public sealed record RunnerReviewPass(
 /// <param name="SupportsPromptCaching">Whether the model can serve a cached prefix.</param>
 /// <param name="SupportsToolUse">Whether the reviewer may offer this model tools.</param>
 /// <param name="SupportsStructuredOutput">Whether findings can be requested as a structured response.</param>
+/// <param name="SupportsLowReasoningEffort">Whether the resolved model and transport support low reasoning effort.</param>
 public sealed record RunnerModelBinding(
     string LogicalModelName,
     string RemoteModelId,
@@ -293,7 +294,8 @@ public sealed record RunnerModelBinding(
     int? MaxContextTokens,
     bool SupportsPromptCaching,
     bool SupportsToolUse,
-    bool SupportsStructuredOutput);
+    bool SupportsStructuredOutput,
+    bool SupportsLowReasoningEffort = false);
 
 /// <summary>Prompt configuration for this review, resolved from client configuration at dispatch.</summary>
 /// <param name="Language">The output language contract for findings, when the client sets one.</param>

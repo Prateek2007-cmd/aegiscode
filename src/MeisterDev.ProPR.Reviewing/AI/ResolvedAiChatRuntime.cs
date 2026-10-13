@@ -19,5 +19,8 @@ public sealed record ResolvedAiChatRuntime(
     AgentReviewRuntimeCapabilities Capabilities) : IResolvedAiChatRuntime
 {
     /// <inheritdoc />
+    public bool SupportsLowReasoningEffort { get; init; }
+
+    /// <inheritdoc />
     public string? LogicalModelName { get; init; }
 }

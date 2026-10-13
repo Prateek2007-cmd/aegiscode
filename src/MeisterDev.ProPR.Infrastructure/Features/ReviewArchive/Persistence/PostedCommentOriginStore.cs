@@ -2,8 +2,11 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
+using MeisterDev.ProPR.Application.Features.Providers.Identity;
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Data;
+using MeisterDev.ProPR.Application.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.ReviewArchive.Persistence;
@@ -23,7 +26,8 @@ namespace MeisterDev.ProPR.Infrastructure.Features.ReviewArchive.Persistence;
 /// </remarks>
 public sealed class PostedCommentOriginStore(
     MeisterProPRDbContext dbContext,
-    IDbContextFactory<MeisterProPRDbContext>? contextFactory = null) : IPostedCommentOriginStore
+    IDbContextFactory<MeisterProPRDbContext>? contextFactory = null,
+    IScmProviderRegistry? providerRegistry = null) : IPostedCommentOriginStore
 {
     public Task RecordAsync(IReadOnlyList<PostedCommentOriginEntry> entries, CancellationToken ct = default)
     {
@@ -164,6 +168,56 @@ public sealed class PostedCommentOriginStore(
                 return rows;
             },
             ct);
+    }
+
+    public Task<PostedCommentOriginSourceSnapshot> GetOriginsForProviderSourceAsync(
+        Guid clientId, string repositoryId, long pullRequestId, ScmProvider provider, string providerScope, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerScope);
+        return this.WithDbAsync(
+            async db =>
+            {
+                var origins = await db.PostedCommentOrigins.AsNoTracking()
+                    .Where(o => o.ClientId == clientId && o.RepositoryId == repositoryId && o.PullRequestId == pullRequestId)
+                    .Select(o => new PostedCommentOriginRow(o.ProviderThreadId, o.ProviderCommentId, o.JobId)).ToListAsync(ct);
+                var ids = origins.Select(o => o.JobId).Distinct().ToList();
+                var reviewJobs = await db.ReviewJobs.AsNoTracking()
+                    .Where(j => ids.Contains(j.Id) && j.ClientId == clientId && j.RepositoryId == repositoryId && j.PullRequestId == pullRequestId)
+                    .ToListAsync(ct);
+                var mentionJobs = await db.MentionReplyJobs.AsNoTracking()
+                    .Where(j => ids.Contains(j.Id) && j.ClientId == clientId && j.RepositoryId == repositoryId && j.PullRequestId == pullRequestId)
+                    .ToListAsync(ct);
+                var matched = new List<PostedCommentOriginRow>();
+                var unverifiable = new List<PostedCommentOriginRow>();
+                foreach (var origin in origins)
+                {
+                    var review = reviewJobs.SingleOrDefault(j => j.Id == origin.JobId);
+                    var mention = mentionJobs.SingleOrDefault(j => j.Id == origin.JobId);
+                    if (providerRegistry is null || (review is null) == (mention is null))
+                    {
+                        unverifiable.Add(origin);
+                        continue;
+                    }
+
+                    var originProvider = review?.Provider ?? mention!.Provider;
+                    var policy = providerRegistry.GetSourceIdentityPolicy(originProvider);
+                    var source = review is not null
+                        ? ProviderSourceIdentity.FromReviewJob(review, policy).Value
+                        : ProviderSourceIdentity.FromReviewSource(
+                            originProvider, policy.SelectCapturedSource(mention!.OrganizationUrl, mention.HostBaseUrl), policy).Value;
+                    if (string.IsNullOrWhiteSpace(source))
+                    {
+                        unverifiable.Add(origin);
+                    }
+                    else if (originProvider == provider && source == providerScope)
+                    {
+                        matched.Add(origin);
+                    }
+                }
+
+                return new PostedCommentOriginSourceSnapshot(matched, unverifiable);
+            }, ct);
     }
 
     public Task<IReadOnlyList<Guid>> GetJobIdsWithOriginsAsync(

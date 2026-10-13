@@ -16242,7 +16242,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Applies one batch of trace events, per-file results, and spend. */
+        /** Applies trace events, per-file checkpoints with optional withheld evidence, and spend. */
         post: {
             parameters: {
                 query?: never;
@@ -16283,7 +16283,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * What this job already has reviewed, for an executor picking it up after a reclaim.
+         * Returns this job's per-file checkpoints, including optional withheld evidence, after a reclaim.
          *
          *     Read here rather than carried in the manifest: a completed file result holds its findings, so
          *         a job most of the way through a large review would put all of them in every lease offer, and
@@ -16309,7 +16309,11 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["RunnerPriorResultsResponse"];
+                        "application/json": components["schemas"]["RunnerPriorResultsResponse"];
+                        "text/json": components["schemas"]["RunnerPriorResultsResponse"];
+                    };
                 };
             };
         };
@@ -16328,7 +16332,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submits one chunk of the review's findings for the control plane to publish. */
+        /** Submits publication candidates and optional withheld evidence in a review-result chunk. */
         post: {
             parameters: {
                 query?: never;
@@ -16584,12 +16588,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Keeps a lease alive while the review runs, and carries back the one instruction the control
-         *     plane has for a job already in flight.
+         * Renews a running review's lease or returns the reason renewal stopped.
          *
-         *     Answered 200 whether or not the renewal was accepted. A refusal has a reason the executor
-         *         must act on differently. A lost lease means stop without reporting, and a revoked client
-         *         means stop and report the reason. A status code alone cannot carry that distinction.
+         *     Completed identifies successful completion of the caller's generation. It returns
+         *         accepted=false and expiresAt=null. Stop heartbeats without canceling the in-flight findings
+         *         submission; all further execution calls remain subject to lease authorization.
          */
         post: {
             parameters: {
@@ -16607,7 +16610,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description OK */
+                /** @description The renewal result, including Completed when this generation completed successfully. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -16618,7 +16621,7 @@ export interface paths {
                         "text/json": components["schemas"]["RunnerHeartbeatResponse"];
                     };
                 };
-                /** @description Unauthorized */
+                /** @description No valid runner credential was resolved. */
                 401: {
                     headers: {
                         [name: string]: unknown;
@@ -16629,7 +16632,7 @@ export interface paths {
                         "text/json": components["schemas"]["RunnerContractError"];
                     };
                 };
-                /** @description Conflict */
+                /** @description The reported runner contract version is unsupported. */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -25868,8 +25871,8 @@ export interface components {
          *     The review pipeline shapes every call with tools, a temperature, an output ceiling, and reasoning
          *         settings. On the runner those live in an in-memory options object that cannot be serialized,
          *         because the tools carry their implementations. This record therefore carries the parts the
-         *         provider needs to see: each tool as a declaration (name, description, parameter schema) and the
-         *         reasoning settings in neutral terms. A relay that dropped any of this would turn a tool-using
+         *         provider needs to see: each tool as a declaration (name, description, parameter schema), tool
+         *         selection and reasoning settings in neutral terms. A relay that dropped any of this would turn a tool-using
          *         review into a single-turn review, which happened before the options were sent.
          */
         RunnerChatOptions: {
@@ -25892,6 +25895,11 @@ export interface components {
             reasoningEffort?: string | null;
             /** @description Whether the call asks the model to return a reasoning summary. */
             captureReasoning?: boolean;
+            /**
+             * @description The tool-selection policy. `none` retains declarations while disabling model tool calls.
+             *     Null or an unknown value leaves selection at the provider default.
+             */
+            toolMode?: string | null;
         };
         /** @description A relayed completion. */
         RunnerChatRequest: {
@@ -26046,6 +26054,8 @@ export interface components {
             isExcluded?: boolean;
             /** @description The matching rule, when it was excluded. */
             exclusionReason?: string | null;
+            /** @description Generated findings excluded from publication and retained with the checkpoint. */
+            withheldFindings?: components["schemas"]["WithheldReviewFinding"][] | null;
         };
         /** @description One chunk of a findings submission. */
         RunnerFindingsRequest: {
@@ -26092,11 +26102,9 @@ export interface components {
              */
             expiresAt?: string | null;
             /**
-             * @description Why the renewal was refused, as a stable token. `None` on an accepted renewal. The executor
-             *     needs this rather than a status code. A lost lease means the job belongs to another runner and
-             *     this one stops without reporting, while a revoked client or an exhausted budget is an operator
-             *     decision that has to
-             *     be reported as one.
+             * @description Stable reason for refusing renewal; None when accepted. Completed means this generation
+             *     completed successfully: stop heartbeats without canceling the in-flight submission response.
+             *     Other refusal reasons stop execution under the existing cancellation rules.
              */
             stopReason?: string | null;
         };
@@ -26441,6 +26449,46 @@ export interface components {
             supportsToolUse?: boolean;
             /** @description Whether findings can be requested as a structured response. */
             supportsStructuredOutput?: boolean;
+            /** @description Whether the resolved model and transport support low reasoning effort. */
+            supportsLowReasoningEffort?: boolean;
+        };
+        /** @description One file this job has already had reviewed, reduced to what the pipeline reads back. */
+        RunnerPriorFileResult: {
+            /** @description The file. */
+            filePath?: string | null;
+            /** @description Whether it finished. */
+            isComplete?: boolean;
+            /** @description Whether it failed terminally. */
+            isFailed?: boolean;
+            /** @description Whether it was excluded rather than reviewed. */
+            isExcluded?: boolean;
+            /** @description Why it was excluded. */
+            exclusionReason?: string | null;
+            /** @description Why it failed. */
+            errorMessage?: string | null;
+            /** @description The per-file summary synthesis reads. */
+            perFileSummary?: string | null;
+            /**
+             * @description Which passes have run against it. The selector compares these against the configured pass list, so
+             *     a file reviewed under an older list is reviewed again rather than kept.
+             */
+            reviewedPassKeys?: string[] | null;
+            /**
+             * @description The findings this file produced. Carried because synthesis reasons over every file's findings, and a
+             *     resumed review without them publishes only what its latest attempt happened to see.
+             */
+            comments?: components["schemas"]["ReviewComment"][] | null;
+            /** @description Whether the checkpoint was inherited from another revision. */
+            isCarriedForward?: boolean;
+            /** @description Generated findings retained for internal evidence collection. */
+            withheldFindings?: components["schemas"]["WithheldReviewFinding"][] | null;
+        };
+        /** @description Per-file checkpoints returned to a runner, with their availability state. */
+        RunnerPriorResultsResponse: {
+            /** @description Whether checkpoint retrieval is unavailable. */
+            unavailable?: boolean;
+            /** @description Recorded checkpoints, or null when no value was returned. */
+            value?: components["schemas"]["RunnerPriorFileResult"][] | null;
         };
         /** @description Prompt configuration for this review, resolved from client configuration at dispatch. */
         RunnerPromptConfiguration: {
@@ -26609,6 +26657,8 @@ export interface components {
             budgetSoftCapSpentUsd?: number | null;
             /** @description Files not scanned because the cap was reached first. */
             budgetSoftCapSkippedFilePaths?: string[] | null;
+            /** @description Generated findings retained as evidence without allowing SCM publication. */
+            withheldFindings?: components["schemas"]["WithheldReviewFinding"][] | null;
         };
         /**
          * @description The per-client decisions that change what a review does rather than which model runs it.
@@ -27783,6 +27833,12 @@ export interface components {
             targetBranchPatterns?: string[] | null;
             canonicalSourceRef?: components["schemas"]["CanonicalSourceReferenceDto"];
             displayName?: string | null;
+        };
+        /** @description Generated finding retained as evidence without allowing SCM publication. */
+        WithheldReviewFinding: {
+            comment: components["schemas"]["ReviewComment"];
+            /** @description The verification or final-gate reason that withheld the finding. */
+            reasonCode: string;
         };
     };
     responses: never;

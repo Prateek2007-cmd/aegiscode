@@ -74,6 +74,8 @@ public interface IReviewJobLeaseStore
     ///     Extends the lease's expiry when the caller still holds it. A caller whose generation is stale, who
     ///     is not the recorded owner, or whose job has since reached a terminal state is rejected and the
     ///     expiry is left untouched.
+    ///     Successful completion of the caller's generation returns <see cref="ReviewJobStopReason.Completed" />
+    ///     with no renewed expiry. The holder stops renewal without canceling awaited completion work.
     /// </summary>
     /// <param name="lease">The lease the caller claims to hold.</param>
     /// <param name="leaseDuration">How far ahead to move the expiry.</param>

@@ -26,6 +26,23 @@ namespace MeisterDev.ProPR.Api.Tests.Controllers;
 /// </summary>
 public sealed class RunnerLeaseControllerTests : IDisposable
 {
+    [Fact]
+    public async Task HeartbeatRelaysCompletedWithoutRenewingTheLease()
+    {
+        using var metrics = this.CreateMetrics();
+        var leases = Substitute.For<IReviewJobLeaseStore>();
+        leases.TryRenewAsync(Arg.Any<MeisterDev.ProPR.Domain.ValueObjects.ReviewJobLease>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Completed));
+        var controller = CreateController(RunnerLeaseOffer.Refuse(RunnerLeaseRefusal.NoMatchingWork), metrics, leases);
+
+        var result = await controller.Heartbeat(new RunnerLeaseHeartbeatRequest { JobId = Guid.NewGuid(), LeaseGeneration = 1 }, CancellationToken.None);
+
+        var response = Assert.IsType<RunnerHeartbeatResponse>(Assert.IsType<OkObjectResult>(result).Value);
+        Assert.False(response.Accepted);
+        Assert.Null(response.ExpiresAt);
+        Assert.Equal("Completed", response.StopReason);
+    }
+
     private readonly List<(string Instrument, long Value, Dictionary<string, object?> Tags)> _measurements = [];
     private readonly MeterListener _listener = new();
 
@@ -128,14 +145,14 @@ public sealed class RunnerLeaseControllerTests : IDisposable
         Assert.Equal("NotLicensed", counted.Tags["refusal"]);
     }
 
-    private static RunnerLeaseController CreateController(RunnerLeaseOffer offer, RunnerFleetMetrics metrics)
+    private static RunnerLeaseController CreateController(RunnerLeaseOffer offer, RunnerFleetMetrics metrics, IReviewJobLeaseStore? leases = null)
     {
         var offers = Substitute.For<IRunnerLeaseOfferService>();
         offers.OfferAsync(Arg.Any<RunnerLeaseRequest>(), Arg.Any<CancellationToken>()).Returns(offer);
 
         var controller = new RunnerLeaseController(
             offers,
-            Substitute.For<IReviewJobLeaseStore>(),
+            leases ?? Substitute.For<IReviewJobLeaseStore>(),
             Substitute.For<IRunnerCallAuthorizer>(),
             Options.Create(new ReviewLeaseOptions()),
             Substitute.For<IRunnerJobBudgetRegistry>(),

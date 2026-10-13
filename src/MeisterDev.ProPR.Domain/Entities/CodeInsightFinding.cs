@@ -42,7 +42,7 @@ public sealed class CodeInsightFinding
     /// <summary>Stored revision key of the review increment that produced this finding.</summary>
     public string RevisionKey { get; init; } = string.Empty;
 
-    /// <summary>Zero-based position of the finding within its increment's finding list.</summary>
+    /// <summary>Zero-based publication-candidate index, or a negative index for separately retained evidence.</summary>
     public int Ordinal { get; init; }
 
     /// <summary>File the finding is anchored to, or <see langword="null" /> for pull-request-level findings.</summary>

@@ -48,6 +48,11 @@ public enum ReviewJobStopReason
     ///     review did not finish, and a fresh attempt would run the same work again.
     /// </summary>
     MaxDurationExceeded = 6,
+
+    /// <summary>
+    ///     The caller's generation completed successfully. Stop renewing without canceling awaited completion work.
+    /// </summary>
+    Completed = 7,
 }
 
 /// <summary>
@@ -70,7 +75,7 @@ public sealed record ReviewJobLeaseRenewal(
     public static ReviewJobLeaseRenewal Rejected { get; } =
         new(false, null, ReviewJobDirective.Stop, ReviewJobStopReason.LeaseNoLongerHeld);
 
-    /// <summary>A renewal refused because the job itself was halted, naming which decision halted it.</summary>
+    /// <summary>A renewal refused because the job reached a terminal state, naming the outcome.</summary>
     public static ReviewJobLeaseRenewal StoppedBecause(ReviewJobStopReason reason)
     {
         return new ReviewJobLeaseRenewal(false, null, ReviewJobDirective.Stop, reason);

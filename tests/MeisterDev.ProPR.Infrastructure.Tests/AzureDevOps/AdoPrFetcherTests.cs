@@ -3,6 +3,12 @@
 
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.Services.Common;
+using Azure.Core;
+using NSubstitute;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
 using Microsoft.VisualStudio.Services.WebApi;
 
@@ -16,6 +22,47 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 /// </summary>
 public class AdoPrFetcherTests
 {
+    [Fact]
+    public async Task StrictFeedbackRejectsNullPayloadWhileOrdinaryThreadContextRemainsBestEffort()
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        git.GetThreadsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<List<GitPullRequestCommentThread>>(null!));
+        var sut = new AdoPrFetcher(
+            new VssConnectionFactory(Substitute.For<TokenCredential>()),
+            Substitute.For<IClientScmConnectionRepository>(), NullLogger<AdoPrFetcher>.Instance)
+        {
+            GitClientResolver = (_, _) => Task.FromResult(git),
+        };
+
+        await Assert.ThrowsAsync<CodeInsightIncompleteEnumerationException>(() => sut.FetchFeedbackThreadsAsync(
+            "https://dev.azure.com/testorg", "p", "r", 1, Guid.NewGuid()));
+        Assert.Empty(await sut.FetchThreadsAsync("https://dev.azure.com/testorg", "p", "r", 1, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task OrdinaryAndStrictAdoThreadReadsPropagateRequestedCancellation()
+    {
+        var git = Substitute.For<GitHttpClient>(new Uri("https://dev.azure.com/testorg"), new VssCredentials());
+        using var cancellation = new CancellationTokenSource();
+        git.GetThreadsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled<List<GitPullRequestCommentThread>>(cancellation.Token);
+            });
+        var sut = new AdoPrFetcher(
+            new VssConnectionFactory(Substitute.For<TokenCredential>()),
+            Substitute.For<IClientScmConnectionRepository>(), NullLogger<AdoPrFetcher>.Instance) { GitClientResolver = (_, _) => Task.FromResult(git) };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.FetchThreadsAsync(
+            "https://dev.azure.com/testorg", "p", "r", 1, Guid.NewGuid(), cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.FetchFeedbackThreadsAsync(
+            "https://dev.azure.com/testorg", "p", "r", 1, Guid.NewGuid(), cancellation.Token));
+    }
+
     private static readonly ProviderHostRef AdoHost =
         new(ScmProvider.AzureDevOps, "https://dev.azure.com/acme");
 

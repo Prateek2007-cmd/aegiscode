@@ -125,12 +125,17 @@ public sealed class PrLevelReviewVerificationExecutorTests
                 "late_steering_merge",
                 "src/Foo.cs",
                 reviewPassKind: ReviewPassKind.Baseline,
-                findingProvenanceKind: FindingProvenanceKind.ProRVOnly),
+                findingProvenanceKind: FindingProvenanceKind.ProRVOnly,
+                originModelId: "review-model"),
             CommentSeverity.Warning,
             "ProRV-only issue needs stronger support.",
             CandidateReviewFinding.PerFileCommentCategory,
             "src/Foo.cs",
-            20);
+            20)
+        {
+            ReadGrounding = ReviewCommentReadGrounding.Covered,
+            ScopeRelation = ChangedLineRelation.OnChangedLine,
+        };
 
         var result = await sut.ApplyAsync([finding], new ReviewSystemContext(null, [], null), "feature/x", null, null, CancellationToken.None);
 
@@ -140,6 +145,9 @@ public sealed class PrLevelReviewVerificationExecutorTests
         Assert.True(capturedWorkItem!.FindingProvenance.RequiresExplicitSupport);
 
         var verifiedFinding = Assert.Single(result);
+        Assert.Equal("review-model", verifiedFinding.Provenance.OriginModelId);
+        Assert.Equal(ReviewCommentReadGrounding.Covered, verifiedFinding.ReadGrounding);
+        Assert.Equal(ChangedLineRelation.OnChangedLine, verifiedFinding.ScopeRelation);
         Assert.NotNull(verifiedFinding.VerificationOutcome);
         Assert.Equal(FinalGateDecision.SummaryOnlyDisposition, verifiedFinding.VerificationOutcome!.RecommendedDisposition);
     }

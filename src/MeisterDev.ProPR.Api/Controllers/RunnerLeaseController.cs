@@ -114,16 +114,18 @@ public sealed class RunnerLeaseController(
     }
 
     /// <summary>
-    ///     Keeps a lease alive while the review runs, and carries back the one instruction the control
-    ///     plane has for a job already in flight.
+    ///     Renews a running review's lease or returns the reason renewal stopped.
     ///     <para>
-    ///         Answered 200 whether or not the renewal was accepted. A refusal has a reason the executor
-    ///         must act on differently. A lost lease means stop without reporting, and a revoked client
-    ///         means stop and report the reason. A status code alone cannot carry that distinction.
+    ///         Completed identifies successful completion of the caller's generation. It returns
+    ///         accepted=false and expiresAt=null. Stop heartbeats without canceling the in-flight findings
+    ///         submission; all further execution calls remain subject to lease authorization.
     ///     </para>
     /// </summary>
     /// <param name="request">The job and generation being renewed.</param>
     /// <param name="ct">Cancellation token for the request.</param>
+    /// <response code="200">The renewal result, including Completed when this generation completed successfully.</response>
+    /// <response code="401">No valid runner credential was resolved.</response>
+    /// <response code="409">The reported runner contract version is unsupported.</response>
     [HttpPost("lease/heartbeat")]
     [ProducesResponseType(typeof(RunnerHeartbeatResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(RunnerContractError), StatusCodes.Status401Unauthorized)]
@@ -269,11 +271,9 @@ public sealed class RunnerHeartbeatResponse
     public DateTimeOffset? ExpiresAt { get; init; }
 
     /// <summary>
-    ///     Why the renewal was refused, as a stable token. <c>None</c> on an accepted renewal. The executor
-    ///     needs this rather than a status code. A lost lease means the job belongs to another runner and
-    ///     this one stops without reporting, while a revoked client or an exhausted budget is an operator
-    ///     decision that has to
-    ///     be reported as one.
+    ///     Stable reason for refusing renewal; None when accepted. Completed means this generation
+    ///     completed successfully: stop heartbeats without canceling the in-flight submission response.
+    ///     Other refusal reasons stop execution under the existing cancellation rules.
     /// </summary>
     public string StopReason { get; init; } = string.Empty;
 }

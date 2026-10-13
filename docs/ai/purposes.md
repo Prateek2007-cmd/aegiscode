@@ -101,6 +101,15 @@ translates it to whatever the provider expresses - an OpenAI reasoning effort, a
 Gemini thinking configuration - so the same setting means the same thing across providers. `none` sends no
 reasoning effort at all and leaves the provider at its own default.
 
+The evidence judge requests `low` effort, including on its bounded output-budget retry, when the bundled
+catalog advertises that effort for the exact model and the selected transport supports it. This call
+setting overrides the selected logical model's effort. Other models, unknown aliases and raw fallback
+clients use provider defaults. Selecting the Low effort purpose chooses a model; the supported call
+setting controls its reasoning effort. Chat Completions, Responses and runner relay requests carry
+the setting. See
+[verification](../concepts/reviews.md#what-happens-during-a-review) and
+[judge budgets](../operate/configuration.md#evidence-judge-budgets).
+
 ## Protocol mode
 
 Leave this on **Auto** unless you know your endpoint only implements one shape. Auto lets ProPR pick what the

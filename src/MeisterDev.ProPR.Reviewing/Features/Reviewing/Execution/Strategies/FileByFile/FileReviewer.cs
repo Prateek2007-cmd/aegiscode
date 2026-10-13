@@ -234,6 +234,9 @@ internal sealed partial class FileReviewer(
             result = result with
             {
                 Comments = StampOriginModel(result.Comments, fileContext.ModelId, tierLogicalModelName),
+                WithheldFindings = StampWithheldMetadata(
+                    result.WithheldFindings,
+                    comments => StampWithheldScopeAndPass(StampOriginModel(comments, fileContext.ModelId, tierLogicalModelName), file.Path, pr.ChangedFiles)),
             };
 
             // The full deterministic security floor for this file (path + content-marker + model-escalate legs).
@@ -430,6 +433,7 @@ internal sealed partial class FileReviewer(
 
         // The baseline pass is union pass 1; the planned passes are 2..k.
         var unionComments = new List<ReviewComment>(inputs.BaselineResult.Comments);
+        var unionWithheld = new List<WithheldReviewFinding>(inputs.BaselineResult.WithheldFindings);
         var perPassCatchCounts = new List<int> { inputs.BaselineResult.Comments.Count };
         var perPassPreFilterCounts = new List<int> { inputs.BaselinePreFilterCount };
         var perPassModels = new List<string?> { inputs.TierModelId };
@@ -466,6 +470,13 @@ internal sealed partial class FileReviewer(
                     StampUnionOrigin(passResult.Comments, plannedPass.PassIndex, plannedPass.Lens, plannedPass.Shadow),
                     plannedPass.ModelId,
                     plannedPass.LogicalModelName));
+            unionWithheld.AddRange(
+                StampWithheldMetadata(
+                    passResult.WithheldFindings,
+                    comments => StampWithheldScopeAndPass(
+                        StampOriginModel(
+                            StampUnionOrigin(comments, plannedPass.PassIndex, plannedPass.Lens, plannedPass.Shadow),
+                            plannedPass.ModelId, plannedPass.LogicalModelName), inputs.File.Path, inputs.Pr.ChangedFiles)));
             perPassCatchCounts.Add(passResult.Comments.Count);
             perPassPreFilterCounts.Add(passPreFilterCount);
             perPassModels.Add(plannedPass.ModelId);
@@ -498,7 +509,7 @@ internal sealed partial class FileReviewer(
                 unionComments.Count,
                 inputs.Ct));
 
-        return inputs.BaselineResult with { Comments = unionComments };
+        return inputs.BaselineResult with { Comments = unionComments, WithheldFindings = unionWithheld };
     }
 
     // Eval-harness path: the resample passes come from MultiPassDiversity arms and reuse the file's tier connection,
@@ -831,6 +842,36 @@ internal sealed partial class FileReviewer(
         }
 
         return stamped;
+    }
+
+    private static IReadOnlyList<WithheldReviewFinding> StampWithheldMetadata(
+        IReadOnlyList<WithheldReviewFinding> findings,
+        Func<IReadOnlyList<ReviewComment>, IReadOnlyList<ReviewComment>> stamp)
+    {
+        var comments = stamp(findings.Select(finding => finding.Comment).ToList());
+        return findings.Select((finding, index) => finding with { Comment = comments[index] }).ToList();
+    }
+
+    private static IReadOnlyList<ReviewComment> StampWithheldScopeAndPass(
+        IReadOnlyList<ReviewComment> comments,
+        string sourceFilePath,
+        IReadOnlyList<ChangedFile> changedFiles)
+    {
+        if (comments.Count == 0)
+        {
+            return comments;
+        }
+
+        var changedLineRangesByPath = ReviewDiffProcessor.BuildChangedLineRangesByPath(changedFiles);
+        return comments.Select(comment => comment with
+        {
+            OriginPassKind = comment.OriginPassKind ?? nameof(ReviewPassKind.Baseline),
+            ScopeRelation = comment.ScopeRelation ?? ReviewCommentScopeRelationMapper.Map(
+                CandidateFindingFactory.ClassifyScopeRelation(
+                    comment.FilePath ?? sourceFilePath,
+                    FileByFileReviewOrchestrator.NormalizeLineNumber(comment.LineNumber),
+                    changedLineRangesByPath)),
+        }).ToList();
     }
 
     // Returns the pass result after its per-file pipeline together with the comment count the review core
@@ -1571,7 +1612,8 @@ internal sealed partial class FileReviewer(
         fileResult.MarkCompleted(
             result.Summary,
             result.Comments,
-            ReviewPassSignature.ForPasses(fileContext.ReviewPasses));
+            ReviewPassSignature.ForPasses(fileContext.ReviewPasses),
+            result.WithheldFindings);
         if (fileContext.ContextBudgetOutcome != ReviewContextBudgetOutcome.Normal)
         {
             fileResult.MarkContextBudgetOutcome(fileContext.ContextBudgetOutcome);

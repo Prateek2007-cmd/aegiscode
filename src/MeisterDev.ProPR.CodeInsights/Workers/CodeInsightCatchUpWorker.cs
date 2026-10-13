@@ -2,12 +2,11 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
-using Microsoft.Extensions.Options;
-using MeisterDev.ProPR.CodeInsights;
 using MeisterDev.ProPR.CodeInsights.Ports;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MeisterDev.ProPR.CodeInsights.Workers;
 
@@ -54,12 +53,13 @@ public sealed partial class CodeInsightCatchUpWorker(
         LogWorkerStopped(logger);
     }
 
-    private async Task CatchUpOnceAsync(CancellationToken stoppingToken)
+    internal async Task CatchUpOnceAsync(CancellationToken stoppingToken)
     {
         try
         {
             await using var scope = scopeFactory.CreateAsyncScope();
 
+            var current = options.CurrentValue;
             var projector = scope.ServiceProvider.GetService<ICodeInsightRollupProjector>();
             var sweeper = scope.ServiceProvider.GetService<ICodeInsightSealSweeper>();
             if (projector is null || sweeper is null)
@@ -69,8 +69,6 @@ public sealed partial class CodeInsightCatchUpWorker(
             }
 
             // One read per sweep, so a bound raised while the host runs applies to the next sweep.
-            var current = options.CurrentValue;
-
             var projected = await projector.BackfillAsync(current.EffectiveBackfillMaxJobs, stoppingToken);
 
             var sealedCount = await sweeper.SweepAsync(
@@ -79,6 +77,19 @@ public sealed partial class CodeInsightCatchUpWorker(
                 stoppingToken);
 
             LogCycleCompleted(logger, projected, sealedCount);
+
+            try
+            {
+                var evidence = scope.ServiceProvider.GetService<ICodeInsightProviderEvidenceBackfill>();
+                if (evidence is not null)
+                {
+                    await evidence.SweepAsync(current.EffectiveProviderEvidenceBackfillMaxPullRequests, stoppingToken);
+                }
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                LogCycleFailed(logger, ex);
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {

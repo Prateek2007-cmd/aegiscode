@@ -22,6 +22,39 @@ public sealed class JobSpoolTests
     private static readonly Guid JobId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     [Fact]
+    public async Task ACompletedFile_SpoolsWithheldEvidenceSeparatelyFromItsComments()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK);
+        var spool = CreateSpool(handler);
+        var job = new ReviewJob(JobId, Guid.NewGuid(), "https://host.invalid", "proj", "repo", 1, 1);
+        var store = new SpoolingFileResultStore(job, spool);
+        var file = new ReviewFileResult(JobId, "src/a.cs");
+        await store.AddFileResultAsync(file);
+        var withheld = new WithheldReviewFinding(new ReviewComment("src/a.cs", 1, CommentSeverity.Warning, "Potential issue."), "judge_output_limit");
+        file.MarkCompleted("Summary", [], withheldFindings: [withheld]);
+        await store.UpdateFileResultAsync(file);
+
+        Assert.True(await spool.FlushAsync(CancellationToken.None));
+
+        var json = handler.Batches[^1].GetProperty("fileResults").EnumerateArray().Last();
+        var restored = json.Deserialize<RunnerFileOutcome>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.True(restored!.IsComplete);
+        Assert.Null(restored.Comments);
+        Assert.Equal(withheld, Assert.Single(restored.WithheldFindings!));
+    }
+
+    [Fact]
+    public void AnOlderCheckpointPayload_DefaultsToNoWithheldEvidence()
+    {
+        var restored = JsonSerializer.Deserialize<RunnerFileOutcome>(
+            """{"filePath":"src/a.cs","isComplete":true,"isFailed":false,"summary":"Summary","reviewedPassKeys":[],"comments":[]} """,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.True(restored!.IsComplete);
+        Assert.Null(restored.WithheldFindings);
+    }
+
+    [Fact]
     public async Task AnEmptySpool_ShipsNothing()
     {
         var handler = new CapturingHandler(HttpStatusCode.OK);

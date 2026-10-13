@@ -53,7 +53,8 @@ public sealed class RunnerPriorResultsReader(
                 result.Comments ?? [],
                 // The flag survives the wire so synthesis suppresses carried candidates and labels the
                 // carried files exactly as it would in process.
-                result.IsCarriedForward))
+                result.IsCarriedForward,
+                result.WithheldFindings))
         ]);
     }
 }

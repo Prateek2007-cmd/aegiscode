@@ -146,6 +146,9 @@ public sealed class FileByFileReviewOrchestratorVerificationDegradationTests
         var result = await sut.ReviewAsync(job, pr, new ReviewSystemContext(null, [], null), CancellationToken.None);
 
         Assert.DoesNotContain(result.Comments, comment => comment.Message == "Missing DI registration in multiple files.");
+        Assert.Contains(
+            result.WithheldFindings, finding => finding.Comment.Message == "Missing DI registration in multiple files."
+                                                && finding.ReasonCode == ReviewFindingGateReasonCodes.VerificationDegraded);
         Assert.Contains("Potential DI registration gap spans multiple files.", result.Summary);
         await protocolRecorder.Received()
             .RecordVerificationEventAsync(

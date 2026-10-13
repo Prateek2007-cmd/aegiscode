@@ -682,7 +682,8 @@ public sealed partial class ReviewOrchestrationService(
                 observedAt,
                 ReviewFindingPublicationMapper.BuildProducedFindings(
                     result.Comments, publishedResult.Comments, diagnostics, postingEnabled,
-                    ProviderSourceIdentity.FromReviewJob(job, providerRegistry.GetSourceIdentityPolicy(job.Provider)).Value),
+                    ProviderSourceIdentity.FromReviewJob(job, providerRegistry.GetSourceIdentityPolicy(job.Provider)).Value,
+                    result.WithheldFindings),
                 pr.RepositoryName);
 
             await codeInsightFindingIngestionService.HandleReviewFindingsProducedAsync(evt, ct);

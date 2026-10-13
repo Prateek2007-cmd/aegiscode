@@ -140,6 +140,13 @@ internal sealed class LocalReviewVerificationExecutor(
             {
                 Summary = verifiedSummary,
                 Comments = verifiedComments,
+                WithheldFindings =
+                [
+                    .. result.WithheldFindings, .. commentFindings
+                        .Where(pair => withheldFindingIds.Contains(pair.Finding.FindingId))
+                        .Select(pair => new WithheldReviewFinding(
+                            pair.Comment, WithheldReviewFindingMapper.Reason(SelectBlockingOutcome(outcomesByFindingId[pair.Finding.FindingId]))))
+                ],
             },
             candidateFindings.Select(finding => AttachVerificationOutcome(finding, outcomesByFindingId)).ToList());
     }
@@ -204,9 +211,9 @@ internal sealed class LocalReviewVerificationExecutor(
             return finding;
         }
 
-        return new CandidateReviewFinding(
-            finding.FindingId,
-            new CandidateFindingProvenance(
+        return finding with
+        {
+            Provenance = new CandidateFindingProvenance(
                 finding.Provenance.OriginKind,
                 finding.Provenance.GeneratedByStage,
                 finding.Provenance.SourceFilePath,
@@ -216,18 +223,18 @@ internal sealed class LocalReviewVerificationExecutor(
                 true,
                 finding.Provenance.SourceOriginId,
                 finding.Provenance.ReviewPassKind,
-                finding.Provenance.FindingProvenanceKind),
-            finding.Severity,
-            finding.Message,
-            finding.Category,
-            finding.FilePath,
-            finding.LineNumber,
-            finding.Evidence,
-            finding.CandidateSummaryText,
-            finding.InvariantCheckContext,
-            finding.VerificationOutcome)
-        {
-            MergedFinding = finding.MergedFinding,
+                finding.Provenance.FindingProvenanceKind,
+                finding.Provenance.UnionPassIndex,
+                finding.Provenance.UnionArmLabel,
+                finding.Provenance.UnionLens,
+                finding.Provenance.Shadow,
+                finding.Provenance.OriginModelId,
+                finding.Provenance.OriginLogicalModelName,
+                finding.Provenance.OriginSymbolName,
+                finding.Provenance.OriginSymbolKind)
+            {
+                RequiresEvidenceVerification = finding.Provenance.RequiresEvidenceVerification,
+            },
         };
     }
 
@@ -271,7 +278,19 @@ internal sealed class LocalReviewVerificationExecutor(
             finding.Evidence,
             finding.CandidateSummaryText,
             finding.InvariantCheckContext,
-            outcomes[0]);
+            SelectBlockingOutcome(outcomes) ?? outcomes[0],
+            finding.ScopeRelation)
+        {
+            ReadGrounding = finding.ReadGrounding,
+            MergedFinding = finding.MergedFinding,
+        };
+    }
+
+    private static VerificationOutcome? SelectBlockingOutcome(IReadOnlyList<VerificationOutcome> outcomes)
+    {
+        return outcomes.FirstOrDefault(outcome => outcome.BlocksPublication)
+               ?? outcomes.FirstOrDefault(outcome => !string.Equals(
+                   outcome.RecommendedDisposition, FinalGateDecision.PublishDisposition, StringComparison.Ordinal));
     }
 
     private static string CreateCommentSignature(ReviewComment comment)

@@ -511,7 +511,9 @@ public class FileByFileReviewOrchestratorTests
         var freshComment = new ReviewComment("fresh.cs", 20, CommentSeverity.Warning, "fresh issue");
 
         var priorResult = new ReviewFileResult(Guid.NewGuid(), "legacy.cs");
-        priorResult.MarkCompleted("legacy summary", [carriedForwardComment]);
+        priorResult.MarkCompleted(
+            "legacy summary", [carriedForwardComment], withheldFindings:
+            [new WithheldReviewFinding(new ReviewComment("legacy.cs", 12, CommentSeverity.Warning, "Legacy withheld."), "judge_output_limit")]);
 
         var aiCore = Substitute.For<IAiReviewCore>();
         aiCore.ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>())
@@ -552,6 +554,7 @@ public class FileByFileReviewOrchestratorTests
         Assert.Equal("fresh issue", result.Comments[0].Message);
         Assert.DoesNotContain(result.Comments, comment => comment.Message == "legacy issue");
         Assert.Equal(1, result.CarriedForwardCandidatesSkipped);
+        Assert.Empty(result.WithheldFindings);
     }
 
     // T034 — Synthesis fallback triggers when IChatClient throws

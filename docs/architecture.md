@@ -55,6 +55,17 @@ intent before publication policy evaluation and result persistence. Suppressed S
 records the prepared internal review result and diagnostics. Live revision refresh retains its
 existing operation and cancellation boundaries.
 
+Evidence verification uses one reasoning-inclusive output-budget retry within the existing claim
+deadline and repository-lookup limits. Withheld candidates remain separate from publishable comments.
+Per-file checkpoints and completed job JSON persist their comment and reason independently of analytics.
+Synthesis and runner transport retain that evidence for authorized Code Insights collection as
+`PolicyWithheld`. Collection does not supply publication receipts or settled outcome credit for
+those candidates.
+
+Automatic judge effort requires both model and transport support. The provider catalog supplies exact
+model effort facts; the driver port confirms the selected transport. Resolved runtimes and optional
+runner bindings carry that capability. Unknown or incompatible bindings use provider defaults.
+
 The local ProCursor SCM broker validates client existence before delegating credential and SDK work
 through the existing bounded broker port. Azure DevOps owns the native backend. Review-context tools
 consume neutral prepared symbol coordinates; absent coordinates remain unavailable and do not enable

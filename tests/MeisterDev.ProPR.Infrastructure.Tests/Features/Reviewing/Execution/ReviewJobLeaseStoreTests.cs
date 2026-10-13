@@ -2,6 +2,9 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
+using MeisterDev.ProPR.Application.Features.Licensing.Models;
+using MeisterDev.ProPR.Application.Features.Licensing.Ports;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
@@ -14,8 +17,12 @@ using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Persistence;
 using MeisterDev.ProPR.Infrastructure.Repositories;
 using MeisterDev.ProPR.TestSupport;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Options;
+using NSubstitute;
+using System.Data.Common;
 using Npgsql;
 using FactAttribute = Xunit.SkippableFactAttribute;
 using TheoryAttribute = Xunit.SkippableTheoryAttribute;
@@ -42,6 +49,148 @@ public sealed class ReviewJobLeaseStoreTests(PostgresContainerFixture fixture) :
     private MeisterProPRDbContext _dbContext = null!;
     private ReviewJobLeaseStore _store = null!;
     private JobRepository _repo = null!;
+
+    [Fact]
+    public async Task CompletedCurrentGenerationEndsRenewalButAnOlderGenerationStillLosesTheLease()
+    {
+        var job = await this.AddPendingJobAsync();
+        var old = await this._store.TryClaimAsync(job.Id, "host-a", LeaseDuration);
+        Assert.NotNull(old);
+        Assert.True(await this._store.TryReleaseAsync(old));
+        var current = await this._store.TryClaimAsync(job.Id, "host-b", LeaseDuration);
+        Assert.NotNull(current);
+        await this._repo.SetResultAsync(job.Id, new ReviewResult("Retained result", []));
+
+        var stale = await this._store.TryRenewAsync(old, LeaseDuration);
+        var completed = await this._store.TryRenewAsync(current, LeaseDuration);
+
+        Assert.Equal(ReviewJobStopReason.LeaseNoLongerHeld, stale.StopReason);
+        Assert.False(completed.Accepted);
+        Assert.Null(completed.ExpiresAt);
+        Assert.Equal(ReviewJobDirective.Stop, completed.Directive);
+        Assert.Equal("Completed", completed.StopReason.ToString());
+        var retained = await this.ReadJobAsync(job.Id);
+        Assert.Equal(JobStatus.Completed, retained.Status);
+        Assert.Equal(current.Generation, retained.LeaseGeneration);
+        Assert.Null(retained.LeaseOwner);
+        Assert.Null(retained.LeaseExpiresAt);
+        Assert.Equal("Retained result", retained.Result!.Summary);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletionWinningTheDurationFailureWriteIsReclassifiedWithoutReplacingItsResult(bool newerGeneration)
+    {
+        var job = await this.AddPendingJobAsync();
+        var lease = await this._store.TryClaimAsync(job.Id, "host", LeaseDuration);
+        Assert.NotNull(lease);
+        await this.BackdateProcessingStartAsync(job.Id, TimeSpan.FromMinutes(ShortCeilingMinutes + 1));
+        var interleaving = new BeforeDurationFailure(async () =>
+        {
+            await this._repo.SetResultAsync(job.Id, new ReviewResult("Completed during renewal", []));
+            if (newerGeneration)
+            {
+                await this._dbContext.ReviewJobs.Where(j => j.Id == job.Id)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(j => j.LeaseGeneration, lease.Generation + 1));
+            }
+        });
+        var options = new DbContextOptionsBuilder<MeisterProPRDbContext>(this._options).AddInterceptors(interleaving).Options;
+        await using var renewalContext = new MeisterProPRDbContext(options);
+        var store = new ReviewJobLeaseStore(
+            renewalContext, this.CreateRepository(renewalContext),
+            Microsoft.Extensions.Options.Options.Create(new ReviewLeaseOptions { MaxReviewDurationMinutes = ShortCeilingMinutes }),
+            NullLogger<ReviewJobLeaseStore>.Instance);
+
+        var renewal = await store.TryRenewAsync(lease, LeaseDuration);
+
+        Assert.Equal(1, interleaving.Calls);
+        Assert.False(renewal.Accepted);
+        Assert.Null(renewal.ExpiresAt);
+        Assert.Equal(newerGeneration ? "LeaseNoLongerHeld" : "Completed", renewal.StopReason.ToString());
+        var retained = await this.ReadJobAsync(job.Id);
+        Assert.Equal(JobStatus.Completed, retained.Status);
+        Assert.Equal(ReviewJobFailureReason.Unspecified, retained.FailureReason);
+        Assert.Equal("Completed during renewal", retained.Result!.Summary);
+    }
+
+    [Fact]
+    public async Task HeartbeatDuringTheActualPostCommitAuthorHookKeepsTheCompletionTokenActive()
+    {
+        var job = await this.AddPendingJobAsync();
+        job.SetPullRequestAuthor(new PullRequestAuthor(new ProviderHostRef(ScmProvider.AzureDevOps, job.OrganizationUrl), "author"));
+        await this._dbContext.SaveChangesAsync();
+        var lease = await this._store.TryClaimAsync(job.Id, "host", LeaseDuration);
+        Assert.NotNull(lease);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorder = Substitute.For<IAuthorActivityRecorder>();
+        recorder.RecordAsync(Arg.Any<AuthorActivityObservation>(), Arg.Any<CancellationToken>()).Returns(async c =>
+        {
+            entered.SetResult();
+            await release.Task.WaitAsync(c.ArgAt<CancellationToken>(1));
+        });
+        var repository = new JobRepository(
+            this._dbContext, new TestDbContextFactory(this._options), NullLogger<JobRepository>.Instance, authorActivityRecorder: recorder);
+        await using var renewalContext = new MeisterProPRDbContext(this._options);
+        var store = new ReviewJobLeaseStore(renewalContext, this.CreateRepository(renewalContext), LeaseOptions, NullLogger<ReviewJobLeaseStore>.Instance);
+        var time = new FakeTimeProvider();
+        await using var heartbeat = ReviewJobLeaseHeartbeat.Start(
+            lease, store, new ReviewLeaseOptions { HeartbeatIntervalSeconds = 20, HeartbeatJitterFraction = 0 }, time, NullLogger.Instance);
+        var token = heartbeat.LeaseLost;
+        var result = new ReviewResult("Durable complete result", [new ReviewComment("file.cs", 1, CommentSeverity.Warning, "Published concern")])
+        {
+            WithheldFindings = [new WithheldReviewFinding(new ReviewComment("file.cs", 2, CommentSeverity.Warning, "Withheld concern"), "judge_output_limit")]
+        };
+        var completion = repository.SetResultAsync(job.Id, result, token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var committed = await this.ReadJobAsync(job.Id);
+            Assert.Equal(JobStatus.Completed, committed.Status);
+            Assert.Single(committed.Result!.Comments);
+            Assert.Single(committed.Result.WithheldFindings);
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (heartbeat.StopReason == ReviewJobStopReason.None && DateTimeOffset.UtcNow < deadline)
+            {
+                time.Advance(TimeSpan.FromSeconds(30));
+                await Task.Delay(5);
+            }
+
+            await heartbeat.DisposeAsync();
+            release.SetResult();
+            var error = await Record.ExceptionAsync(() => completion);
+            Assert.Equal("Completed", heartbeat.StopReason.ToString());
+            Assert.False(token.IsCancellationRequested);
+            Assert.Null(error);
+            var retained = await this.ReadJobAsync(job.Id);
+            Assert.Null(retained.LeaseOwner);
+            Assert.Null(retained.LeaseExpiresAt);
+            Assert.NotNull(retained.UsageFinalizedAt);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Record.ExceptionAsync(() => completion);
+        }
+    }
+
+    private sealed class BeforeDurationFailure(Func<Task> complete) : DbCommandInterceptor
+    {
+        internal int Calls { get; private set; }
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("SET status = 'Failed'", StringComparison.Ordinal) && this.Calls++ == 0)
+            {
+                await complete();
+            }
+
+            return result;
+        }
+    }
 
     public async Task InitializeAsync()
     {
@@ -850,6 +999,7 @@ public sealed class ReviewJobLeaseStoreTests(PostgresContainerFixture fixture) :
     [InlineData("superseded", ReviewJobStopReason.Superseded)]
     [InlineData("budget", ReviewJobStopReason.BudgetCapReached)]
     [InlineData("cancelled", ReviewJobStopReason.OperatorStop)]
+    [InlineData("failed", ReviewJobStopReason.LeaseNoLongerHeld)]
     public async Task TryRenew_CarriesTheReasonTheJobWasHalted(string halt, ReviewJobStopReason expected)
     {
         var job = await this.AddPendingJobAsync();
@@ -866,6 +1016,9 @@ public sealed class ReviewJobLeaseStoreTests(PostgresContainerFixture fixture) :
                 break;
             case "budget":
                 await this._repo.SetBudgetExceededAsync(job.Id, BudgetScopeKind.ClientMonthly, BudgetCapKind.Hard, 10m, 11m);
+                break;
+            case "failed":
+                await this._repo.SetFailedAsync(job.Id, "Execution failed.");
                 break;
             default:
                 await this._repo.SetCancelledAsync(job.Id);

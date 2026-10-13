@@ -31,16 +31,26 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
     public ScmProvider Provider => ScmProvider.AzureDevOps;
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<PrThreadStatusEntry>> GetReviewerThreadStatusesAsync(
-        string organizationUrl,
-        string projectId,
-        string repositoryId,
-        int pullRequestId,
-        ThreadOwnershipResolver ownership,
-        Guid clientId,
-        CancellationToken ct = default)
+    public Task<IReadOnlyList<PrThreadStatusEntry>> GetFeedbackStatusesAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct = default)
+    {
+        return this.ReadAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, true);
+    }
+
+    public Task<IReadOnlyList<PrThreadStatusEntry>> GetReviewerThreadStatusesAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct = default)
+    {
+        return this.ReadAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, false);
+    }
+
+    private async Task<IReadOnlyList<PrThreadStatusEntry>> ReadAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct, bool requireComplete)
     {
         ArgumentNullException.ThrowIfNull(ownership);
+        ct.ThrowIfCancellationRequested();
 
         try
         {
@@ -63,6 +73,11 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
 
             if (rawThreads is null)
             {
+                if (requireComplete)
+                {
+                    throw new InvalidOperationException("Azure DevOps thread lookup returned no payload.");
+                }
+
                 return [];
             }
 
@@ -116,7 +131,11 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
 
             return results.AsReadOnly();
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (!requireComplete)
         {
             LogFetchFailed(logger, pullRequestId, ex);
             return [];
@@ -213,6 +232,10 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
             // complete; a truncated listing cannot rule the file out, so it stays undetermined.
             return changedPaths.Complete ? ThreadAnchorCodeChange.Unchanged : ThreadAnchorCodeChange.Unknown;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             LogCodeChangeResolutionFailed(logger, pullRequestId, thread.Id, ex);
@@ -272,8 +295,8 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
         private const int ChangePageSize = 2000;
 
         private readonly Dictionary<int, IterationChangeSet?> _changesByFromIteration = new();
-        private bool _latestResolved;
         private int? _latestIterationId;
+        private bool _latestResolved;
 
         public async Task<int?> GetLatestIterationIdAsync(
             GitHttpClient gitClient,
@@ -321,7 +344,7 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
                 repositoryId,
                 pullRequestId,
                 toIteration,
-                top: ChangePageSize,
+                ChangePageSize,
                 compareTo: fromIteration,
                 cancellationToken: ct);
 

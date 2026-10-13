@@ -1,16 +1,17 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using System.Globalization;
 using MeisterDev.ProPR.Application.DTOs;
-using MeisterDev.ProPR.Domain.Events;
+using MeisterDev.ProPR.Application.Features.Providers.Identity;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.Domain.Enums;
+using MeisterDev.ProPR.Domain.Events;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
-using MeisterDev.ProPR.Application.Features.Providers.Identity;
 
 namespace MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 
@@ -27,7 +28,8 @@ public sealed partial class PullRequestCloseObserver(
     IPostedCommentOriginStore? postedCommentOriginStore = null,
     IReviewerThreadStatusFetcher? reviewerThreadStatuses = null,
     ICodeInsightDispositionService? dispositionService = null,
-    ICodeInsightHarvestCoverageRecorder? harvestCoverageRecorder = null) : ICodeInsightCloseObserver
+    ICodeInsightHarvestCoverageRecorder? harvestCoverageRecorder = null,
+    ICodeInsightProviderFeedbackReader? feedbackReader = null) : ICodeInsightCloseObserver, ICodeInsightHistoricalObserver
 {
     public async Task ObserveAsync(
         CodeInsightPullRequestKey key,
@@ -86,21 +88,30 @@ public sealed partial class PullRequestCloseObserver(
 
             // The adapter contributes its account identity before human-thread authorship is resolved.
             var reviewerObservedAt = DateTimeOffset.UtcNow;
-            var reviewerThreads = await this.ReadReviewerThreadsAsync(
-                key,
-                providerScopePath,
-                providerProjectKey,
-                ownership,
-                ct);
-
-            observedAt = DateTimeOffset.UtcNow;
-            var threads = await pullRequestFetcher.FetchThreadsAsync(
-                providerScopePath,
-                providerProjectKey,
-                key.RepositoryId,
-                (int)key.PullRequestId,
-                key.ClientId,
-                ct);
+            IReadOnlyList<PrThreadStatusEntry> reviewerThreads;
+            IReadOnlyList<PrCommentThread> threads;
+            var reviewerEnumerationComplete = true;
+            if (feedbackReader is not null)
+            {
+                var feedback = await feedbackReader.ReadAsync(
+                    new CodeInsightProviderEvidenceTarget(
+                        key, connection.ProviderFamily,
+                        providerScopePath, providerProjectKey, harvestScope), ownership, ct, CodeInsightObservationMode.Current);
+                reviewerThreads = feedback.ReviewerThreads;
+                threads = feedback.Threads;
+                reviewerEnumerationComplete = feedback.ReviewerEnumerationComplete;
+                observedAt = reviewerObservedAt;
+            }
+            else
+            {
+                var reviewerRead = await this.ReadReviewerThreadsAsync(key, providerScopePath, providerProjectKey, ownership, ct);
+                reviewerThreads = reviewerRead.Threads;
+                reviewerEnumerationComplete = reviewerRead.EnumerationComplete;
+                observedAt = DateTimeOffset.UtcNow;
+                threads = await pullRequestFetcher.FetchThreadsAsync(
+                    providerScopePath, providerProjectKey, key.RepositoryId,
+                    (int)key.PullRequestId, key.ClientId, ct);
+            }
 
             var coverage = new HarvestCoverageState();
             foreach (var thread in threads)
@@ -132,7 +143,7 @@ public sealed partial class PullRequestCloseObserver(
                 harvestScope, reviewerObservedAt, connection.ProviderFamily,
                 ct);
             await harvestCoverageRecorder.RecordAsync(
-                key, harvestScope, coverage.AllHumanThreadsResolved, observedAt, ct, coverage.AllHumanObservationsRetained);
+                key, harvestScope, coverage.AllHumanThreadsResolved, observedAt, ct, coverage.AllHumanObservationsRetained && reviewerEnumerationComplete);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -142,16 +153,340 @@ public sealed partial class PullRequestCloseObserver(
         {
             if (harvestScope is not null)
             {
-                await harvestCoverageRecorder.RecordAsync(key, harvestScope, false, observedAt, ct, enumerationComplete: false);
+                await harvestCoverageRecorder.RecordAsync(key, harvestScope, false, observedAt, ct, false);
             }
 
             LogObservationFailed(logger, key.PullRequestId, key.ClientId, ex);
         }
     }
 
+    public async Task<CodeInsightObservationResult> RefreshAsync(CodeInsightProviderEvidenceTarget target, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (collectionGate is null || feedbackReader is null || findingStore is null || missHarvester is null
+            || dispositionService is null || harvestCoverageRecorder is null || scmConnectionRepository is null)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+        }
+
+        if (!await collectionGate.IsCollectionEnabledAsync(target.Key.ClientId, ct))
+        {
+            return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
+        }
+
+        var failure = CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable;
+        try
+        {
+            if (!this.HasCapturedCoordinates(target))
+            {
+                return Unavailable(CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+            }
+
+            var connection = await this.ResolveHistoricalConnectionAsync(target, ct);
+            if (connection is null)
+            {
+                return Unavailable(failure);
+            }
+
+            failure = CodeInsightObservationUnavailableReason.OwnershipUnavailable;
+            if (postedCommentOriginStore is null)
+            {
+                return Unavailable(failure);
+            }
+
+            var source = await this.ReadHistoricalSourceAsync(target, ct);
+            var observedAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow);
+            failure = CodeInsightObservationUnavailableReason.ProviderReadFailed;
+            var feedback = await feedbackReader.ReadAsync(target, source.Ownership, ct);
+            ct.ThrowIfCancellationRequested();
+            var readFailure = ValidateHistoricalFeedback(source, feedback);
+            if (readFailure is not null)
+            {
+                return Unavailable(readFailure.Value);
+            }
+
+            if (!await collectionGate.IsCollectionEnabledAsync(target.Key.ClientId, ct))
+            {
+                return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
+            }
+
+            failure = CodeInsightObservationUnavailableReason.EvidenceRetentionFailed;
+            var identityFailure = CorrelateHistoricalOutcomes(target, source, feedback, observedAt, out var outcomes);
+            if (identityFailure is not null)
+            {
+                return Unavailable(identityFailure.Value);
+            }
+
+            var harvest = await this.RetainHistoricalHumanThreadsAsync(target, connection.Id, source.Ownership, feedback.Threads, observedAt, ct);
+            if (harvest.Failure is not null)
+            {
+                return Unavailable(harvest.Failure.Value);
+            }
+
+            var outcomeFailure = await this.RetainHistoricalOutcomesAsync(outcomes, ct);
+            if (outcomeFailure is not null)
+            {
+                return Unavailable(outcomeFailure.Value);
+            }
+
+            return await this.AcknowledgeHistoricalCoverageAsync(target, harvest.Coverage, observedAt, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (CodeInsightIncompleteEnumerationException)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.IncompleteEnumeration);
+        }
+        catch (CodeInsightProviderIdentityException)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable);
+        }
+        catch (Exception ex)
+        {
+            // Provider exception messages can contain credentials; retain only the type and numeric code.
+            var exceptionType = ex.GetType();
+            LogHistoricalObservationUnavailable(
+                logger, target.Key.PullRequestId, target.Key.ClientId, failure, exceptionType.FullName ?? exceptionType.Name, ex.HResult);
+            return Unavailable(failure);
+        }
+    }
+
+    private bool HasCapturedCoordinates(CodeInsightProviderEvidenceTarget target)
+    {
+        var captured = ProviderSourceIdentity.FromReviewSource(
+            target.Provider, target.ProviderScopePath,
+            providerRegistry.GetSourceIdentityPolicy(target.Provider)).Value;
+        return captured == target.ProviderScope && target.Key.PullRequestId is > 0 and <= int.MaxValue;
+    }
+
+    private async Task<ClientScmConnectionDto?> ResolveHistoricalConnectionAsync(CodeInsightProviderEvidenceTarget target, CancellationToken ct)
+    {
+        var authority = ScmConnectionHostMatch.ToAuthority(target.ProviderScopePath);
+        var connections = await scmConnectionRepository!.GetByClientIdAsync(target.Key.ClientId, ct);
+        return connections.Where(row => row.IsActive && row.ProviderFamily == target.Provider && authority is not null
+                                        && providerRegistry.GetConnectionConfigurationPolicy(target.Provider)
+                                            .MatchesObservedConnectionHost(row.HostBaseUrl, authority)
+                                        && CapturedPathMatches(row.HostBaseUrl, target.ProviderScopePath))
+            .OrderByDescending(row => row.HostBaseUrl.Length).FirstOrDefault();
+    }
+
+    private async Task<HistoricalSource> ReadHistoricalSourceAsync(CodeInsightProviderEvidenceTarget target, CancellationToken ct)
+    {
+        var provenance = await postedCommentOriginStore!.GetOriginsForProviderSourceAsync(
+            target.Key.ClientId, target.Key.RepositoryId, target.Key.PullRequestId, target.Provider, target.ProviderScope, ct);
+        var findings = await findingStore!.GetNativeFeedbackFindingsAsync(target.Key, target.ProviderScope, ct);
+        var commentScope = providerRegistry.GetIdentityPolicy(target.Provider).CommentIdScope;
+        var capturedFindings = findings.Where(row => row.Finding.ProviderScope == target.ProviderScope).Select(row => row.Finding).ToList();
+        var receipts = capturedFindings.Where(row => !string.IsNullOrWhiteSpace(row.ProviderCommentId)
+                                                     && (commentScope == ProviderCommentIdScope.PullRequest ||
+                                                         !string.IsNullOrWhiteSpace(row.ProviderThreadId)))
+            .Select(row => new PostedCommentOriginRow(row.ProviderThreadId, row.ProviderCommentId!, row.JobId));
+        var ownership = ThreadOwnershipResolver.Create(
+            provenance.Matched.Concat(receipts).ToList(), ThreadOwnerIdentity.None, commentScope,
+            capturedFindings.Where(row => !string.IsNullOrWhiteSpace(row.ProviderThreadId)).Select(row => row.ProviderThreadId!)
+                .ToHashSet(StringComparer.Ordinal));
+        var unverifiable = ThreadOwnershipResolver.Create(provenance.Unverifiable, ThreadOwnerIdentity.None, commentScope);
+        var missThreads = await findingStore.GetHistoricalMissThreadIdsAsync(target.Key, target.ProviderScope, ct);
+        return new HistoricalSource(findings, missThreads, ownership, unverifiable, commentScope);
+    }
+
+    private static CodeInsightObservationUnavailableReason? ValidateHistoricalFeedback(HistoricalSource source, CodeInsightProviderFeedback feedback)
+    {
+        if (feedback.Threads.Any(thread => thread.Comments.Any(comment =>
+            {
+                var reference = new ThreadCommentRef(
+                    thread.ThreadId, comment.CommentId.ToString(CultureInfo.InvariantCulture), comment.AuthorId, comment.AuthorName);
+                return source.Unverifiable.OwnsComment(reference) && !source.Ownership.OwnsComment(reference);
+            })))
+        {
+            return CodeInsightObservationUnavailableReason.OwnershipUnavailable;
+        }
+
+        if (!feedback.ReviewerEnumerationComplete || feedback.ReviewerThreads.Any(reviewer => feedback.Threads.Any(thread =>
+                thread.ThreadId == reviewer.ThreadId
+                && CodeInsightNativeResolution.InterpretKnown(thread.Status) is { } rawIntent
+                && CodeInsightNativeResolution.InterpretKnown(reviewer.Status) is { } reviewerIntent && rawIntent != reviewerIntent)))
+        {
+            return CodeInsightObservationUnavailableReason.IncompleteEnumeration;
+        }
+
+        return source.MissThreads.Any(id => string.IsNullOrWhiteSpace(id) || !feedback.Threads.Any(thread => thread.ThreadId == id))
+            ? CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable
+            : null;
+    }
+
+    private static CodeInsightObservationUnavailableReason? CorrelateHistoricalOutcomes(
+        CodeInsightProviderEvidenceTarget target, HistoricalSource source, CodeInsightProviderFeedback feedback, DateTimeOffset observedAt,
+        out List<HistoricalOutcome> outcomes)
+    {
+        outcomes = [];
+        var required = source.Findings.Where(row => row.PublicationState == CodeInsightPublicationState.Published
+                                                    || (row.PublicationState == CodeInsightPublicationState.Unknown
+                                                        && (!string.IsNullOrWhiteSpace(row.Finding.ProviderThreadId) ||
+                                                            !string.IsNullOrWhiteSpace(row.Finding.ProviderCommentId))));
+        foreach (var finding in required)
+        {
+            var threadId = finding.Finding.ProviderThreadId;
+            var observedIds = new HashSet<string>(StringComparer.Ordinal);
+            if (!string.IsNullOrWhiteSpace(threadId))
+            {
+                observedIds.Add(threadId);
+            }
+
+            if (source.CommentScope == ProviderCommentIdScope.PullRequest && !string.IsNullOrWhiteSpace(finding.Finding.ProviderCommentId))
+            {
+                var commentMatches = feedback.Threads.Where(thread => thread.Comments.Any(comment => comment.CommentId > 0
+                                                                                                     && comment.CommentId.ToString(
+                                                                                                         CultureInfo.InvariantCulture) ==
+                                                                                                     finding.Finding.ProviderCommentId)).ToList();
+                if (commentMatches.Count != 1 || string.IsNullOrWhiteSpace(commentMatches[0].ThreadId))
+                {
+                    return CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable;
+                }
+
+                observedIds.Clear();
+                observedIds.Add(commentMatches[0].ThreadId!);
+                if (string.IsNullOrWhiteSpace(threadId))
+                {
+                    threadId = commentMatches[0].ThreadId;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(threadId))
+            {
+                return CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable;
+            }
+
+            var matches = feedback.ReviewerThreads.Where(thread => thread.ThreadId is not null && observedIds.Contains(thread.ThreadId)).ToList();
+            if (matches.Count != 1 || CodeInsightNativeResolution.InterpretKnown(matches[0].Status) is not { } intent)
+            {
+                return CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable;
+            }
+
+            var thread = matches[0];
+            if (feedback.Threads.Any(raw =>
+                    observedIds.Contains(raw.ThreadId ?? string.Empty) && CodeInsightNativeResolution.InterpretKnown(raw.Status) != intent))
+            {
+                return CodeInsightObservationUnavailableReason.IncompleteEnumeration;
+            }
+
+            outcomes.Add(
+                new HistoricalOutcome(
+                    finding with { CorrelatedThreadId = string.IsNullOrWhiteSpace(finding.Finding.ProviderThreadId) ? threadId : null },
+                    new ThreadResolvedDomainEvent(
+                        target.Key.ClientId, target.ProviderScopePath, target.ProviderProjectKey, target.Key.RepositoryId,
+                        (int)target.Key.PullRequestId, threadId, thread.FilePath, null, thread.CommentHistory, observedAt, intent,
+                        thread.CodeChangedSinceRaised,
+                        thread.Status, target.ProviderScope)));
+        }
+
+        return null;
+    }
+
+    private async Task<HistoricalHarvest> RetainHistoricalHumanThreadsAsync(
+        CodeInsightProviderEvidenceTarget target, Guid connectionId, ThreadOwnershipResolver ownership, IReadOnlyList<PrCommentThread> threads,
+        DateTimeOffset observedAt, CancellationToken ct)
+    {
+        var coverage = new HarvestCoverageState();
+        foreach (var thread in threads)
+        {
+            ct.ThrowIfCancellationRequested();
+            var evt = ThreadUpdatedEventFactory.Build(
+                target.Key.ClientId, connectionId, target.Key.RepositoryId,
+                target.Key.PullRequestId, thread, ownership, observedAt, target.ProviderScope);
+            var human = ThreadUpdatedEventFactory.IsHumanThread(evt);
+            if (human && string.IsNullOrWhiteSpace(thread.ThreadId))
+            {
+                return new HistoricalHarvest(coverage, CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable);
+            }
+
+            if (string.IsNullOrWhiteSpace(thread.ThreadId))
+            {
+                continue;
+            }
+
+            var intent = CodeInsightNativeResolution.InterpretKnown(thread.Status);
+            if (human && intent is null)
+            {
+                return new HistoricalHarvest(coverage, CodeInsightObservationUnavailableReason.ClassificationUnavailable);
+            }
+
+            coverage.Observe(evt, intent ?? ThreadResolutionIntent.Active);
+            var ack = await missHarvester!.ObserveHistoricalAsync(evt, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!ack.Retained)
+            {
+                return new HistoricalHarvest(coverage, ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+            }
+        }
+
+        return new HistoricalHarvest(coverage, null);
+    }
+
+    private async Task<CodeInsightObservationUnavailableReason?> RetainHistoricalOutcomesAsync(IReadOnlyList<HistoricalOutcome> outcomes, CancellationToken ct)
+    {
+        foreach (var outcome in outcomes)
+        {
+            ct.ThrowIfCancellationRequested();
+            var ack = await dispositionService!.ObserveHistoricalAsync(outcome.Finding, outcome.Event, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!ack.Retained)
+            {
+                return ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<CodeInsightObservationResult> AcknowledgeHistoricalCoverageAsync(
+        CodeInsightProviderEvidenceTarget target, HarvestCoverageState coverage, DateTimeOffset observedAt, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var ack = await harvestCoverageRecorder!.RecordAcknowledgedAsync(target.Key, target.ProviderScope, coverage.AllHumanThreadsResolved, observedAt, ct);
+        ct.ThrowIfCancellationRequested();
+        return ack.Retained
+            ? new CodeInsightObservationResult(CodeInsightObservationStatus.Observed, observedAt)
+            : Unavailable(ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+    }
+
+    // PostgreSQL stores microseconds; acknowledgement comparisons must use the retained precision.
+    private static DateTimeOffset NormalizeDatabaseTimestamp(DateTimeOffset stamp) =>
+        new(stamp.UtcTicks - stamp.UtcTicks % TimeSpan.TicksPerMicrosecond, TimeSpan.Zero);
+
+    private sealed record HistoricalSource(
+        IReadOnlyList<CodeInsightNativeFindingSnapshot> Findings,
+        IReadOnlyList<string> MissThreads,
+        ThreadOwnershipResolver Ownership,
+        ThreadOwnershipResolver Unverifiable,
+        ProviderCommentIdScope CommentScope);
+
+    private sealed record HistoricalOutcome(CodeInsightNativeFindingSnapshot Finding, ThreadResolvedDomainEvent Event);
+
+    private sealed record HistoricalHarvest(HarvestCoverageState Coverage, CodeInsightObservationUnavailableReason? Failure);
+
+    private static CodeInsightObservationResult Unavailable(CodeInsightObservationUnavailableReason reason)
+    {
+        return new CodeInsightObservationResult(CodeInsightObservationStatus.Unavailable, UnavailableReason: reason);
+    }
+
+    private static bool CapturedPathMatches(string configured, string captured)
+    {
+        if (!Uri.TryCreate(configured, UriKind.Absolute, out var configuredUri) || !Uri.TryCreate(captured, UriKind.Absolute, out var capturedUri))
+        {
+            return false;
+        }
+
+        var prefix = configuredUri.AbsolutePath.TrimEnd('/');
+        return capturedUri.AbsolutePath.TrimEnd('/').Equals(prefix, StringComparison.OrdinalIgnoreCase)
+               || capturedUri.AbsolutePath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Reads own-thread statuses and allows the adapter to contribute its authenticated account identity.</summary>
     /// <remarks>Without a status fetcher, ownership uses retained provenance and dispositions are unavailable.</remarks>
-    private async Task<IReadOnlyList<PrThreadStatusEntry>> ReadReviewerThreadsAsync(
+    private async Task<(IReadOnlyList<PrThreadStatusEntry> Threads, bool EnumerationComplete)> ReadReviewerThreadsAsync(
         CodeInsightPullRequestKey key,
         string providerScopePath,
         string providerProjectKey,
@@ -160,12 +495,12 @@ public sealed partial class PullRequestCloseObserver(
     {
         if (reviewerThreadStatuses is null)
         {
-            return [];
+            return ([], true);
         }
 
         try
         {
-            return await reviewerThreadStatuses.GetReviewerThreadStatusesAsync(
+            var threads = await reviewerThreadStatuses.GetReviewerThreadStatusesAsync(
                 providerScopePath,
                 providerProjectKey,
                 key.RepositoryId,
@@ -173,11 +508,12 @@ public sealed partial class PullRequestCloseObserver(
                 ownership,
                 key.ClientId,
                 ct);
+            return (threads, true);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             LogReviewerThreadsUnavailable(logger, key.PullRequestId, key.ClientId, ex);
-            return [];
+            return ([], false);
         }
     }
 
@@ -299,6 +635,13 @@ public sealed partial class PullRequestCloseObserver(
     }
 
     [LoggerMessage(
+        EventId = 6106, Level = LogLevel.Warning,
+        Message =
+            "Historical observation for PR {PullRequestId} of client {ClientId} is unavailable: {Reason}. Exception type: {ExceptionType}; error code: {ErrorCode}.")]
+    private static partial void LogHistoricalObservationUnavailable(
+        ILogger logger, long pullRequestId, Guid clientId, CodeInsightObservationUnavailableReason reason, string exceptionType, int errorCode);
+
+    [LoggerMessage(
         EventId = 6105,
         Level = LogLevel.Warning,
         Message = "Reading ProPR's own threads on PR {PullRequestId} of client {ClientId} failed; its findings keep whatever outcome earlier passes recorded.")]
@@ -327,7 +670,7 @@ public sealed partial class PullRequestCloseObserver(
     [LoggerMessage(
         EventId = 6100,
         Level = LogLevel.Warning,
-        Message = "Close observation failed for PR {PullRequestId} of client {ClientId}; the measurement is sealed from the judgements already recorded.")]
+        Message = "Close observation failed for PR {PullRequestId} of client {ClientId}; the measurement is sealed from the judgments already recorded.")]
     private static partial void LogObservationFailed(ILogger logger, long pullRequestId, Guid clientId, Exception ex);
 
     [LoggerMessage(

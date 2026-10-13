@@ -237,6 +237,13 @@ public sealed class OpenAiCompatibleProviderDriver : IAiProviderDriver
     }
 
     /// <inheritdoc />
+    public bool SupportsLowReasoningEffort(string protocolMode)
+    {
+        return ProviderVocabulary.ValuesEqual(protocolMode, ProviderDeclaredProtocolModes.Auto)
+               || ProviderVocabulary.ValuesEqual(protocolMode, ChatCompletionsProtocol);
+    }
+
+    /// <inheritdoc />
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(
         ProviderEndpoint endpoint,
         ProviderModelDescriptor model,

@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Repositories;
@@ -47,6 +48,30 @@ public sealed class ReviewFileResultRepositoryTests(PostgresContainerFixture fix
     private static ReviewJob MakeJob()
     {
         return new ReviewJob(Guid.NewGuid(), Guid.NewGuid(), "https://dev.azure.com/org", "proj", "repo", 1, 1);
+    }
+
+    [Fact]
+    public async Task CompletedCheckpoint_RoundTripsWithheldEvidenceThroughPostgres()
+    {
+        var job = MakeJob();
+        await this._repo.AddAsync(job);
+        var result = new ReviewFileResult(job.Id, "src/Withheld.cs");
+        await this._repo.AddFileResultAsync(result);
+        var withheld = new WithheldReviewFinding(
+            new ReviewComment("src/Withheld.cs", 17, CommentSeverity.Warning, "Potential issue.")
+            {
+                OriginModelId = "review-model", OriginLogicalModelName = "reviewer", OriginPassIndex = 2,
+                OriginPassLens = "security", OriginSymbolName = "Execute", ScopeRelation = ReviewCommentScopeRelation.OnChangedLine,
+            }, "judge_output_limit");
+        result.MarkCompleted("Summary", [], ["baseline"], [withheld]);
+        await this._repo.UpdateFileResultAsync(result);
+
+        this._dbContext.ChangeTracker.Clear();
+        var loaded = await this._repo.GetByIdWithFileResultsAsync(job.Id);
+
+        var checkpoint = Assert.Single(loaded!.FileReviewResults);
+        Assert.Empty(checkpoint.Comments!);
+        Assert.Equal(withheld, Assert.Single(checkpoint.WithheldFindings!));
     }
 
     // T036 — AddFileResultAsync persists the file result

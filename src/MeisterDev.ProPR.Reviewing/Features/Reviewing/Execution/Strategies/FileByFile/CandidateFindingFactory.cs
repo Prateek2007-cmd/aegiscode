@@ -103,7 +103,7 @@ internal sealed class CandidateFindingFactory(IReviewClaimExtractor? reviewClaim
     ///     Returns <see langword="null" /> when the path is unknown, the line is unknown, or the file has no
     ///     resolvable changed ranges, so such findings are never labeled.
     /// </summary>
-    private static ChangedLineRelation? ClassifyScopeRelation(
+    internal static ChangedLineRelation? ClassifyScopeRelation(
         string? filePath,
         int? lineNumber,
         IReadOnlyDictionary<string, IReadOnlyList<(int Start, int End)>>? changedLineRangesByPath)

@@ -1,7 +1,6 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
-using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Data.Models;
 using MeisterDev.ProPR.TestSupport;
@@ -48,16 +47,24 @@ public sealed class CodeInsightExposureRollbackPostgresTests(PostgresContainerFi
             var changedModel = model[..^1] + 'a';
             db.AddRange(
                 new TenantRecord { Id = tenant, Slug = tenant.ToString("N"), DisplayName = "Exposure rollback", IsActive = true, CreatedAt = now },
-                new ClientRecord { Id = client, TenantId = tenant, DisplayName = "Exposure rollback", IsActive = true, CreatedAt = now },
-                new CodeInsightPullRequest { Id = pr, ClientId = client, RepositoryId = "rollback", PullRequestId = 1, CreatedAt = now });
+                new ClientRecord { Id = client, TenantId = tenant, DisplayName = "Exposure rollback", IsActive = true, CreatedAt = now });
             await db.SaveChangesAsync();
-
-            Task<int> InsertAsync(Guid id, string modelId) => db.Database.ExecuteSqlInterpolatedAsync(
+            await db.Database.ExecuteSqlInterpolatedAsync(
                 $"""
-                 INSERT INTO code_insight_review_exposures
-                 ("Id", "CodeInsightPullRequestId", "JobId", "FilePath", "RevisionKey", "ModelId", "LogicalModelName", "ProviderScope", "Source", "ObservedAt")
-                 VALUES ({id}, {pr}, {job}, {path}, 'head', {modelId}, {logical}, 'GitHub:https://example.test', {source}, {now})
+                 INSERT INTO code_insight_pull_requests
+                 (id, client_id, repository_id, pull_request_id, pull_request_state, latest_revision_key, last_activity_at, created_at, updated_at)
+                 VALUES ({pr}, {client}, 'rollback', 1, 'Active', '', {now}, {now}, {now})
                  """);
+
+            Task<int> InsertAsync(Guid id, string modelId)
+            {
+                return db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                     INSERT INTO code_insight_review_exposures
+                     ("Id", "CodeInsightPullRequestId", "JobId", "FilePath", "RevisionKey", "ModelId", "LogicalModelName", "ProviderScope", "Source", "ObservedAt")
+                     VALUES ({id}, {pr}, {job}, {path}, 'head', {modelId}, {logical}, 'GitHub:https://example.test', {source}, {now})
+                     """);
+            }
 
             async Task AssertOriginalIdentityAsync()
             {

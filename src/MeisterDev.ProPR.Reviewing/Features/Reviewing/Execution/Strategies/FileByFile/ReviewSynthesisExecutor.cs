@@ -71,6 +71,8 @@ internal sealed class ReviewSynthesisExecutor(
         var freshResults = allResults
             .Where(r => !r.IsCarriedForward)
             .ToList();
+        var fileWithheldFindings = freshResults.Where(result => result.IsComplete)
+            .SelectMany(result => result.WithheldFindings ?? []).ToList();
 
         var carriedForwardCandidatesSkipped = allResults
             .Where(r => r.IsComplete && r.IsCarriedForward && r.Comments is not null)
@@ -172,6 +174,7 @@ internal sealed class ReviewSynthesisExecutor(
                 job.Id);
             return new ReviewResult(synthesisOutcome.FinalSummary, combinedComments)
             {
+                WithheldFindings = fileWithheldFindings,
                 CarriedForwardCandidatesSkipped = carriedForwardCandidatesSkipped,
                 ContextDegradedFilePaths = contextDegradedFilePaths,
                 ContextSkippedFilePaths = contextSkippedFilePaths,
@@ -278,6 +281,7 @@ internal sealed class ReviewSynthesisExecutor(
             job.Id);
         return new ReviewResult(reconciliation.FinalSummary, publishedComments)
         {
+            WithheldFindings = [.. fileWithheldFindings, .. WithheldReviewFindingMapper.Materialize(candidateFindings, gateDecisions)],
             CarriedForwardCandidatesSkipped = carriedForwardCandidatesSkipped,
             ContextDegradedFilePaths = contextDegradedFilePaths,
             ContextSkippedFilePaths = contextSkippedFilePaths,

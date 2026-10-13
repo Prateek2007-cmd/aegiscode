@@ -983,9 +983,25 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<DateTimeOffset?>("HistoricalRefreshNotBefore")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("LastActivityAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_activity_at");
+
+                    b.Property<DateTimeOffset?>("LastHistoricalRefreshAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LastHistoricalRefreshAttemptId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("LastHistoricalRefreshCompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastHistoricalRefreshReason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<DateTimeOffset?>("LastSealAttemptAt")
                         .HasColumnType("timestamp with time zone")
@@ -1045,6 +1061,9 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
 
                     b.HasIndex("LastActivityAt")
                         .HasDatabaseName("ix_code_insight_pull_requests_last_activity_at");
+
+                    b.HasIndex("HistoricalRefreshNotBefore", "LastHistoricalRefreshAttemptAt")
+                        .HasDatabaseName("ix_code_insight_historical_refresh_candidates");
 
                     b.HasIndex("ClientId", "RepositoryId", "PullRequestId")
                         .IsUnique()
@@ -2346,6 +2365,10 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("reviewed_pass_keys")
                         .HasDefaultValueSql("'[]'");
+
+                    b.Property<string>("WithheldFindings")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("withheld_findings_json");
 
                     b.HasKey("Id");
 

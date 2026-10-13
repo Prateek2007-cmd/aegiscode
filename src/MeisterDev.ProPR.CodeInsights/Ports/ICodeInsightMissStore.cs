@@ -3,6 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using MeisterDev.ProPR.CodeInsights.Contracts;
+using MeisterDev.ProPR.Domain.Enums;
 
 namespace MeisterDev.ProPR.CodeInsights.Ports;
 
@@ -24,28 +25,36 @@ public sealed record CodeInsightMissObservation(
     double? Confidence = null,
     bool JudgedThreadResolved = false,
     string TypeMembership = "",
-    MeisterDev.ProPR.Domain.Enums.CodeInsightFindingQualifier? Qualifier = null,
+    CodeInsightFindingQualifier? Qualifier = null,
     string? DimensionClassifierVersion = null,
     double? DimensionConfidence = null,
     bool DimensionJudgementFailed = false,
     int FailedDimensionAttempts = 0,
     DateTimeOffset? SourceObservedAt = null,
-    bool ExcludedAsOwnFinding = false);
+    bool ExcludedAsOwnFinding = false,
+    string? ClassifierVersion = null);
 
 /// <summary>Whether an observation is already retained and whether score inputs changed.</summary>
 public sealed record CodeInsightMissAcknowledgment(bool Retained, bool Changed);
 
-/// <summary>Latest structural eligibility; an eligible observation does not establish a completed judgement.</summary>
-public sealed record CodeInsightThreadEligibilityObservation(DateTimeOffset SourceObservedAt, bool ExcludedFromHumanMisses);
+/// <summary>Latest structural eligibility; an eligible observation does not establish a completed judgment.</summary>
+public sealed record CodeInsightThreadEligibilityObservation(DateTimeOffset SourceObservedAt, bool ExcludedFromHumanMisses, bool Retained = true);
 
 public interface ICodeInsightMissStore
 {
+    /// <summary>Preserves a successful judgment over the same scoped concern and resolution state.</summary>
+    Task<CodeInsightEvidenceAcknowledgment> TryPreserveHistoricalMissAsync(
+        CodeInsightPullRequestKey key, CodeInsightHistoricalMissObservation observation, CancellationToken ct = default)
+    {
+        return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
+    }
+
     /// <summary>Retains the ordered source eligibility without creating a harvested human thread.</summary>
     Task<CodeInsightThreadEligibilityObservation> ObserveThreadEligibilityAsync(
         CodeInsightPullRequestKey key, string threadId, string providerScope, bool excludedFromHumanMisses,
-        DateTimeOffset observedAt, CancellationToken ct = default);
+        DateTimeOffset observedAt, CancellationToken ct = default, CodeInsightObservationMode mode = CodeInsightObservationMode.Current);
 
-    /// <summary>Returns structural eligibility separately from retained classifier judgements.</summary>
+    /// <summary>Returns structural eligibility separately from retained classifier judgments.</summary>
     Task<CodeInsightThreadEligibilityObservation?> GetThreadEligibilityAsync(
         CodeInsightPullRequestKey key, string threadId, string providerScope, CancellationToken ct = default);
 
@@ -53,13 +62,17 @@ public interface ICodeInsightMissStore
     Task<CodeInsightMissAcknowledgment> ObserveUnchangedMissAsync(
         CodeInsightPullRequestKey key, string threadId, string fingerprint,
         DateTimeOffset observedAt, CancellationToken ct = default, Guid? connectionId = null,
-        string? dimensionClassifierVersion = null, bool excludedAsOwnFinding = false, string? providerScope = null) =>
-        Task.FromResult(new CodeInsightMissAcknowledgment(false, false));
+        string? dimensionClassifierVersion = null, bool excludedAsOwnFinding = false, string? providerScope = null)
+    {
+        return Task.FromResult(new CodeInsightMissAcknowledgment(false, false));
+    }
 
     /// <summary>Current source identity for idempotent observations and bounded classifier retries.</summary>
     Task<CodeInsightMissObservation?> GetObservationAsync(
-        CodeInsightPullRequestKey key, string threadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null) =>
-        Task.FromResult<CodeInsightMissObservation?>(null);
+        CodeInsightPullRequestKey key, string threadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null)
+    {
+        return Task.FromResult<CodeInsightMissObservation?>(null);
+    }
 
     /// <summary>
     ///     Records a source-qualified human thread and returns whether score inputs changed. Timestamped
@@ -72,12 +85,12 @@ public interface ICodeInsightMissStore
         CancellationToken ct = default);
 
     /// <summary>
-    ///     Returns whether the stored judgement for this human thread was made against a resolved thread, or
+    ///     Returns whether the stored judgment for this human thread was made against a resolved thread, or
     ///     <see langword="null" /> when the thread has not been harvested for this pull request at all.
     /// </summary>
     /// <remarks>
     ///     The three-way answer is what the harvester needs. Not harvested means judge it; harvested while the
-    ///     thread was open means the judgement is provisional and must be replaced once the thread resolves;
+    ///     thread was open means the judgment is provisional and must be replaced once the thread resolves;
     ///     harvested while resolved means it is settled and costs no further model call.
     /// </remarks>
     Task<bool?> GetJudgedThreadResolvedAsync(
@@ -87,9 +100,9 @@ public interface ICodeInsightMissStore
         Guid? connectionId = null, string? providerScope = null);
 
     /// <summary>
-    ///     Replaces current judgement and discussion when source ordering permits, returning whether score
-    ///     inputs changed. A failed same-source replay preserves successful evidence. Identity, anchor and
-    ///     first harvest time remain fixed.
+    ///     Replaces current judgment and discussion when source ordering permits, returning whether score
+    ///     inputs changed. A failed same-source replay preserves successful evidence. Identity and first
+    ///     harvest time remain fixed. The judged anchor follows the retained current discussion.
     /// </summary>
     Task<bool> RejudgeMissAsync(
         CodeInsightPullRequestKey key,

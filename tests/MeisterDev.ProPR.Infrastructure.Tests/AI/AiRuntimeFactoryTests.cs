@@ -25,6 +25,22 @@ public sealed class AiRuntimeFactoryTests
 {
     private static readonly Guid ClientId = Guid.Parse("aaaaaaaa-0000-0000-0000-0000000f0117");
 
+    [Theory]
+    [InlineData("gpt-5", true, true)]
+    [InlineData("gpt-5", false, false)]
+    [InlineData("gpt-4o", true, false)]
+    [InlineData("gpt-5-pro", true, false)]
+    [InlineData("gateway-alias", true, false)]
+    public void LowEffortCapability_RequiresAdvertisedModelAndTransportSupport(string modelId, bool transportSupport, bool expected)
+    {
+        var (registry, driver, _, connection, model, binding) = SetupChat(modelId);
+        driver.SupportsLowReasoningEffort(binding.ProtocolMode).Returns(transportSupport);
+
+        var runtime = new AiRuntimeFactory(registry).CreateChatRuntime(connection, model, binding);
+
+        Assert.Equal(expected, runtime.SupportsLowReasoningEffort);
+    }
+
     // Retry is not optional: a review that dies on one throttled call is not shippable, so the client is wrapped
     // even when nothing else contributes a stage. The resolved runtime still describes what it was built from.
     [Fact]
@@ -344,12 +360,12 @@ public sealed class AiRuntimeFactoryTests
 
     private static (IAiProviderDriverRegistry Registry, IAiProviderDriver Driver, IChatClient ChatClient,
         MeisterDev.ProPR.Application.DTOs.AiConnectionDto Connection, MeisterDev.ProPR.Application.DTOs.AiConfiguredModelDto Model,
-        MeisterDev.ProPR.Application.DTOs.AiPurposeBindingDto Binding) SetupChat()
+        MeisterDev.ProPR.Application.DTOs.AiPurposeBindingDto Binding) SetupChat(string modelId = "gpt-x")
     {
         var registry = Substitute.For<IAiProviderDriverRegistry>();
         var driver = Substitute.For<IAiProviderDriver>();
         var chatClient = Substitute.For<IChatClient>();
-        var model = AiConnectionTestFactory.CreateChatModel("gpt-x");
+        var model = AiConnectionTestFactory.CreateChatModel(modelId);
         var binding = AiConnectionTestFactory.CreateBinding(AiPurpose.ReviewDefault, model);
         var connection = AiConnectionTestFactory.CreateConnection(ClientId, [model], [binding]);
         registry.IsRegistered(connection.ProviderKind).Returns(true);

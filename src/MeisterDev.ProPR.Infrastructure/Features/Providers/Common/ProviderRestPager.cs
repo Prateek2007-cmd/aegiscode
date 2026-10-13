@@ -12,12 +12,6 @@ internal static class ProviderRestPager
     /// <summary>Bounds collection reads when a provider ignores pagination.</summary>
     internal const int MaxPages = 30;
 
-    /// <summary>Contains collection items and normalized continuation or total-count information.</summary>
-    internal readonly record struct RestPage<T>(
-        IReadOnlyList<T> Items,
-        bool? HasMore = null,
-        int? TotalCount = null);
-
     /// <param name="loadPageAsync">Reads a one-based page using the requested page size.</param>
     /// <param name="identify">Returns the stable item identity used for duplicate detection.</param>
     /// <param name="collectionDescription">Identifies the collection in operator-visible failure messages.</param>
@@ -27,7 +21,8 @@ internal static class ProviderRestPager
         string collectionDescription,
         CancellationToken cancellationToken,
         int pageSize = PageSize,
-        int maxPages = MaxPages)
+        int maxPages = MaxPages,
+        bool requireComplete = false)
     {
         ArgumentNullException.ThrowIfNull(loadPageAsync);
         ArgumentNullException.ThrowIfNull(identify);
@@ -40,6 +35,11 @@ internal static class ProviderRestPager
             var current = await loadPageAsync(page, pageSize, cancellationToken);
             if (current.Items.Count == 0)
             {
+                if (requireComplete && (current.HasMore == true || current.TotalCount > items.Count))
+                {
+                    throw new InvalidOperationException(ProviderPaginationFailure.ProviderTruncated(collectionDescription));
+                }
+
                 return items.AsReadOnly();
             }
 
@@ -110,4 +110,10 @@ internal static class ProviderRestPager
             return null;
         }
     }
+
+    /// <summary>Contains collection items and normalized continuation or total-count information.</summary>
+    internal readonly record struct RestPage<T>(
+        IReadOnlyList<T> Items,
+        bool? HasMore = null,
+        int? TotalCount = null);
 }

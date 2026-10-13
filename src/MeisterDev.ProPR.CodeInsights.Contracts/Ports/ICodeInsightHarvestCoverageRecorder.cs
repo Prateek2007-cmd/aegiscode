@@ -6,6 +6,12 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// <summary>Records completion of a full provider thread enumeration, including an empty enumeration.</summary>
 public interface ICodeInsightHarvestCoverageRecorder
 {
+    Task<CodeInsightEvidenceAcknowledgment> RecordAcknowledgedAsync(
+        CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct = default)
+    {
+        return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
+    }
+
     Task RecordAsync(
         CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct = default,
         bool enumerationComplete = true);

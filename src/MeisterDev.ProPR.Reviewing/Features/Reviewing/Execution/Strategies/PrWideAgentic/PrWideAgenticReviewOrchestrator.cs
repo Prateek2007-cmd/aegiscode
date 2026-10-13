@@ -1167,7 +1167,10 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         // the same file into a single comment before publishing; the protocol trace above still records
         // every finding.
         var publishedComments = FindingDeduplicator.CollapseSameFileDuplicates(MaterializePublishedComments(candidateFindings, gateDecisions));
-        var result = new ReviewResult(reconciliation.FinalSummary, publishedComments);
+        var result = new ReviewResult(reconciliation.FinalSummary, publishedComments)
+        {
+            WithheldFindings = WithheldReviewFindingMapper.Materialize(candidateFindings, gateDecisions),
+        };
 
         await this.RecordNativeCompletionAsync(job, baseContext, candidateFindings, gateDecisions, reconciliation, result, ct);
         return result;
@@ -1805,7 +1808,12 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
             finding.Evidence,
             finding.CandidateSummaryText,
             finding.InvariantCheckContext,
-            finding.VerificationOutcome);
+            finding.VerificationOutcome,
+            finding.ScopeRelation)
+        {
+            ReadGrounding = finding.ReadGrounding,
+            MergedFinding = finding.MergedFinding,
+        };
     }
 
     private static CandidateReviewFinding WithVerificationOutcome(CandidateReviewFinding finding, VerificationOutcome outcome)
@@ -1821,7 +1829,12 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
             finding.Evidence,
             finding.CandidateSummaryText,
             finding.InvariantCheckContext,
-            outcome);
+            outcome,
+            finding.ScopeRelation)
+        {
+            ReadGrounding = finding.ReadGrounding,
+            MergedFinding = finding.MergedFinding,
+        };
     }
 
     private static VerificationOutcome CreateNoClaimsVerificationOutcome(CandidateReviewFinding finding)

@@ -52,6 +52,8 @@ public interface IRunnerPriorResultsReader
 ///     The findings this file produced. Carried because synthesis reasons over every file's findings, and a
 ///     resumed review without them publishes only what its latest attempt happened to see.
 /// </param>
+/// <param name="IsCarriedForward">Whether the checkpoint was inherited from another revision.</param>
+/// <param name="WithheldFindings">Generated findings retained for internal evidence collection.</param>
 public sealed record RunnerPriorFileResult(
     string FilePath,
     bool IsComplete,
@@ -62,4 +64,5 @@ public sealed record RunnerPriorFileResult(
     string? PerFileSummary,
     IReadOnlyList<string> ReviewedPassKeys,
     IReadOnlyList<ReviewComment> Comments,
-    bool IsCarriedForward = false);
+    bool IsCarriedForward = false,
+    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null);

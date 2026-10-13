@@ -11,12 +11,53 @@ using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verification;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 
 namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Reviewing.Execution.Verification;
 
-public sealed class EvidenceBackedReviewVerifierTests
+public sealed partial class EvidenceBackedReviewVerifierTests
 {
+    [Fact]
+    public async Task AReasoningOnlyCappedResponse_RetriesWithMoreTokensAndPublishesTheCompleteVerdict()
+    {
+        var tools = Substitute.For<IReviewContextTools>();
+        tools.GetFileContentAsync(Arg.Any<string>(), "source", Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns("return lookup(key).ToString();");
+        var optionsSeen = new List<ChatOptions>();
+        var judge = Substitute.For<IChatClient>();
+        judge.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var options = call.ArgAt<ChatOptions>(1);
+                optionsSeen.Add(options);
+                return optionsSeen.Count == 1
+                    ? new ChatResponse(new ChatMessage(ChatRole.Assistant, [new TextReasoningContent("Inspecting the lookup.")]))
+                    {
+                        FinishReason = ChatFinishReason.Length,
+                        Usage = new UsageDetails
+                        {
+                            InputTokenCount = 100,
+                            OutputTokenCount = options.MaxOutputTokens,
+                            ReasoningTokenCount = options.MaxOutputTokens,
+                        },
+                    }
+                    : new ChatResponse(new ChatMessage(ChatRole.Assistant, """{"verdict":"confirmed","reason":"The lookup may return null."}"""))
+                    {
+                        FinishReason = ChatFinishReason.Stop,
+                        Usage = new UsageDetails { InputTokenCount = 200, OutputTokenCount = 20 },
+                    };
+            });
+
+        var outcomes = await new EvidenceBackedReviewVerifier().VerifyAsync(
+            [CreateWorkItem("src/Lookup.cs", 1)], [], new ReviewVerificationContext(tools, "source", judge, "judge-model"));
+
+        Assert.Equal(FinalGateDecision.PublishDisposition, Assert.Single(outcomes).RecommendedDisposition);
+        Assert.Equal(2, optionsSeen.Count);
+        Assert.True(optionsSeen[1].MaxOutputTokens > optionsSeen[0].MaxOutputTokens);
+        Assert.IsType<NoneChatToolMode>(optionsSeen[1].ToolMode);
+    }
+
     [Fact]
     public async Task ReadsWindowCenteredOnAnchorLine_AndPromotesOnConfirm()
     {
@@ -505,7 +546,7 @@ public sealed class EvidenceBackedReviewVerifierTests
         await reviewerClient.DidNotReceiveWithAnyArgs().GetResponseAsync(default!, default, default);
         await lowEffortJudge.Received(1).GetResponseAsync(
             Arg.Any<IEnumerable<ChatMessage>>(),
-            Arg.Is<ChatOptions?>(options => options != null && options.ModelId == "low-effort-model" && options.MaxOutputTokens == 400),
+            Arg.Is<ChatOptions?>(options => options != null && options.ModelId == "low-effort-model" && options.MaxOutputTokens == 4000),
             Arg.Any<CancellationToken>());
         await recorder.Received(1).AddTokensAsync(
             protocolId,
@@ -1276,23 +1317,56 @@ public sealed class EvidenceBackedReviewVerifierTests
         var judge = JudgeAnswering("{\"verdict\":\"confirmed\",\"reason\":\"line 1\"}", 10, 5);
         var recorder = Substitute.For<IProtocolRecorder>();
         var recordCalls = 0;
+        var recordingStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRecording = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = new ClaimWarningLogger();
+        using var testTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
-        // The first record stalls for longer than the second claim's time limit and grace together.
+        // Keep the recording lock held until the other claim reports its bounded lock wait.
         recorder.RecordAiCallAsync(default, default, default, default, default, default, default)
-            .ReturnsForAnyArgs(_ => Interlocked.Increment(ref recordCalls) == 1 ? Task.Delay(TimeSpan.FromSeconds(3)) : Task.CompletedTask);
+            .ReturnsForAnyArgs(_ =>
+            {
+                Interlocked.Increment(ref recordCalls);
+                recordingStarted.TrySetResult();
+                return releaseRecording.Task;
+            });
 
-        var outcomes = await new EvidenceBackedReviewVerifier(
+        var verification = new EvidenceBackedReviewVerifier(
                 recorder,
-                judgeCallTimeout: TimeSpan.FromMilliseconds(300),
+                logger,
+                judgeCallTimeout: TimeSpan.FromSeconds(5),
                 recordingGrace: TimeSpan.FromMilliseconds(200))
             .VerifyAsync(
                 [CreateWorkItem("src/Big.cs", 1), CreateWorkItem("src/Big.cs", 1, claimId: "claim-2")],
                 [],
                 new ReviewVerificationContext(tools, "source", judge, "judge-model", ProtocolId: Guid.NewGuid()),
-                CancellationToken.None);
+                testTimeout.Token);
 
-        Assert.All(outcomes, outcome => Assert.Equal(EvidenceJudgeVerdicts.Confirmed, outcome.JudgeVerdict));
-        Assert.Equal(1, recordCalls);
+        try
+        {
+            await recordingStarted.Task.WaitAsync(testTimeout.Token);
+            var skippedClaimId = await logger.ClaimWarning.WaitAsync(testTimeout.Token);
+            releaseRecording.TrySetResult();
+            var outcomes = await verification.WaitAsync(testTimeout.Token);
+
+            Assert.Equal(2, outcomes.Count);
+            Assert.All(outcomes, outcome => Assert.Equal(EvidenceJudgeVerdicts.Confirmed, outcome.JudgeVerdict));
+            Assert.Equal(1, recordCalls);
+            Assert.Contains(skippedClaimId, outcomes.Select(outcome => outcome.ClaimId));
+        }
+        finally
+        {
+            releaseRecording.TrySetResult();
+            await testTimeout.CancelAsync();
+            try
+            {
+                await verification.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (OperationCanceledException) when (testTimeout.IsCancellationRequested)
+            {
+                // Cancellation releases any remaining lock wait during cleanup.
+            }
+        }
     }
 
     [Fact]
@@ -1482,6 +1556,33 @@ public sealed class EvidenceBackedReviewVerifierTests
         runtime.Model.Returns(
             new AiConfiguredModelDto(Guid.NewGuid(), remoteModelId, remoteModelId, [AiOperationKind.Chat], [ProviderDeclaredProtocolModes.Auto]));
         return runtime;
+    }
+
+    private sealed class ClaimWarningLogger : ILogger<EvidenceBackedReviewVerifier>
+    {
+        private readonly TaskCompletionSource<string> _claimWarning = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<string> ClaimWarning => this._claimWarning.Task;
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Warning;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning
+                && exception is null
+                && state is IEnumerable<KeyValuePair<string, object?>> fields
+                && fields.FirstOrDefault(field => field.Key == "ClaimId").Value is string claimId)
+            {
+                this._claimWarning.TrySetResult(claimId);
+            }
+        }
     }
 
     private static VerificationWorkItem CreateWorkItem(

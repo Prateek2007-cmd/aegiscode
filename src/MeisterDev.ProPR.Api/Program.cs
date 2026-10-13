@@ -576,6 +576,7 @@ try
         options.SwaggerDoc("v1", new OpenApiInfo { Title = "Meister DEV ProPR API", Version = "v1" });
         options.SchemaFilter<LicensingNullableReferenceSchemaFilter>();
         options.SchemaFilter<NullableReferenceSchemaFilter>();
+        options.SchemaFilter<WithheldReviewFindingSchemaFilter>();
         // Matches every first-party assembly, not just MeisterDev.ProPR.*, so types contributed by the
         // extracted provider library keep their documentation in the emitted contract. A narrower glob drops
         // those descriptions silently: the schema still generates, it just loses its prose.
@@ -975,6 +976,7 @@ public partial class Program
     {
         ArgumentNullException.ThrowIfNull(options);
 
+        options.Converters.Add(new WithheldReviewFindingJsonConverter());
         options.Converters.Add(new PremiumCapabilityOverrideStateJsonConverter());
         options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
     }

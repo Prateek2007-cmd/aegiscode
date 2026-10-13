@@ -21,6 +21,27 @@ public sealed class InMemoryReviewJobLeaseStoreTests
     private readonly InMemoryReviewJobRepository _jobs = new();
     private readonly InMemoryReviewJobLeaseStore _store;
 
+    [Fact]
+    public async Task SuccessfulCompletionEndsCurrentRenewalAndKeepsStaleGenerationsRejected()
+    {
+        var job = await this.AddPendingJobAsync(1);
+        var old = await this._store.TryClaimAsync(job.Id, "host-a", LeaseDuration);
+        Assert.NotNull(old);
+        Assert.True(await this._store.TryReleaseAsync(old));
+        var current = await this._store.TryClaimAsync(job.Id, "host-b", LeaseDuration);
+        Assert.NotNull(current);
+        await this._jobs.SetResultAsync(job.Id, new ReviewResult("Complete", []));
+
+        Assert.Equal(ReviewJobStopReason.LeaseNoLongerHeld, (await this._store.TryRenewAsync(old, LeaseDuration)).StopReason);
+        var renewal = await this._store.TryRenewAsync(current, LeaseDuration);
+
+        Assert.False(renewal.Accepted);
+        Assert.Null(renewal.ExpiresAt);
+        Assert.Equal(ReviewJobDirective.Stop, renewal.Directive);
+        Assert.Equal("Completed", renewal.StopReason.ToString());
+        Assert.Equal(JobStatus.Completed, this._jobs.GetById(job.Id)!.Status);
+    }
+
     public InMemoryReviewJobLeaseStoreTests()
     {
         this._store = new InMemoryReviewJobLeaseStore(

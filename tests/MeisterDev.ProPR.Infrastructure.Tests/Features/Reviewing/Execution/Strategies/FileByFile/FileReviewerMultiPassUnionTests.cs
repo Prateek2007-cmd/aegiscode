@@ -7,6 +7,7 @@ using MeisterDev.Ai.Providers.Declaration;
 using MeisterDev.Ai.Providers.Enums;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.ValueObjects;
@@ -15,6 +16,7 @@ using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Diagnostics.Persistence;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verification;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -100,7 +102,8 @@ public sealed class FileReviewerMultiPassUnionTests
         IAiRuntimeResolver? aiRuntimeResolver = null,
         ILogicalModelResolver? logicalModelResolver = null,
         IStructuralCodeAnalyzer? structuralAnalyzer = null,
-        ILogger<FileByFileReviewOrchestrator>? logger = null)
+        ILogger<FileByFileReviewOrchestrator>? logger = null,
+        LocalReviewVerificationExecutor? verificationExecutor = null)
     {
         this._aiCore
             .ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>())
@@ -131,7 +134,7 @@ public sealed class FileReviewerMultiPassUnionTests
             aiRuntimeResolver,
             null,
             null,
-            null,
+            verificationExecutor,
             null,
             logicalModelResolver: logicalModelResolver,
             structuralAnalyzer: structuralAnalyzer);
@@ -252,6 +255,32 @@ public sealed class FileReviewerMultiPassUnionTests
         await this._recorder.DidNotReceive().RecordReviewStrategyEventAsync(
             Arg.Any<Guid>(), ReviewProtocolEventNames.MultiPassUnionCompleted,
             Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EvalResamplePasses_PreserveEveryJudgeWithheldFindingAndItsProducingMetadata()
+    {
+        var verifier = Substitute.For<IReviewFindingVerifier>();
+        verifier.VerifyAsync(
+            Arg.Any<IReadOnlyList<VerificationWorkItem>>(), Arg.Any<IReadOnlyList<InvariantFact>>(),
+            Arg.Any<ReviewVerificationContext?>(), Arg.Any<CancellationToken>()).Returns(call => Task.FromResult<IReadOnlyList<VerificationOutcome>>(
+            call.Arg<IReadOnlyList<VerificationWorkItem>>().Select(item => new VerificationOutcome(
+                item.Claim.ClaimId, item.Claim.FindingId,
+                VerificationOutcome.NonVerifiableKind, FinalGateDecision.SummaryOnlyDisposition, [], [], VerificationOutcome.NoEvidence,
+                null, VerificationOutcome.AiMicroVerifierEvaluator, true) { JudgeDegradation = EvidenceJudgeDegradations.OutputLimit }).ToList()));
+        var executor = new LocalReviewVerificationExecutor(new DeterministicReviewClaimExtractor(), verifier, this._recorder);
+        var reviewer = this.CreateReviewer(verificationExecutor: executor);
+        var file = FileForTier(FileComplexityTier.Medium);
+        var (job, pr) = Fixture(file);
+
+        await reviewer.ReviewAsync(job, pr, file, 1, 1, MultiPassContext(3), null, Substitute.For<IChatClient>(), CancellationToken.None);
+
+        Assert.Empty(this._persistedResult!.Comments!);
+        Assert.Equal(3, this._persistedResult.WithheldFindings!.Count);
+        Assert.All(this._persistedResult.WithheldFindings, finding => Assert.Equal(EvidenceJudgeDegradations.OutputLimit, finding.ReasonCode));
+        Assert.Equal(2, this._persistedResult.WithheldFindings[1].Comment.OriginPassIndex);
+        Assert.Equal(3, this._persistedResult.WithheldFindings[2].Comment.OriginPassIndex);
+        Assert.Equal("gpt-5.4", this._persistedResult.WithheldFindings[1].Comment.OriginModelId);
     }
 
     [Fact]

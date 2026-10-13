@@ -8,6 +8,7 @@ using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.TeamFoundation.SourceControl.WebApi;
 using Microsoft.VisualStudio.Services.Common;
@@ -18,6 +19,37 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 
 public sealed class AdoReviewerThreadStatusFetcherTests
 {
+    [Fact]
+    public async Task OrdinaryAndStrictAdoStatusesPropagateRequestedCancellation()
+    {
+        var git = MakeGitClient();
+        using var cancellation = new CancellationTokenSource();
+        git.GetThreadsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled<List<GitPullRequestCommentThread>>(cancellation.Token);
+            });
+        var sut = BuildSut(git, null);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.GetReviewerThreadStatusesAsync(
+            "https://dev.azure.com/org", "p", "r", 1, ThreadOwnershipResolver.None, Guid.NewGuid(), cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.GetFeedbackStatusesAsync(
+            "https://dev.azure.com/org", "p", "r", 1, ThreadOwnershipResolver.None, Guid.NewGuid(), cancellation.Token));
+    }
+
+    [Fact]
+    public async Task HistoricalFeedbackPropagatesReadFailureWhileOrdinaryStatusRemainsBestEffort()
+    {
+        var sut = BuildSut(MakeGitClient(), null);
+        sut.GitClientResolver = (_, _) => Task.FromException<GitHttpClient>(new InvalidOperationException("unavailable"));
+        Assert.Empty(await sut.GetReviewerThreadStatusesAsync("https://dev.azure.com/org", "p", "r", 1, ThreadOwnershipResolver.None, Guid.NewGuid()));
+        var strict = (IProviderReviewerThreadStatusFetcher)sut;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => strict.GetFeedbackStatusesAsync(
+            "https://dev.azure.com/org", "p", "r", 1,
+            ThreadOwnershipResolver.None, Guid.NewGuid()));
+    }
+
     private static AdoReviewerThreadStatusFetcher BuildSut(GitHttpClient gitClient, Guid? authorizedIdentityId)
     {
         var factory = new VssConnectionFactory(Substitute.For<TokenCredential>());
@@ -298,21 +330,24 @@ public sealed class AdoReviewerThreadStatusFetcherTests
 
         var gitClient = MakeGitClient();
 
-        GitPullRequestCommentThread ResolvedThread(int id, string filePath) => new()
+        GitPullRequestCommentThread ResolvedThread(int id, string filePath)
         {
-            Id = id,
-            Status = CommentThreadStatus.Fixed,
-            ThreadContext = new CommentThreadContext { FilePath = filePath },
-            PullRequestThreadContext = new GitPullRequestCommentThreadContext
+            return new GitPullRequestCommentThread
             {
-                IterationContext = new CommentIterationContext
+                Id = id,
+                Status = CommentThreadStatus.Fixed,
+                ThreadContext = new CommentThreadContext { FilePath = filePath },
+                PullRequestThreadContext = new GitPullRequestCommentThreadContext
                 {
-                    FirstComparingIteration = 1,
-                    SecondComparingIteration = 1,
+                    IterationContext = new CommentIterationContext
+                    {
+                        FirstComparingIteration = 1,
+                        SecondComparingIteration = 1,
+                    },
                 },
-            },
-            Comments = new List<Comment> { CreateComment("Bot", botId, "Please fix this.", commentId: 1) },
-        };
+                Comments = new List<Comment> { CreateComment("Bot", botId, "Please fix this.", commentId: 1) },
+            };
+        }
 
         gitClient.GetThreadsAsync(
                 Arg.Any<string>(),

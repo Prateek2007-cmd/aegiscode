@@ -71,6 +71,10 @@ public static class ReviewProtocolEventNames
     public const string ReviewStepSkipped = "review_step_skipped";
     public const string FindingDeduplication = "finding_deduplication";
     public const string EvidenceJudgeToolCall = "evidence_judge_tool_call";
+
+    /// <summary>An evidence-judge model turn exhausted its output budget, with its recovery decision.</summary>
+    public const string EvidenceJudgeOutputLimit = "evidence_judge_output_limit";
+
     public const string QualityFilterApplied = "quality_filter_applied";
     public const string LocalWorkspacePrepared = "local_workspace_prepared";
     public const string LocalWorkspaceFailed = "local_workspace_failed";

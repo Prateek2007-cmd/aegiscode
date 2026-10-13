@@ -5,14 +5,16 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
+using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Support;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Support;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Security;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Support;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Reviewing;
 
@@ -25,7 +27,7 @@ internal sealed class GitHubPullRequestFetcher(
     // hundred comments contributes its first hundred. That is a separate query keyed on the thread rather than
     // a deeper nesting of this one, and rare enough to be worth keeping apart from the common case.
     private const string ReviewThreadsQuery =
-        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved path line comments(first: 100) { nodes { databaseId body createdAt author { login ... on User { databaseId } ... on Bot { databaseId } } } } } } } } }";
+        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved path line comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt author { login ... on User { databaseId } ... on Bot { databaseId } } } } } } } } }";
 
     public ScmProvider Provider => ScmProvider.GitHub;
 
@@ -261,57 +263,13 @@ internal sealed class GitHubPullRequestFetcher(
         return await this.FetchExistingThreadsAsync(context, host, repositoryPath, pullRequestId, cancellationToken);
     }
 
-    private async Task<IReadOnlyList<GitHubPullRequestFileResponse>?> TryGetDeltaFilesAsync(
-        GitHubConnectionVerifier.GitHubConnectionContext context,
-        ProviderHostRef host,
-        string repositoryPath,
-        GitHubPullRequestResponse pullRequest,
-        IReadOnlyList<GitHubPullRequestFileResponse> allFiles,
-        ReviewRevision? compareToReviewRevision,
-        CancellationToken ct)
+    public async Task<IReadOnlyList<PrCommentThread>> FetchFeedbackThreadsAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId, Guid clientId, CancellationToken ct = default)
     {
-        if (compareToReviewRevision is null)
-        {
-            return allFiles;
-        }
-
-        var currentHeadSha = NormalizeRevision(pullRequest.Head?.Sha);
-        var baselineHeadSha = NormalizeRevision(compareToReviewRevision.HeadSha);
-        if (string.IsNullOrWhiteSpace(currentHeadSha) || string.IsNullOrWhiteSpace(baselineHeadSha))
-        {
-            return null;
-        }
-
-        if (string.Equals(currentHeadSha, baselineHeadSha, StringComparison.Ordinal))
-        {
-            return [];
-        }
-
-        var compareFiles = await this.TryGetComparedFilesAsync(
-            context,
-            host,
-            repositoryPath,
-            baselineHeadSha,
-            currentHeadSha,
-            ct);
-        if (compareFiles is null)
-        {
-            return null;
-        }
-
-        if (compareFiles.Count == 0)
-        {
-            return [];
-        }
-
-        var deltaPaths = BuildDeltaPathSet(compareFiles);
-        var filteredFiles = allFiles
-            .Where(file => IsDeltaFile(file, deltaPaths))
-            .ToList();
-
-        return filteredFiles.Count == compareFiles.Count
-            ? filteredFiles.AsReadOnly()
-            : null;
+        var host = new ProviderHostRef(ScmProvider.GitHub, organizationUrl);
+        var context = await connectionVerifier.VerifyAsync(clientId, host, ct);
+        var repositoryPath = await this.ResolveRepositoryPathAsync(context, host, repositoryId, ct);
+        return await this.FetchExistingThreadsAsync(context, host, repositoryPath, pullRequestId, ct, true);
     }
 
     /// <summary>
@@ -376,6 +334,59 @@ internal sealed class GitHubPullRequestFetcher(
                 "Active"))
             .ToList()
             .AsReadOnly();
+    }
+
+    private async Task<IReadOnlyList<GitHubPullRequestFileResponse>?> TryGetDeltaFilesAsync(
+        GitHubConnectionVerifier.GitHubConnectionContext context,
+        ProviderHostRef host,
+        string repositoryPath,
+        GitHubPullRequestResponse pullRequest,
+        IReadOnlyList<GitHubPullRequestFileResponse> allFiles,
+        ReviewRevision? compareToReviewRevision,
+        CancellationToken ct)
+    {
+        if (compareToReviewRevision is null)
+        {
+            return allFiles;
+        }
+
+        var currentHeadSha = NormalizeRevision(pullRequest.Head?.Sha);
+        var baselineHeadSha = NormalizeRevision(compareToReviewRevision.HeadSha);
+        if (string.IsNullOrWhiteSpace(currentHeadSha) || string.IsNullOrWhiteSpace(baselineHeadSha))
+        {
+            return null;
+        }
+
+        if (string.Equals(currentHeadSha, baselineHeadSha, StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        var compareFiles = await this.TryGetComparedFilesAsync(
+            context,
+            host,
+            repositoryPath,
+            baselineHeadSha,
+            currentHeadSha,
+            ct);
+        if (compareFiles is null)
+        {
+            return null;
+        }
+
+        if (compareFiles.Count == 0)
+        {
+            return [];
+        }
+
+        var deltaPaths = BuildDeltaPathSet(compareFiles);
+        var filteredFiles = allFiles
+            .Where(file => IsDeltaFile(file, deltaPaths))
+            .ToList();
+
+        return filteredFiles.Count == compareFiles.Count
+            ? filteredFiles.AsReadOnly()
+            : null;
     }
 
     private async Task<ProviderRestPager.RestPage<GitHubIssueCommentResponse>> GetConversationCommentPageAsync(
@@ -700,7 +711,7 @@ internal sealed class GitHubPullRequestFetcher(
         ProviderHostRef host,
         string repositoryPath,
         int pullRequestId,
-        CancellationToken ct)
+        CancellationToken ct, bool requireComplete = false)
     {
         var parts = repositoryPath.Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2)
@@ -716,7 +727,7 @@ internal sealed class GitHubPullRequestFetcher(
                 parts[1],
                 pullRequestId,
                 cursor,
-                pageCt),
+                pageCt, requireComplete),
             $"GitHub's review-thread listing for pull request {pullRequestId}",
             ct);
 
@@ -727,7 +738,7 @@ internal sealed class GitHubPullRequestFetcher(
                 NormalizePath(thread.Path),
                 thread.Line,
                 thread.Comments.Nodes.Select(ToThreadComment).ToList().AsReadOnly(),
-                thread.IsResolved ? "Fixed" : "Active"))
+                thread.IsResolved == true ? "Fixed" : "Active"))
             .ToList()
             .AsReadOnly();
     }
@@ -739,7 +750,7 @@ internal sealed class GitHubPullRequestFetcher(
         string name,
         int pullRequestId,
         string? after,
-        CancellationToken ct)
+        CancellationToken ct, bool requireComplete = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, GitHubConnectionVerifier.BuildGraphQlUri(host))
         {
@@ -767,6 +778,19 @@ internal sealed class GitHubPullRequestFetcher(
         var payload = await response.Content.ReadFromJsonAsync<GitHubGraphQlResponse>(ct)
                       ?? throw new InvalidOperationException("GitHub thread lookup returned an empty payload.");
         var connection = payload.Data?.Repository?.PullRequest?.ReviewThreads;
+        if (requireComplete && payload.Errors is { Count: > 0 })
+        {
+            throw new InvalidOperationException("GitHub feedback lookup returned GraphQL errors.");
+        }
+
+        if (requireComplete && (connection?.Nodes is null || connection.PageInfo is null
+                                                          || connection.Nodes.Any(thread =>
+                                                              thread.IsResolved is null || string.IsNullOrWhiteSpace(thread.Id) ||
+                                                              thread.Comments?.Nodes is null || thread.Comments.PageInfo is null
+                                                              || thread.Comments.PageInfo.HasNextPage)))
+        {
+            throw new CodeInsightIncompleteEnumerationException();
+        }
 
         return new ProviderCursorPager.CursorPage<GitHubReviewThreadNode>(
             connection?.Nodes ?? [],
@@ -924,7 +948,9 @@ internal sealed class GitHubPullRequestFetcher(
         [property: JsonPropertyName("encoding")]
         string? Encoding);
 
-    private sealed record GitHubGraphQlResponse([property: JsonPropertyName("data")] GitHubGraphQlData? Data);
+    private sealed record GitHubGraphQlResponse(
+        [property: JsonPropertyName("data")] GitHubGraphQlData? Data,
+        [property: JsonPropertyName("errors")] IReadOnlyList<JsonElement>? Errors = null);
 
     private sealed record GitHubGraphQlData(
         [property: JsonPropertyName("repository")]
@@ -952,13 +978,16 @@ internal sealed class GitHubPullRequestFetcher(
     private sealed record GitHubReviewThreadNode(
         [property: JsonPropertyName("id")] string? Id,
         [property: JsonPropertyName("isResolved")]
-        bool IsResolved,
+        bool? IsResolved,
         [property: JsonPropertyName("path")] string? Path,
         [property: JsonPropertyName("line")] int? Line,
         [property: JsonPropertyName("comments")]
         GitHubReviewCommentsConnection Comments);
 
-    private sealed record GitHubReviewCommentsConnection([property: JsonPropertyName("nodes")] IReadOnlyList<GitHubReviewCommentNode> Nodes);
+    private sealed record GitHubReviewCommentsConnection(
+        [property: JsonPropertyName("nodes")] IReadOnlyList<GitHubReviewCommentNode> Nodes,
+        [property: JsonPropertyName("pageInfo")]
+        GitHubPageInfo? PageInfo = null);
 
     private sealed record GitHubReviewCommentNode(
         [property: JsonPropertyName("databaseId")]

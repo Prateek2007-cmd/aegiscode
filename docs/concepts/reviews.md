@@ -85,14 +85,27 @@ outcome, failure or maintainability defect that the author would fix, whether th
 intended, and whether intended behaviour contradicts other functionality. Every
 finding of every per-file review pass from which ProPR extracts a claim reaches the judge unless a known invariant
 already contradicts it. Before it decides, the judge can make up to four read-only lookups in the repository: read a
-file, search the code, or find references or a definition. Each finding therefore costs one to five low-effort model
-calls, and the job protocol records each lookup in an `evidence_judge_tool_call` event. The judge can also answer that the code it needs to decide is not in
+file, search the code, or find references or a definition. Each finding therefore costs one to five model
+calls, plus at most one output-budget retry. The judge requests `low` reasoning effort when the bundled
+catalog advertises it for the exact model and the selected transport supports it. Other models, unknown
+aliases and raw fallback clients use provider defaults. This decision is independent of the logical
+model's configured effort. The initial output ceiling is 4,000 tokens, including reasoning. An
+output-limit response or an unusable verdict whose measured output reaches the ceiling receives one
+8,000-token retry. The retry retains completed lookups, allows no further lookups, and shares the claim's
+120-second deadline. The job protocol records each lookup in an `evidence_judge_tool_call` event and each
+exhausted output budget in an `evidence_judge_output_limit` event. Both attempts contribute to token usage.
+The ceilings are [installation settings](../operate/configuration.md#evidence-judge-budgets).
+The judge can also answer that the code it needs to decide is not in
 its input. ProPR then publishes the finding if the pass that produced it read the repository with tools, and withholds
 it if the pass had no tools. The inventory lens reviews without tools. A finding from which ProPR extracts no claim is withheld
 without a verdict. When the judge cannot run, runs out of time or gives an unusable answer, the finding is withheld, and the
 job protocol records a `verification_degraded` event for the file with the number of affected findings and the
-reasons. If the judge could decide none of a file's findings, the file summary states that verification could not
-run. The job protocol records the verdict, the reason and the line for each finding.
+reasons. Exhausting the retry records `judge_output_limit`. If the judge could decide none of a file's findings,
+the file summary states that verification could not run. The job protocol records the verdict, the reason
+and the line for each finding. Withheld findings retain their original comment, producing model and reason
+as internal evidence, separately from publication candidates. Per-file checkpoints preserve that evidence
+across job recovery, and completed job results retain final withheld evidence. Enabled Code Insights
+collection includes it in withheld counts without assigning publication or precision credit.
 
 After verification, ProPR merges findings that describe the same defect at nearly the same line. The job
 protocol records each merge in a `finding_deduplication` event with the kept finding and the removed ones.
@@ -149,7 +162,7 @@ Everything below is set in the management UI. Unless noted, the scope is one cli
 | Setting | Where | Effect |
 |---|---|---|
 | Logical model per purpose | Tenant or client | Which model does review generation, triage, verification and embeddings - see [purposes, effort and protocol](../ai/purposes.md) |
-| Reasoning effort | Per logical model | How hard the model thinks wherever that logical model is used - see [reasoning effort](../ai/purposes.md#reasoning-effort) |
+| Reasoning effort | Per logical model | Default effort for calls using that model; the evidence judge uses `low` when support is established - see [reasoning effort](../ai/purposes.md#reasoning-effort) |
 | Baseline reasoning effort | Per client | Reasoning effort for the baseline review pass. `None` by default, which sends no reasoning effort at all and leaves cost unchanged |
 | Review aggressiveness | Per client | `Calm`, `Balanced` or `Assertive`. Calm keeps only what passes the strictest certainty gate; Balanced adds design-level observations; Assertive keeps those and lets less certain findings through |
 | Review temperature | Crawl and webhook configurations | More deterministic or more creative than the model default, `0.0`–`2.0` |

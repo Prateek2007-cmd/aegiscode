@@ -64,6 +64,21 @@ public sealed class CodeInsightPullRequest
     /// </remarks>
     public DateTimeOffset? LastSealAttemptAt { get; set; }
 
+    /// <summary>Token of the latest durably claimed historical observation.</summary>
+    public Guid? LastHistoricalRefreshAttemptId { get; set; }
+
+    /// <summary>UTC time historical observation was claimed.</summary>
+    public DateTimeOffset? LastHistoricalRefreshAttemptAt { get; set; }
+
+    /// <summary>UTC lease or retry cutoff before which another historical claim is excluded.</summary>
+    public DateTimeOffset? HistoricalRefreshNotBefore { get; set; }
+
+    /// <summary>Bounded unavailable reason recorded by the latest historical attempt.</summary>
+    public string? LastHistoricalRefreshReason { get; set; }
+
+    /// <summary>UTC completion time of the latest positively acknowledged historical observation.</summary>
+    public DateTimeOffset? LastHistoricalRefreshCompletedAt { get; set; }
+
     /// <summary>UTC timestamp when this aggregate was first created.</summary>
     public DateTimeOffset CreatedAt { get; init; }
 

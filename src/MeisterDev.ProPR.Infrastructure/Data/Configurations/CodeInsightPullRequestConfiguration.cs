@@ -57,6 +57,10 @@ internal sealed class CodeInsightPullRequestConfiguration : IEntityTypeConfigura
             .HasColumnName("last_seal_attempt_at")
             .IsRequired(false);
 
+        builder.Property(pr => pr.LastHistoricalRefreshReason).HasMaxLength(64);
+        builder.HasIndex(pr => new { pr.HistoricalRefreshNotBefore, pr.LastHistoricalRefreshAttemptAt })
+            .HasDatabaseName("ix_code_insight_historical_refresh_candidates");
+
         builder.Property(pr => pr.CreatedAt)
             .HasColumnName("created_at")
             .IsRequired();

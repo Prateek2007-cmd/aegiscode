@@ -17,6 +17,22 @@ namespace MeisterDev.ProPR.Runner.Tests;
 public sealed class RunnerReviewSubjectTests
 {
     [Fact]
+    public void PriorCheckpoints_RestoreWithheldEvidenceForFreshAndCarriedFiles()
+    {
+        var job = RunnerReviewSubject.BuildJob(RunnerManifests.Sample());
+        var withheld = new WithheldReviewFinding(new ReviewComment("src/a.cs", 1, CommentSeverity.Warning, "Potential issue."), "judge_output_limit");
+        RunnerReviewSubject.SeedPriorResults(
+            job, [
+                new("src/a.cs", true, false, false, null, null, "Summary", [], [], WithheldFindings: [withheld]),
+                new("src/b.cs", true, false, false, null, null, "Summary", [], [], IsCarriedForward: true, WithheldFindings: [withheld]),
+            ]);
+
+        Assert.Equal(2, job.FileReviewResults.Count);
+        Assert.All(job.FileReviewResults, row => Assert.Equal(withheld, Assert.Single(row.WithheldFindings!)));
+        Assert.True(job.FileReviewResults.Single(row => row.FilePath == "src/b.cs").IsCarriedForward);
+    }
+
+    [Fact]
     public void TheJob_CarriesTheIdentityTheControlPlaneKnowsItBy()
     {
         var manifest = RunnerManifests.Sample();

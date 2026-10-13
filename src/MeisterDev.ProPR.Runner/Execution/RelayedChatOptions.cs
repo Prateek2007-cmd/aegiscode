@@ -34,6 +34,7 @@ internal static class RelayedChatOptions
         var tools = options.Tools?.OfType<AIFunction>()
             .Select(tool => new RunnerChatToolDefinition(tool.Name, tool.Description, tool.JsonSchema))
             .ToList();
+        var toolMode = options.ToolMode is NoneChatToolMode ? "none" : null;
 
         string? effort = null;
         var captureReasoning = false;
@@ -51,6 +52,7 @@ internal static class RelayedChatOptions
         if (options.Temperature is null
             && options.MaxOutputTokens is null
             && tools is not { Count: > 0 }
+            && toolMode is null
             && effort is null
             && !captureReasoning)
         {
@@ -62,7 +64,8 @@ internal static class RelayedChatOptions
             options.MaxOutputTokens,
             tools is { Count: > 0 } ? tools : null,
             effort,
-            captureReasoning);
+            captureReasoning,
+            toolMode);
     }
 
     private sealed class ReasoningProbe : INativeProtocolChatClient

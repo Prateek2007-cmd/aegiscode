@@ -10,8 +10,8 @@ using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Support;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Security;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Support;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Reviewing;
 
@@ -52,7 +52,7 @@ internal sealed class GitLabReviewThreadStatusProvider(
                 pageCt),
             IdentifyDiscussion,
             $"GitLab's discussion listing for merge request {pullRequestId}",
-            ct);
+            ct, requireComplete: true);
 
         return payload
             .Where(discussion => !discussion.IndividualNote)
@@ -68,12 +68,7 @@ internal sealed class GitLabReviewThreadStatusProvider(
                 item.Notes.Any(note => note.Resolved) ? "Fixed" : "Active",
                 ResolveFilePath(item.Notes),
                 BuildCommentHistory(item.Notes),
-                item.Notes.Count(note => !ownership.OwnsComment(ToCommentRef(note))),
-                // GitLab's discussions API exposes no per-thread "outdated" flag, so whether the anchored
-                // code changed since the finding was raised cannot be determined from this response alone
-                // (it would need a commit compare against the merge-request head). Reporting Unknown keeps
-                // a claimed fix from being trusted without corroboration rather than guessing.
-                ThreadAnchorCodeChange.Unknown))
+                item.Notes.Count(note => !ownership.OwnsComment(ToCommentRef(note)))))
             .ToList()
             .AsReadOnly();
     }
@@ -101,7 +96,7 @@ internal sealed class GitLabReviewThreadStatusProvider(
         }
 
         var discussions = await response.Content.ReadFromJsonAsync<IReadOnlyList<GitLabDiscussionResponse>>(ct)
-                          ?? [];
+                          ?? throw new InvalidOperationException("GitLab discussion lookup returned no payload.");
 
         return new ProviderRestPager.RestPage<GitLabDiscussionResponse>(
             discussions,

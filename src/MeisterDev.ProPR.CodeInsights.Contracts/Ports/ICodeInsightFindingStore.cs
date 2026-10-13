@@ -16,8 +16,23 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// </remarks>
 public interface ICodeInsightFindingStore
 {
+    Task<IReadOnlyList<string>> GetHistoricalMissThreadIdsAsync(CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<string>>([]);
+    }
+
+    /// <summary>Reads internal feedback evidence for every finding in the captured namespace.</summary>
+    Task<IReadOnlyList<CodeInsightNativeFindingSnapshot>> GetNativeFeedbackFindingsAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<CodeInsightNativeFindingSnapshot>>([]);
+    }
+
     /// <summary>Resolves a client-owned provider namespace without returning credentials.</summary>
-    Task<string?> ResolveProviderScopeAsync(Guid clientId, Guid? connectionId, CancellationToken ct = default) => Task.FromResult<string?>(null);
+    Task<string?> ResolveProviderScopeAsync(Guid clientId, Guid? connectionId, CancellationToken ct = default)
+    {
+        return Task.FromResult<string?>(null);
+    }
 
     /// <summary>
     ///     Upserts the pull-request aggregate identified by <paramref name="key" /> and sets its lifecycle

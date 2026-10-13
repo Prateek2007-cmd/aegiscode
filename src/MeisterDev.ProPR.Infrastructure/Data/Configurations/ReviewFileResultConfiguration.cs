@@ -83,6 +83,19 @@ internal sealed class ReviewFileResultConfiguration : IEntityTypeConfiguration<R
                     ? null
                     : JsonSerializer.Deserialize<IReadOnlyList<ReviewComment>>(v, (JsonSerializerOptions?)null));
 
+        var withheldComparer = new ValueComparer<IReadOnlyList<WithheldReviewFinding>?>(
+            (left, right) => left == right || left != null && right != null && left.SequenceEqual(right),
+            values => values == null ? 0 : values.Aggregate(0, (hash, value) => HashCode.Combine(hash, value.GetHashCode())),
+            values => values == null ? null : values.ToList());
+        builder.Property(r => r.WithheldFindings)
+            .HasColumnName("withheld_findings_json")
+            .HasColumnType("jsonb")
+            .IsRequired(false)
+            .HasConversion(
+                values => values == null ? null : JsonSerializer.Serialize(values, (JsonSerializerOptions?)null),
+                json => json == null ? null : JsonSerializer.Deserialize<IReadOnlyList<WithheldReviewFinding>>(json, (JsonSerializerOptions?)null),
+                withheldComparer);
+
         // Which configured passes produced this result, so a resume can tell whether it still matches the
         // client's configuration. A ValueComparer is required or EF compares the list by reference and never
         // notices it was populated.

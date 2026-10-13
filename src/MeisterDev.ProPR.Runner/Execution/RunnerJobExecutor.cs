@@ -380,17 +380,7 @@ public sealed partial class RunnerJobExecutor(
 
             // What the review says about itself travels with it, or a soft-capped or context-degraded
             // remote review reads as complete everywhere the labels are read.
-            annotations = new
-            {
-                carriedForwardFilePaths = result.CarriedForwardFilePaths,
-                carriedForwardCandidatesSkipped = result.CarriedForwardCandidatesSkipped,
-                contextDegradedFilePaths = result.ContextDegradedFilePaths,
-                contextSkippedFilePaths = result.ContextSkippedFilePaths,
-                budgetSoftCapped = result.BudgetSoftCapped,
-                budgetSoftCapThresholdUsd = result.BudgetSoftCapThresholdUsd,
-                budgetSoftCapSpentUsd = result.BudgetSoftCapSpentUsd,
-                budgetSoftCapSkippedFilePaths = result.BudgetSoftCapSkippedFilePaths,
-            },
+            annotations = RunnerResultAnnotations.FromResult(result),
         };
 
         using var response = await http.PostAsJsonAsync("findings", request, ct);

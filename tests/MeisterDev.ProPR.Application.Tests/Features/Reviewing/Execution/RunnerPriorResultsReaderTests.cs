@@ -32,6 +32,21 @@ public sealed class RunnerPriorResultsReaderTests
     }
 
     [Fact]
+    public async Task AResumingLeaseHolder_ReceivesWithheldEvidenceSeparatelyFromComments()
+    {
+        var checkpoint = new ReviewFileResult(JobId, "src/a.cs");
+        var withheld = new WithheldReviewFinding(Finding("src/a.cs"), "judge_output_limit");
+        checkpoint.MarkCompleted("Summary", [], withheldFindings: [withheld]);
+        this._results.GetByIdWithFileResultsAsync(JobId, Arg.Any<CancellationToken>()).Returns(JobWith(checkpoint));
+
+        var result = await this.CreateReader().ReadAsync(Call());
+
+        var prior = Assert.Single(result.Value!);
+        Assert.Empty(prior.Comments);
+        Assert.Equal(withheld, Assert.Single(prior.WithheldFindings!));
+    }
+
+    [Fact]
     public async Task ACallerHoldingTheLease_GetsWhatTheJobAlreadyReviewed()
     {
         var job = JobWith(

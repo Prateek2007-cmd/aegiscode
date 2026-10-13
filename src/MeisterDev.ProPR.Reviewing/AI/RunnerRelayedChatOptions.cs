@@ -52,13 +52,16 @@ public static class RunnerRelayedChatOptions
             Tools = wire.Tools is { Count: > 0 } tools
                 ? [.. tools.Select(AITool (tool) => new RelayedToolDeclaration(tool))]
                 : null,
+            ToolMode = string.Equals(wire.ToolMode, "none", StringComparison.OrdinalIgnoreCase) ? ChatToolMode.None : null,
         };
 
         var effort = ParseEffort(wire.ReasoningEffort);
 
         return captureReasoning is { } resolved
             ? options.ApplyResolvedReasoning(resolved, effort)
-            : options.ApplyReasoning(wire.CaptureReasoning, effort);
+            : effort != ReviewReasoningEffort.None
+                ? options.ApplyResolvedReasoning(wire.CaptureReasoning, effort)
+                : options.ApplyReasoning(wire.CaptureReasoning, effort);
     }
 
     /// <summary>

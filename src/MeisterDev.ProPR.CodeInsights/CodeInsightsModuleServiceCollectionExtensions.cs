@@ -2,24 +2,23 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
+using MeisterDev.ProPR.CodeInsights.Classification;
+using MeisterDev.ProPR.CodeInsights.Contracts;
+using MeisterDev.ProPR.CodeInsights.Dispositions;
+using MeisterDev.ProPR.CodeInsights.Events;
+using MeisterDev.ProPR.CodeInsights.History;
+using MeisterDev.ProPR.CodeInsights.Metrics;
+using MeisterDev.ProPR.CodeInsights.Misses;
+using MeisterDev.ProPR.CodeInsights.Persistence;
+using MeisterDev.ProPR.CodeInsights.Ports;
+using MeisterDev.ProPR.CodeInsights.Rollups;
+using MeisterDev.ProPR.CodeInsights.Survival;
+using MeisterDev.ProPR.CodeInsights.Taxonomy;
 using MeisterDev.ProPR.Infrastructure.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using MeisterDev.ProPR.CodeInsights;
-using MeisterDev.ProPR.CodeInsights.Contracts;
-using MeisterDev.ProPR.CodeInsights.Events;
-using MeisterDev.ProPR.CodeInsights.History;
-using MeisterDev.ProPR.CodeInsights.Metrics;
-using MeisterDev.ProPR.CodeInsights.Ports;
-using MeisterDev.ProPR.CodeInsights.Rollups;
-using MeisterDev.ProPR.CodeInsights.Survival;
-using MeisterDev.ProPR.CodeInsights.Taxonomy;
-using MeisterDev.ProPR.CodeInsights.Classification;
-using MeisterDev.ProPR.CodeInsights.Dispositions;
-using MeisterDev.ProPR.CodeInsights.Misses;
-using MeisterDev.ProPR.CodeInsights.Persistence;
 
 namespace MeisterDev.ProPR.CodeInsights;
 
@@ -82,6 +81,8 @@ public static class CodeInsightsModuleServiceCollectionExtensions
         services.AddScoped<ICodeInsightRetentionStore>(sp => sp.GetRequiredService<CodeInsightFindingStore>());
         services.AddScoped<ICodeInsightFindingIngestionService, CodeInsightFindingIngestionService>();
         services.AddScoped<ICodeInsightPerformanceEvidenceStore, CodeInsightPerformanceEvidenceStore>();
+        services.AddScoped<ICodeInsightHistoricalRefreshStore, CodeInsightHistoricalRefreshStore>();
+        services.AddScoped<ICodeInsightProviderEvidenceBackfill, CodeInsightProviderEvidenceBackfill>();
         services.AddScoped<ICodeInsightReviewExposureCollector, CodeInsightReviewExposureCollector>();
 
         // The taxonomy service serves an admin surface rather than a best-effort side-write, so it uses the
@@ -167,6 +168,10 @@ public static class CodeInsightsModuleServiceCollectionExtensions
         options.BackfillMaxJobs = configuration.GetValue(
             "CODE_INSIGHTS_BACKFILL_MAX_JOBS",
             options.BackfillMaxJobs);
+        options.ProviderEvidenceBackfillMaxPullRequests = configuration.GetValue(
+            "CODE_INSIGHTS_PROVIDER_EVIDENCE_BACKFILL_MAX_PULL_REQUESTS", options.ProviderEvidenceBackfillMaxPullRequests);
+        options.ProviderEvidenceSweepBudgetSeconds = configuration.GetValue(
+            "CODE_INSIGHTS_PROVIDER_EVIDENCE_SWEEP_BUDGET_SECONDS", options.ProviderEvidenceSweepBudgetSeconds);
         options.SealSweepMaxPullRequests = configuration.GetValue(
             "CODE_INSIGHTS_SEAL_SWEEP_MAX_PULL_REQUESTS",
             options.SealSweepMaxPullRequests);

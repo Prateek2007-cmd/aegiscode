@@ -105,6 +105,7 @@ internal sealed class RunnerSubmissionAssembly(string submissionId, int chunkCou
                     BudgetSoftCapThresholdUsd = annotations.BudgetSoftCapThresholdUsd,
                     BudgetSoftCapSpentUsd = annotations.BudgetSoftCapSpentUsd,
                     BudgetSoftCapSkippedFilePaths = annotations.BudgetSoftCapSkippedFilePaths,
+                    WithheldFindings = annotations.WithheldFindings ?? [],
                 };
         }
     }

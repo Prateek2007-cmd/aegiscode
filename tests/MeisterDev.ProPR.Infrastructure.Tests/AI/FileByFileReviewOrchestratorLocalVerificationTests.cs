@@ -2,16 +2,19 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.ValueObjects;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Diagnostics.Persistence;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.CommentRelevance;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.ReviewFindingGate;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verification;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -20,6 +23,94 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 
 public sealed class FileByFileReviewOrchestratorLocalVerificationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReviewAsync_LocalOutputLimit_RetainsScopeAndProvenanceAcrossCheckpointRecovery(bool hasMetadata)
+    {
+        var comment = new ReviewComment("src/Foo.cs", 10, CommentSeverity.Warning, "The lookup result may be null.");
+        if (hasMetadata)
+        {
+            comment = comment with
+            {
+                OriginPassKind = nameof(ReviewPassKind.MultiPassUnion),
+                OriginPassIndex = 3,
+                OriginPassLens = "security",
+                OriginPassShadow = true,
+                OriginModelId = "existing-model",
+                OriginLogicalModelName = "existing-reviewer",
+                OriginSymbolName = "Execute",
+                OriginSymbolKind = "Method",
+                ScopeRelation = ReviewCommentScopeRelation.OutsideChange,
+                SourceReadGrounding = ReviewCommentReadGrounding.NotRead,
+            };
+        }
+
+        var aiCore = Substitute.For<IAiReviewCore>();
+        aiCore.ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>())
+            .Returns(new ReviewResult("Summary", [comment]));
+        var verifier = Substitute.For<IReviewFindingVerifier>();
+        verifier.VerifyAsync(
+                Arg.Any<IReadOnlyList<VerificationWorkItem>>(), Arg.Any<IReadOnlyList<InvariantFact>>(),
+                Arg.Any<ReviewVerificationContext?>(), Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromResult<IReadOnlyList<VerificationOutcome>>(
+                call.Arg<IReadOnlyList<VerificationWorkItem>>().Select(item => new VerificationOutcome(
+                    item.Claim.ClaimId, item.Claim.FindingId, VerificationOutcome.NonVerifiableKind,
+                    FinalGateDecision.SummaryOnlyDisposition, [], [], VerificationOutcome.NoEvidence,
+                    "Judge output budget exhausted.", VerificationOutcome.AiMicroVerifierEvaluator, true)
+                {
+                    JudgeDegradation = EvidenceJudgeDegradations.OutputLimit,
+                }).ToList()));
+        var recorder = CreateProtocolRecorder();
+        var job = CreateJob();
+        var file = new ChangedFile("src/Foo.cs", ChangeType.Edit, "return lookup(key);", "@@ -10 +10 @@\n-return old;\n+return lookup(key);");
+        var pr = CreatePr(file);
+        var storedResults = new List<ReviewFileResult>();
+        var sut = new FileByFileReviewOrchestrator(
+            aiCore, recorder, CreateJobRepository(job, storedResults), CreateSynthesisClient(),
+            Microsoft.Extensions.Options.Options.Create(new AiReviewOptions { MaxFileReviewConcurrency = 1, ModelId = "review-model" }),
+            Substitute.For<ILogger<FileByFileReviewOrchestrator>>(),
+            deterministicReviewFindingGate: new DeterministicReviewFindingGate(),
+            reviewClaimExtractor: new DeterministicReviewClaimExtractor(),
+            reviewFindingVerifier: verifier);
+        var context = new ReviewSystemContext(null, [], CreateVerificationTools()) { ModelId = "review-model" };
+
+        var result = await sut.ReviewAsync(job, pr, context, CancellationToken.None);
+
+        var checkpoint = Assert.Single(storedResults);
+        Assert.Empty(checkpoint.Comments!);
+        Assert.Empty(result.Comments);
+        var withheld = Assert.Single(checkpoint.WithheldFindings!);
+        Assert.Equal(EvidenceJudgeDegradations.OutputLimit, withheld.ReasonCode);
+        Assert.Equal(hasMetadata ? ReviewCommentScopeRelation.OutsideChange : ReviewCommentScopeRelation.OnChangedLine, withheld.Comment.ScopeRelation);
+        Assert.Equal(hasMetadata ? nameof(ReviewPassKind.MultiPassUnion) : nameof(ReviewPassKind.Baseline), withheld.Comment.OriginPassKind);
+        Assert.Equal(hasMetadata ? "existing-model" : "review-model", withheld.Comment.OriginModelId);
+        if (hasMetadata)
+        {
+            Assert.Equal(comment, withheld.Comment);
+        }
+
+        Assert.Equal(withheld, Assert.Single(result.WithheldFindings));
+
+        using var db = new MeisterProPRDbContext(new DbContextOptionsBuilder<MeisterProPRDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        var converter = db.Model.FindEntityType(typeof(ReviewFileResult))!.FindProperty(nameof(ReviewFileResult.WithheldFindings))!.GetValueConverter()!;
+        var storedJson = Assert.IsType<string>(converter.ConvertToProvider(checkpoint.WithheldFindings));
+        var restoredEvidence = Assert.IsAssignableFrom<IReadOnlyList<WithheldReviewFinding>>(converter.ConvertFromProvider(storedJson));
+        var restoredCheckpoint = new ReviewFileResult(job.Id, file.Path);
+        restoredCheckpoint.MarkCompleted(checkpoint.PerFileSummary!, checkpoint.Comments!, checkpoint.ReviewedPassKeys, restoredEvidence);
+        var resumedCheckpoint = ReviewFileResult.CreateResumed(job.Id, restoredCheckpoint);
+        storedResults.Clear();
+        storedResults.Add(resumedCheckpoint);
+
+        var recoveredResult = await sut.ReviewAsync(job, pr, context, CancellationToken.None);
+
+        Assert.False(resumedCheckpoint.IsCarriedForward);
+        Assert.Equal(withheld, Assert.Single(resumedCheckpoint.WithheldFindings!));
+        Assert.Empty(recoveredResult.Comments);
+        Assert.Equal(withheld, Assert.Single(recoveredResult.WithheldFindings));
+        await aiCore.Received(1).ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task ReviewAsync_LocalContradictedFinding_IsBlockedBeforePersistence()
     {
@@ -29,7 +120,8 @@ public sealed class FileByFileReviewOrchestratorLocalVerificationTests
                 new ReviewResult(
                     "summary",
                     [
-                        new ReviewComment("src/Foo.cs", 10, CommentSeverity.Warning, "ReviewComment.Message may be null when the model omits a message."),
+                        new ReviewComment("src/Foo.cs", 10, CommentSeverity.Warning, "ReviewComment.Message may be null when the model omits a message.")
+                            { OriginModelId = "producing-model" },
                         new ReviewComment("src/Foo.cs", 18, CommentSeverity.Warning, "Confirmed null dereference in ExecuteAsync."),
                     ]));
 
@@ -63,6 +155,10 @@ public sealed class FileByFileReviewOrchestratorLocalVerificationTests
         Assert.DoesNotContain(storedResults[0].Comments!, comment => comment.Message.Contains("ReviewComment.Message may be null", StringComparison.Ordinal));
         Assert.Single(result.Comments);
         Assert.Contains(result.Comments, comment => comment.Message == "Confirmed null dereference in ExecuteAsync.");
+        var persistedWithheld = Assert.Single(storedResults[0].WithheldFindings!);
+        Assert.Contains("ReviewComment.Message may be null", persistedWithheld.Comment.Message);
+        Assert.Equal("producing-model", persistedWithheld.Comment.OriginModelId);
+        Assert.Equal(persistedWithheld, Assert.Single(result.WithheldFindings));
 
         await protocolRecorder.Received()
             .RecordVerificationEventAsync(

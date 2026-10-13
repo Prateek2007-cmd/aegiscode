@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.CodeInsights.Taxonomy;
 using MeisterDev.ProPR.CodeInsights.Persistence;
+using NSubstitute;
 
 namespace MeisterDev.ProPR.CodeInsights.Tests.Persistence;
 
@@ -33,6 +34,77 @@ public sealed class CodeInsightFindingStoreTests : IDisposable
     public void Dispose()
     {
         this._dbContext.Dispose();
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task HistoricalReadersRejectNullArgumentsBeforeCreatingAContext(bool nativeFindings, bool nullKey)
+    {
+        var factory = Substitute.For<IDbContextFactory<MeisterProPRDbContext>>();
+        factory.CreateDbContextAsync(Arg.Any<CancellationToken>()).Returns(_ =>
+            Task.FromException<MeisterProPRDbContext>(new InvalidOperationException("The invalid read created a context.")));
+        var store = new CodeInsightFindingStore(this._dbContext, CreateCodec(), factory);
+        var key = nullKey ? null! : NewKey();
+        var scope = nullKey ? string.Empty : null!;
+
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(async () =>
+        {
+            if (nativeFindings)
+            {
+                await store.GetNativeFeedbackFindingsAsync(key, scope);
+            }
+            else
+            {
+                await store.GetHistoricalMissThreadIdsAsync(key, scope);
+            }
+        });
+
+        Assert.Equal(nullKey ? "key" : "providerScope", exception.ParamName);
+        await factory.DidNotReceive().CreateDbContextAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \t")]
+    [InlineData("AzureDevOps:https://ado.example.test/collection")]
+    [InlineData(" AzureDevOps:https://ado.example.test/collection ")]
+    public async Task HistoricalReadersKeepExactLegacyAndNonblankNamespaces(string scope)
+    {
+        var key = NewKey();
+        string[] scopes = ["", " \t", "AzureDevOps:https://ado.example.test/collection", " AzureDevOps:https://ado.example.test/collection "];
+        var source = NewFindings()[0];
+        await this._store.MaterialiseFindingsAsync(
+            key, JobId, "rev", DateTimeOffset.UtcNow,
+            scopes.Select((value, ordinal) => source with { Ordinal = ordinal, ProviderScope = value, ProviderThreadId = $"own-{ordinal}" }).ToList());
+        for (var index = 0; index < scopes.Length; index++)
+        {
+            await this._store.RecordMissAsync(key, Miss($"human-{index}") with { ProviderScope = scopes[index] });
+        }
+
+        var finding = Assert.Single(await this._store.GetNativeFeedbackFindingsAsync(key, scope));
+        var miss = Assert.Single(await this._store.GetHistoricalMissThreadIdsAsync(key, scope));
+
+        var expectedOrdinal = Array.IndexOf(scopes, scope);
+        Assert.Equal(scope, finding.Finding.ProviderScope);
+        Assert.Equal(expectedOrdinal, finding.Finding.Ordinal);
+        Assert.Equal($"human-{expectedOrdinal}", miss);
+    }
+
+    [Fact]
+    public async Task HistoricalReadersReturnEmptyForAnAbsentAggregateWithoutReadingAnotherPullRequest()
+    {
+        var key = NewKey();
+        await this._store.MaterialiseFindingsAsync(key, JobId, "rev", DateTimeOffset.UtcNow, NewFindings());
+        await this._store.RecordMissAsync(key, Miss());
+        var absent = key with { PullRequestId = key.PullRequestId + 1 };
+
+        Assert.Empty(await this._store.GetNativeFeedbackFindingsAsync(absent, string.Empty));
+        Assert.Empty(await this._store.GetHistoricalMissThreadIdsAsync(absent, string.Empty));
+        Assert.NotEmpty(await this._store.GetNativeFeedbackFindingsAsync(key, string.Empty));
+        Assert.Single(await this._store.GetHistoricalMissThreadIdsAsync(key, string.Empty));
     }
 
     [Fact]

@@ -9,6 +9,7 @@ using System.Threading.Channels;
 using MeisterDev.ProPR.Runner.Contracts;
 using Microsoft.Extensions.Time.Testing;
 using MeisterDev.ProPR.Runner.Execution;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -22,6 +23,71 @@ namespace MeisterDev.ProPR.Runner.Tests;
 /// </summary>
 public sealed class RunnerWorkLoopTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletedHeartbeatKeepsAnInFlightSubmissionActiveAndStillAllowsHostDrain(bool drain)
+    {
+        var handler = new RecordingHandler
+        {
+            HeartbeatResponder = () => RecordingHandler.Json(
+                HttpStatusCode.OK,
+                new { accepted = false, expiresAt = (DateTimeOffset?)null, stopReason = "Completed" })
+        };
+        handler.AlwaysLease();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource<IReadOnlyDictionary<string, object?>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var submissionToken = CancellationToken.None;
+        var submissionFinished = false;
+        var executor = Substitute.For<IRunnerJobExecutor>();
+        executor.ExecuteAsync(Arg.Any<RunnerJobManifest>(), Arg.Any<CancellationToken>()).Returns(async c =>
+        {
+            submissionToken = c.ArgAt<CancellationToken>(1);
+            entered.SetResult();
+            await response.Task.WaitAsync(submissionToken);
+            submissionFinished = true;
+        });
+        var time = new TimerTrackingFakeTimeProvider();
+        using var loop = CreateLoop(handler, executor, capacity: 1, time: time, logger: new CompletedHeartbeatLogger(completed));
+        await loop.StartAsync(CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            handler.AlwaysNoWork();
+            await time.WaitForTimerAsync(TimeSpan.FromSeconds(20));
+            time.Advance(TimeSpan.FromSeconds(20));
+            var completion = await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Single(handler.Heartbeats);
+            var leased = Assert.Single(handler.LeasedJobs);
+            Assert.Equal(leased.JobId, completion["JobId"]);
+            Assert.Equal(leased.LeaseGeneration, completion["Generation"]);
+            Assert.False(submissionToken.IsCancellationRequested);
+            Assert.Equal(1, loop.InFlightCount);
+            if (drain)
+            {
+                await loop.StopAsync(CancellationToken.None);
+                Assert.True(submissionToken.IsCancellationRequested);
+                Assert.False(submissionFinished);
+            }
+            else
+            {
+                response.SetResult();
+                await WaitUntilAsync(() => loop.InFlightCount == 0, "The findings submission did not finish.");
+                Assert.True(submissionFinished);
+                Assert.Empty(handler.ReleaseRequests);
+            }
+
+            await executor.Received(1).ExecuteAsync(Arg.Any<RunnerJobManifest>(), Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            response.TrySetResult();
+            await loop.StopAsync(CancellationToken.None);
+        }
+    }
+
     [Fact]
     public async Task StartupPurgeFailure_DoesNotPreventEnrollment()
     {
@@ -559,7 +625,8 @@ public sealed class RunnerWorkLoopTests
         TimeProvider? time = null,
         string? credential = "already-enrolled",
         string? registrationToken = null,
-        IOptions<RunnerHostOptions>? workspaceOptions = null)
+        IOptions<RunnerHostOptions>? workspaceOptions = null,
+        ILogger<RunnerWorkLoop>? logger = null)
     {
         var http = new HttpClient(handler) { BaseAddress = new Uri("http://control-plane.invalid/") };
         var options = Options.Create(
@@ -584,7 +651,7 @@ public sealed class RunnerWorkLoopTests
             options,
             health ?? new RunnerHealthState(),
             time ?? TimeProvider.System,
-            NullLogger<RunnerWorkLoop>.Instance);
+            logger ?? NullLogger<RunnerWorkLoop>.Instance);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, string because)
@@ -620,6 +687,29 @@ public sealed class RunnerWorkLoopTests
 
         public Task<TimeSpan> WaitForTimerAsync() =>
             this._registeredTimers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        public async Task WaitForTimerAsync(TimeSpan expected)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (await this._registeredTimers.Reader.ReadAsync(timeout.Token) != expected)
+            {
+            }
+        }
+    }
+
+    private sealed class CompletedHeartbeatLogger(TaskCompletionSource<IReadOnlyDictionary<string, object?>> completed) : ILogger<RunnerWorkLoop>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (eventId.Id == 6018 && state is IEnumerable<KeyValuePair<string, object?>> fields)
+            {
+                completed.TrySetResult(fields.ToDictionary(field => field.Key, field => field.Value));
+            }
+        }
     }
 
     private sealed record LeaseAsk(int FreeSlots, int ContractVersion);

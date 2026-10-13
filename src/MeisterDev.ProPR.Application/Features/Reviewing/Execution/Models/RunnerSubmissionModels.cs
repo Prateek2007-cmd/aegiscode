@@ -42,6 +42,7 @@ public sealed record RunnerFindingsChunk(
 /// <param name="BudgetSoftCapThresholdUsd">The cap that was reached, when the executor knew the figure.</param>
 /// <param name="BudgetSoftCapSpentUsd">The spend that reached it, when the executor knew the figure.</param>
 /// <param name="BudgetSoftCapSkippedFilePaths">Files not scanned because the cap was reached first.</param>
+/// <param name="WithheldFindings">Generated findings retained as evidence without allowing SCM publication.</param>
 public sealed record RunnerResultAnnotations(
     IReadOnlyList<string> CarriedForwardFilePaths,
     int CarriedForwardCandidatesSkipped,
@@ -50,7 +51,21 @@ public sealed record RunnerResultAnnotations(
     bool BudgetSoftCapped,
     decimal? BudgetSoftCapThresholdUsd,
     decimal? BudgetSoftCapSpentUsd,
-    IReadOnlyList<string> BudgetSoftCapSkippedFilePaths);
+    IReadOnlyList<string> BudgetSoftCapSkippedFilePaths,
+    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null)
+{
+    /// <summary>Maps internal review annotations to the optional runner submission fields.</summary>
+    /// <param name="result">The review result produced by the execution strategy.</param>
+    /// <returns>Annotations carried by the final submission chunk.</returns>
+    public static RunnerResultAnnotations FromResult(ReviewResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return new RunnerResultAnnotations(
+            result.CarriedForwardFilePaths, result.CarriedForwardCandidatesSkipped,
+            result.ContextDegradedFilePaths, result.ContextSkippedFilePaths, result.BudgetSoftCapped,
+            result.BudgetSoftCapThresholdUsd, result.BudgetSoftCapSpentUsd, result.BudgetSoftCapSkippedFilePaths, result.WithheldFindings);
+    }
+}
 
 /// <summary>What happened to a submitted chunk.</summary>
 public enum RunnerSubmissionOutcome

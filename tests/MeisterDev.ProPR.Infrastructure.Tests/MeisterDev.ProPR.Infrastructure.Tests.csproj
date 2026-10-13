@@ -47,6 +47,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\src\MeisterDev.ProPR.Infrastructure\MeisterDev.ProPR.Infrastructure.csproj"/>
+        <ProjectReference Include="..\..\src\MeisterDev.ProPR.CodeInsights\MeisterDev.ProPR.CodeInsights.csproj"/>
         <ProjectReference Include="..\..\src\MeisterDev.ProPR.ProRV\MeisterDev.ProPR.ProRV.csproj"/>
         <ProjectReference Include="..\..\src\MeisterDev.ProPR.ProCursor\MeisterDev.ProPR.ProCursor.csproj"/>
         <ProjectReference Include="..\..\src\MeisterDev.ProPR.CodeAnalysis.TreeSitter\MeisterDev.ProPR.CodeAnalysis.TreeSitter.csproj"/>

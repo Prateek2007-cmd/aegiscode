@@ -17,6 +17,17 @@ namespace MeisterDev.Ai.Providers.LiteLlmAddIn.Tests;
 /// </summary>
 public sealed class LiteLlmProviderDriverTests
 {
+    [Theory]
+    [InlineData(ProviderDeclaredProtocolModes.Auto, true)]
+    [InlineData(LiteLlmProviderDriver.ChatCompletionsProtocol, true)]
+    [InlineData(LiteLlmProviderDriver.ResponsesProtocol, true)]
+    [InlineData(ProviderDeclaredProtocolModes.Embeddings, false)]
+    [InlineData("unknown:Protocol", false)]
+    public void LowEffort_IsAvailableOnlyOnTheDeclaredChatTransports(string protocolMode, bool expected)
+    {
+        Assert.Equal(expected, Driver().SupportsLowReasoningEffort(protocolMode));
+    }
+
     // A wire shape another family declares, which a binding holds after a connection is repointed and
     // is a shape this family cannot serve.
     private const string AnotherFamilysProtocol = "meisterdev/anthropic:AnthropicMessages";

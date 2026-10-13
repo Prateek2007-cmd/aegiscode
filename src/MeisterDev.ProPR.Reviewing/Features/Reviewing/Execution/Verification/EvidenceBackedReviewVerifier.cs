@@ -1,17 +1,20 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using MeisterDev.ProPR.Application.AI;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.AI;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Diagnostics.Persistence;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verification;
 
@@ -34,29 +37,25 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verificat
 ///     The category is the low-effort category unless the host passes another one: a runner resolves every purpose to
 ///     the manifest's default model and records the judge under the default category. When the judge falls back to the
 ///     reviewer's own client, its tokens are recorded under the default category. Claims are judged a few at a time,
-///     each judge call is limited in output tokens and in time, and a call that runs out of time withholds its claim.
-///     A failure of the model provider, an error in its response, or a response without output and token usage
-///     withholds the claim with the provider-error degradation. Whether the producing pass could read the repository is
+///     each model turn is limited in output tokens, and a claim that runs out of time is withheld. Output exhaustion
+///     receives one larger verdict attempt inside the claim's deadline; repeated exhaustion withholds the claim with
+///     the output-limit degradation. A failure of the model provider or an error in its response withholds the claim
+///     with the provider-error degradation. Whether the producing pass could read the repository is
 ///     taken from the work item when it states it, and from the verification context otherwise.
 /// </remarks>
-public sealed class EvidenceBackedReviewVerifier(
+public sealed partial class EvidenceBackedReviewVerifier(
     IProtocolRecorder? protocolRecorder = null,
     ILogger<EvidenceBackedReviewVerifier>? logger = null,
     AiConnectionModelCategory resolvedJudgeTokenCategory = AiConnectionModelCategory.LowEffort,
     TimeSpan? judgeCallTimeout = null,
     TimeSpan? excerptTimeout = null,
-    TimeSpan? recordingGrace = null) : IReviewFindingVerifier
+    TimeSpan? recordingGrace = null,
+    IOptions<AiReviewOptions>? reviewOptions = null) : IReviewFindingVerifier
 {
     private const string JudgeCallName = "ai_call_evidence_verification";
 
     // An intermediate model call of the tool loop, in which the judge asked for lookups.
     private const string JudgeToolTurnCallName = "ai_call_evidence_verification_tool_turn";
-
-    /// <summary>
-    ///     Output limit of one judge call. The judge answers with a one-sentence JSON verdict, which needs far fewer
-    ///     tokens; the limit stops a reasoning model from spending an unbounded amount on one finding.
-    /// </summary>
-    internal const int MaxJudgeOutputTokens = 400;
 
     /// <summary>Number of judge calls that run at the same time for one file.</summary>
     internal const int MaxParallelJudgeCalls = 4;
@@ -89,6 +88,24 @@ public sealed class EvidenceBackedReviewVerifier(
     private readonly TimeSpan _judgeCallTimeout = judgeCallTimeout ?? DefaultJudgeCallTimeout;
     private readonly TimeSpan _excerptTimeout = excerptTimeout ?? DefaultExcerptTimeout;
     private readonly TimeSpan _recordingGrace = recordingGrace ?? DefaultRecordingGrace;
+    private readonly (int Initial, int Retry) _outputBudgets = ResolveOutputBudgets(reviewOptions);
+
+    private static (int Initial, int Retry) ResolveOutputBudgets(IOptions<AiReviewOptions>? options)
+    {
+        var values = options?.Value ?? new AiReviewOptions();
+        Validator.ValidateProperty(
+            values.EvidenceJudgeMaxOutputTokens,
+            new ValidationContext(values) { MemberName = nameof(AiReviewOptions.EvidenceJudgeMaxOutputTokens) });
+        Validator.ValidateProperty(
+            values.EvidenceJudgeRetryMaxOutputTokens,
+            new ValidationContext(values) { MemberName = nameof(AiReviewOptions.EvidenceJudgeRetryMaxOutputTokens) });
+        foreach (var failure in values.Validate(new ValidationContext(values)))
+        {
+            throw new ValidationException(failure.ErrorMessage);
+        }
+
+        return (values.EvidenceJudgeMaxOutputTokens, values.EvidenceJudgeRetryMaxOutputTokens);
+    }
 
     public async Task<IReadOnlyList<VerificationOutcome>> VerifyAsync(
         IReadOnlyList<VerificationWorkItem> workItems,
@@ -141,7 +158,7 @@ public sealed class EvidenceBackedReviewVerifier(
                 var runtime = await context.Resolver
                     .ResolveChatRuntimeAsync(context.ClientId, AiPurpose.ReviewLowEffort, ct)
                     .ConfigureAwait(false);
-                return new JudgeRuntime(runtime.ChatClient, runtime.Model.RemoteModelId, resolvedJudgeTokenCategory);
+                return new JudgeRuntime(runtime.ChatClient, runtime.Model.RemoteModelId, resolvedJudgeTokenCategory, runtime.SupportsLowReasoningEffort);
             }
             catch (OperationCanceledException)
             {
@@ -302,9 +319,17 @@ public sealed class EvidenceBackedReviewVerifier(
     {
         var systemPrompt = BuildSystemPrompt();
         var userMessage = BuildUserMessage(claim, anchorSource, sourceStartLine, context.Intent, excerpts, context.SourceBranch);
-        var response = await EvidenceJudgeToolLoop.RunAsync(
+        var options = new ChatOptions { ModelId = judge.ModelId, MaxOutputTokens = this._outputBudgets.Initial };
+        if (judge.SupportsLowReasoningEffort)
+        {
+            options.ApplyResolvedReasoning(false, ReviewReasoningEffort.Low);
+        }
+
+        var result = await EvidenceJudgeToolLoop.RunAsync(
             judge.Client!,
-            new ChatOptions { ModelId = judge.ModelId, MaxOutputTokens = MaxJudgeOutputTokens },
+            options,
+            this._outputBudgets.Retry,
+            HasUsableVerdict,
             systemPrompt,
             userMessage,
             EvidenceJudgeToolLoop.BuildJudgeTools(context.Tools!, claimToken),
@@ -315,17 +340,43 @@ public sealed class EvidenceBackedReviewVerifier(
                     context.ProtocolId, modelResponse, systemPrompt, userMessage, judge, isFinal ? JudgeCallName : JudgeToolTurnCallName, recordToken)),
             toolCall => this.RecordSerializedAsync(
                 recording, claim, recordToken => this.RecordJudgeToolCallAsync(context.ProtocolId, claim, toolCall, recordToken)),
+            outputLimit => this.RecordSerializedAsync(
+                recording, claim, recordToken => this.RecordJudgeOutputLimitAsync(context.ProtocolId, claim, judge, outputLimit, recordToken)),
             claimToken).ConfigureAwait(false);
 
         // A provider error withholds the claim even when the response also carries a parseable verdict, because the
         // response may be incomplete.
-        var verdict = TryParseVerdict(response.Text);
-        if ((verdict is null || ProviderError(response) is not null) && UnusableResponseOutcome(claim, response) is { } unusable)
+        var response = result.Response;
+        if (ProviderError(response) is not null && UnusableResponseOutcome(claim, response) is { } providerFailure)
+        {
+            return providerFailure;
+        }
+
+        if (result.OutputLimitReached)
+        {
+            return ConservativeWithhold(
+                claim,
+                "escalation degraded: the judge exhausted its output budget after one larger retry",
+                degradation: EvidenceJudgeDegradations.OutputLimit);
+        }
+
+        if (UnusableResponseOutcome(claim, response) is { } unusable)
         {
             return unusable;
         }
 
-        return ToOutcome(claim, verdict, producedWithRepositoryTools);
+        return ToOutcome(claim, TryParseVerdict(response.Text), producedWithRepositoryTools);
+    }
+
+    private static bool HasUsableVerdict(ChatResponse response)
+    {
+        return TryParseVerdict(response.Text) is { } verdict && (verdict.Kind switch
+        {
+            EvidenceJudgeVerdicts.Confirmed or EvidenceJudgeVerdicts.Intended or EvidenceJudgeVerdicts.NotConfirmed
+                or EvidenceJudgeVerdicts.NotActionable or EvidenceJudgeVerdicts.InsufficientContext => true,
+            EvidenceJudgeVerdicts.IntendedContradicted => NamesASource(verdict.Contradicts),
+            _ => false,
+        });
     }
 
     // Recording is serialized, because the protocol recorder adds token counts by reading and rewriting the protocol
@@ -395,6 +446,16 @@ public sealed class EvidenceBackedReviewVerifier(
                 degradation: EvidenceJudgeDegradations.ProviderError);
         }
 
+        if (response.FinishReason == ChatFinishReason.ContentFilter
+            || contents.OfType<ErrorContent>().Any(content => string.Equals(content.ErrorCode, "Refusal", StringComparison.Ordinal)))
+        {
+            return ConservativeWithhold(
+                claim,
+                "escalation degraded: the judge refused to return a verdict",
+                EvidenceJudgeVerdicts.Unparseable,
+                EvidenceJudgeDegradations.Unparseable);
+        }
+
         if (string.IsNullOrWhiteSpace(response.Text) && contents.OfType<FunctionCallContent>().Any())
         {
             return ConservativeWithhold(
@@ -418,6 +479,60 @@ public sealed class EvidenceBackedReviewVerifier(
 
         return null;
     }
+
+    private async Task RecordJudgeOutputLimitAsync(
+        Guid? protocolId,
+        ClaimDescriptor claim,
+        JudgeRuntime judge,
+        JudgeOutputLimit limit,
+        CancellationToken ct)
+    {
+        LogJudgeOutputLimit(
+            this._logger, claim.ClaimId, judge.ModelId, limit.ModelTurn, limit.MaxOutputTokens,
+            limit.Response.Usage?.OutputTokenCount, limit.Response.Usage?.ReasoningTokenCount, limit.RetryScheduled);
+        if (protocolRecorder is null || !protocolId.HasValue)
+        {
+            return;
+        }
+
+        try
+        {
+            await protocolRecorder.RecordVerificationEventAsync(
+                protocolId.Value,
+                ReviewProtocolEventNames.EvidenceJudgeOutputLimit,
+                JsonSerializer.Serialize(new { findingId = claim.FindingId, claimId = claim.ClaimId }),
+                JsonSerializer.Serialize(
+                    new
+                    {
+                        modelId = judge.ModelId,
+                        modelTurn = limit.ModelTurn,
+                        maxOutputTokens = limit.MaxOutputTokens,
+                        finishReason = limit.Response.FinishReason?.ToString(),
+                        outputTokens = limit.Response.Usage?.OutputTokenCount,
+                        reasoningTokens = limit.Response.Usage?.ReasoningTokenCount,
+                        retryScheduled = limit.RetryScheduled,
+                        retryMaxOutputTokens = limit.RetryScheduled ? this._outputBudgets.Retry : (int?)null,
+                    }),
+                null,
+                ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Recording failures do not change the bounded recovery or final disposition.
+        }
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message =
+            "The evidence judge for claim {ClaimId} on model {ModelId} exhausted model turn {ModelTurn} with a {MaxOutputTokens}-token output budget; output tokens {OutputTokens}, reasoning tokens {ReasoningTokens}, retry scheduled {RetryScheduled}")]
+    private static partial void LogJudgeOutputLimit(
+        ILogger logger, string claimId, string? modelId, int modelTurn, int maxOutputTokens,
+        long? outputTokens, long? reasoningTokens, bool retryScheduled);
 
     private async Task RecordJudgeToolCallAsync(Guid? protocolId, ClaimDescriptor claim, JudgeToolCall toolCall, CancellationToken ct)
     {
@@ -913,7 +1028,11 @@ public sealed class EvidenceBackedReviewVerifier(
         }
     }
 
-    private sealed record JudgeRuntime(IChatClient? Client, string? ModelId, AiConnectionModelCategory Category);
+    private sealed record JudgeRuntime(
+        IChatClient? Client,
+        string? ModelId,
+        AiConnectionModelCategory Category,
+        bool SupportsLowReasoningEffort = false);
 
     // The serialized protocol recording of one claim: the lock shared by the run, the time after which the claim no
     // longer waits for that lock, and the run token the records themselves use.

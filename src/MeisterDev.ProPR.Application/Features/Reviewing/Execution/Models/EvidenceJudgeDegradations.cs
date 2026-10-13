@@ -27,6 +27,9 @@ public static class EvidenceJudgeDegradations
     /// <summary>The judge call did not finish within the per-call time limit.</summary>
     public const string Timeout = "judge_timeout";
 
+    /// <summary>The judge exhausted its output budget after the bounded recovery attempt.</summary>
+    public const string OutputLimit = "judge_output_limit";
+
     /// <summary>The judge answered, but the answer was not a usable verdict.</summary>
     public const string Unparseable = "judge_unparseable";
 }

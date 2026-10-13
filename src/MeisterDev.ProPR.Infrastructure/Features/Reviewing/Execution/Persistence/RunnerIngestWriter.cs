@@ -215,7 +215,7 @@ public sealed partial class RunnerIngestWriter(
         }
         else if (outcome.IsComplete)
         {
-            result.MarkCompleted(outcome.Summary ?? string.Empty, outcome.Comments ?? [], outcome.ReviewedPassKeys);
+            result.MarkCompleted(outcome.Summary ?? string.Empty, outcome.Comments ?? [], outcome.ReviewedPassKeys, outcome.WithheldFindings);
         }
     }
 

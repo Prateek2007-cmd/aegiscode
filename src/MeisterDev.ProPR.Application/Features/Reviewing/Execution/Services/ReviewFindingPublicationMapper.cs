@@ -14,7 +14,8 @@ internal static class ReviewFindingPublicationMapper
     // ambiguous same-anchor findings retain unknown publication identity. Each receipt is consumed once.
     internal static IReadOnlyList<ReviewFindingProduced> BuildProducedFindings(
         IReadOnlyList<ReviewComment> comments, IReadOnlyList<ReviewComment> published,
-        ReviewCommentPostingDiagnosticsDto diagnostics, bool postingEnabled, string providerScope)
+        ReviewCommentPostingDiagnosticsDto diagnostics, bool postingEnabled, string providerScope,
+        IReadOnlyList<WithheldReviewFinding>? withheldFindings = null)
     {
         var mapping = MapPublishedOrdinalsToPersisted(comments, published).ToList();
         var unclaimed = diagnostics.PostedComments.Where(row => row.ThreadKind == PostedReviewCommentKind.Inline).ToList();
@@ -37,6 +38,35 @@ internal static class ReviewFindingPublicationMapper
                     state, suppressed?.ReasonCode ?? state.ToString(), suppressed?.MatchedProviderThreadId,
                     suspect is null ? CodeInsightDuplicateState.Unknown : CodeInsightDuplicateState.Suspected,
                     suspect?.MatchedProviderThreadId, suspect is null ? null : "publication-near-match", suspect?.MatchScore, null, providerScope));
+        }
+
+        // Negative ordinals keep retained evidence separate from publication candidates even when their count
+        // changes. Sorting preserves these identities when file checkpoints are loaded in another order.
+        var withheldOrdinal = -1;
+        foreach (var finding in (withheldFindings ?? []).OrderBy(row => row.Comment.FilePath, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.LineNumber)
+                 .ThenBy(row => row.Comment.OriginPassKind, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.OriginPassIndex)
+                 .ThenBy(row => row.Comment.OriginPassLens, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.OriginPassShadow)
+                 .ThenBy(row => row.Comment.OriginModelId, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.OriginLogicalModelName, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.OriginSymbolName, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.OriginSymbolKind, StringComparer.Ordinal)
+                 .ThenBy(row => row.Comment.ScopeRelation)
+                 .ThenBy(row => row.Comment.SourceReadGrounding)
+                 .ThenBy(row => row.Comment.Severity)
+                 .ThenBy(row => row.Comment.Message, StringComparer.Ordinal)
+                 .ThenBy(row => row.ReasonCode, StringComparer.Ordinal))
+        {
+            var comment = finding.Comment;
+            produced.Add(
+                new ReviewFindingProduced(
+                    withheldOrdinal--, comment.FilePath, comment.LineNumber, comment.Severity,
+                    comment.Message, comment.OriginPassKind, comment.OriginPassIndex, comment.OriginPassLens, comment.OriginPassShadow,
+                    comment.ScopeRelation, comment.SourceReadGrounding, null, null, comment.OriginModelId, comment.OriginLogicalModelName,
+                    comment.OriginSymbolName, comment.OriginSymbolKind, CodeInsightPublicationState.PolicyWithheld, finding.ReasonCode,
+                    ProviderScope: providerScope));
         }
 
         return produced;

@@ -155,7 +155,9 @@ public static class InfrastructureServiceExtensions
 
         // AiReviewOptions — bound from individual env vars (not a config section)
         services.AddOptions<AiReviewOptions>()
-            .Configure(opts => ConfigureAiReviewOptions(opts, configuration));
+            .Configure(opts => ConfigureAiReviewOptions(opts, configuration))
+            .Validate(opts => opts.HasValidEvidenceJudgeOutputBudgets(), "Evidence judge output budgets must be bounded and increasing.")
+            .ValidateOnStart();
 
         // Some singleton review executors consume a snapshot of the configured values directly
         // instead of the options wrapper, so expose the bound instance as a concrete service too.

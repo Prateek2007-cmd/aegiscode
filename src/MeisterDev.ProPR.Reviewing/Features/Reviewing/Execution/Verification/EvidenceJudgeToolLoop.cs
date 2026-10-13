@@ -16,7 +16,8 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verificat
 ///     some providers refuse a conversation with tool calls and no tool definitions, and sets
 ///     <see cref="ChatToolMode.None" /> so the judge cannot call them. Each tool result is cut to
 ///     <see cref="MaxToolResultChars" /> characters before the judge receives it. A failed model call is raised as an
-///     <see cref="EvidenceJudgeProviderException" />.
+///     <see cref="EvidenceJudgeProviderException" />. Output exhaustion permits one larger verdict attempt, with
+///     completed tool results retained and further lookups disabled, inside the caller's existing deadline.
 /// </summary>
 internal static class EvidenceJudgeToolLoop
 {
@@ -44,17 +45,21 @@ internal static class EvidenceJudgeToolLoop
     }
 
     /// <summary>
-    ///     Runs the loop and returns the judge's final response. <paramref name="onModelCall" /> receives every model
-    ///     response and whether it is the final one; <paramref name="onToolCall" /> receives every executed tool call.
+    ///     Runs the loop and returns the final response with its output-limit status. <paramref name="onModelCall" />
+    ///     receives every response and whether it finishes an attempt without executing tools;
+    ///     <paramref name="onToolCall" /> receives every executed lookup.
     /// </summary>
-    internal static async Task<ChatResponse> RunAsync(
+    internal static async Task<JudgeLoopResult> RunAsync(
         IChatClient client,
         ChatOptions baseOptions,
+        int retryOutputTokens,
+        Func<ChatResponse, bool> hasUsableVerdict,
         string systemPrompt,
         string userMessage,
         IReadOnlyList<AIFunction> tools,
         Func<ChatResponse, bool, Task> onModelCall,
         Func<JudgeToolCall, Task> onToolCall,
+        Func<JudgeOutputLimit, Task> onOutputLimit,
         CancellationToken ct)
     {
         var messages = new List<ChatMessage>
@@ -64,18 +69,38 @@ internal static class EvidenceJudgeToolLoop
         };
         var toolsByName = tools.ToDictionary(tool => tool.Name, StringComparer.Ordinal);
         var used = 0;
+        var retried = false;
+        var modelTurn = 0;
         while (true)
         {
-            var allowTools = used < MaxToolCallsPerClaim && tools.Count > 0;
+            ct.ThrowIfCancellationRequested();
+            var allowTools = !retried && used < MaxToolCallsPerClaim && tools.Count > 0;
             var options = baseOptions.Clone();
+            options.MaxOutputTokens = retried ? retryOutputTokens : baseOptions.MaxOutputTokens;
             options.Tools = tools.Count > 0 ? [.. tools] : null;
             options.ToolMode = tools.Count > 0 && !allowTools ? ChatToolMode.None : null;
             var response = await GetResponseAsync(client, messages, options, ct).ConfigureAwait(false);
+            modelTurn++;
             var calls = response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>().ToList();
-            if (calls.Count == 0 || !allowTools)
+            if (IsOutputLimited(response, options.MaxOutputTokens!.Value, (calls.Count == 0 || !allowTools) && !hasUsableVerdict(response)))
             {
                 await onModelCall(response, true).ConfigureAwait(false);
-                return response;
+                await onOutputLimit(new JudgeOutputLimit(modelTurn, options.MaxOutputTokens.Value, response, !retried))
+                    .ConfigureAwait(false);
+                if (retried)
+                {
+                    return new JudgeLoopResult(response, true);
+                }
+
+                // Retry from the complete conversation. Partial output is not evidence or a completed tool request.
+                retried = true;
+                continue;
+            }
+
+            if (calls.Count == 0 || !allowTools || HasErrorOrRefusal(response))
+            {
+                await onModelCall(response, true).ConfigureAwait(false);
+                return new JudgeLoopResult(response, false);
             }
 
             await onModelCall(response, false).ConfigureAwait(false);
@@ -98,6 +123,23 @@ internal static class EvidenceJudgeToolLoop
 
             messages.Add(new ChatMessage(ChatRole.Tool, results));
         }
+    }
+
+    private static bool IsOutputLimited(ChatResponse response, int requestedTokens, bool unusableVerdict)
+    {
+        if (HasErrorOrRefusal(response))
+        {
+            return false;
+        }
+
+        return response.FinishReason == ChatFinishReason.Length
+               || (unusableVerdict && response.Usage?.OutputTokenCount >= requestedTokens);
+    }
+
+    private static bool HasErrorOrRefusal(ChatResponse response)
+    {
+        return response.FinishReason == ChatFinishReason.ContentFilter
+               || response.Messages.SelectMany(message => message.Contents).OfType<ErrorContent>().Any();
     }
 
     // A failure of the model call itself is raised as a provider failure, so the verifier can tell it from a failure
@@ -164,6 +206,18 @@ internal static class EvidenceJudgeToolLoop
         return text.Length <= 500 ? text : text[..500];
     }
 }
+
+/// <summary>The final response and whether the judge exhausted its bounded output recovery.</summary>
+/// <param name="Response">The last model response.</param>
+/// <param name="OutputLimitReached">Whether the final attempt exhausted its output budget.</param>
+internal sealed record JudgeLoopResult(ChatResponse Response, bool OutputLimitReached);
+
+/// <summary>A capped model turn and the decision to retry it.</summary>
+/// <param name="ModelTurn">The model-turn number within the claim.</param>
+/// <param name="MaxOutputTokens">The requested output ceiling for this turn.</param>
+/// <param name="Response">The capped response, including its measured usage.</param>
+/// <param name="RetryScheduled">Whether the claim has its one budget retry available.</param>
+internal sealed record JudgeOutputLimit(int ModelTurn, int MaxOutputTokens, ChatResponse Response, bool RetryScheduled);
 
 /// <summary>One tool call of the evidence judge, as the protocol records it.</summary>
 /// <param name="ToolName">The tool the judge called.</param>

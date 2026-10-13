@@ -5,6 +5,7 @@ using System.Globalization;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Domain.Events;
+using MeisterDev.ProPR.CodeInsights.Contracts;
 
 namespace MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 
@@ -52,7 +53,7 @@ internal static class ThreadUpdatedEventFactory
                 new ThreadUpdatedComment(
                     commentId,
                     ResolveAuthorIdentity(comment),
-                    ownership.OwnsComment(commentRef),
+                    comments.Count == 0 ? ownership.OwnsThread(commentRef) : ownership.OwnsComment(commentRef),
                     publishedAt,
                     comment.Content,
                     ownership.ResolveOriginatingJobId(threadId, commentId),
@@ -79,7 +80,10 @@ internal static class ThreadUpdatedEventFactory
 
     public static bool IsHumanThread(ThreadUpdatedEvent evt) =>
         !evt.Comments.Any(comment => comment.IsAiAuthored)
-        && evt.Comments.Any(comment => !comment.IsSystemGenerated && !string.IsNullOrWhiteSpace(comment.Text));
+        && HarvestedThreadEligibility.IsHumanThread(
+            string.Join(
+                '\n', evt.Comments.Where(comment => !comment.IsSystemGenerated && !string.IsNullOrWhiteSpace(comment.Text))
+                    .Select(comment => $"{comment.AuthorIdentity}: {comment.Text}")));
 
     public static string ResolveAuthorIdentity(PrThreadComment comment)
     {

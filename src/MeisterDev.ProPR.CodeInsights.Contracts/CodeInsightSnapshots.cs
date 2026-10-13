@@ -187,6 +187,10 @@ public sealed record CodeInsightMissRecord(
     bool JudgementModelWasAsked = true,
     string? ProviderScope = null)
 {
+    /// <summary>Historical writes require an existing aggregate and preserve its retention anchor.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public CodeInsightObservationMode ObservationMode { get; init; } = CodeInsightObservationMode.Current;
+
     /// <summary>
     ///     Whether the raw judgement qualifies as a miss. The store separately excludes threads that overlap
     ///     the reviewer's findings or later contain an AI-authored comment while retaining these answers.

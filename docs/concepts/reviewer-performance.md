@@ -21,10 +21,14 @@ FN. Precision is `TP / (TP + FP)`, observed recall is `TP / (TP + FN)`, and F1 i
 unavailable value. Excluded observations do not contribute to that denominator. These measurements do not
 estimate TN or a complete population of defects.
 
-Unknown outcomes, unresolved publications and failed outcome judgements are excluded before any duplicate
+Unknown outcomes, unresolved publications and failed outcome judgments are excluded before any duplicate
 interpretation is applied. Duplicate counts are subsets of the outcome population; they replace a
 contribution once. Suppressed repeats receive no publication credit. Generated, withheld, failed,
 identity-unknown and suspected-duplicate observations remain available in evidence coverage.
+
+Withheld observations include findings excluded by evidence verification, with their original model
+and withholding reason. A failed or output-limited judge does not establish a finding's correctness;
+these observations contribute to coverage without precision or publication credit.
 
 The chart connects minimum-to-maximum bands, with an inner first-to-third-quartile band and a median line.
 Each scoring premise receives equal display weight.
@@ -78,9 +82,9 @@ labels remain attached to the retained results.
 
 Observed recall measures retained human review concerns; it does not measure every defect in the code.
 Complete successful thread enumeration is required even when no human misses were found. Open human
-threads are provisional and excluded from both settled-miss premises. Failed collection or judgement and
+threads are provisional and excluded from both settled-miss premises. Failed collection or judgment and
 missing compatible attribution produce explicit reasons and unavailable recall/F1. Chart point details
-show the metric ranges and their evidence limitations. Failed human judgements display unavailable
+show the metric ranges and their evidence limitations. Failed human judgments display unavailable
 decisions in the Misses panel.
 
 Model-specific precision is supported where publication and outcome evidence exists. All model-filtered,
@@ -101,13 +105,15 @@ established.
 
 Current results reuse stored counts. Collection and background catch-up refresh those counts as evidence
 changes. Each view shows its latest evidence update time. **Report captured** shows the response capture
-time separately.
+time separately. Background collection refreshes retained pull requests, including those already closed.
+Consistent finding outcomes and human concerns keep their stored judgments. Missing provider data keeps
+affected scores unavailable until collection completes.
 Missing update times are shown as unavailable. Pending updates warn that current scores may change as
 updates are processed. Filtering uses retained evidence without repeating review analysis.
 
 Current outcomes include reopened threads. A human concern that matches a reviewer finding or contains an
-AI-authored comment is excluded from miss counts; its recorded judgements remain visible. Failed collection
-makes compatible recall unavailable. Failed human judgements are displayed as unavailable decisions.
+AI-authored comment is excluded from miss counts; its recorded judgments remain visible. Failed collection
+makes compatible recall unavailable. Failed human judgments are displayed as unavailable decisions.
 
 **Save snapshot** captures the server's complete query response, including filters, display identities,
 counts, premises, calculated values, evidence reasons, source freshness and scoring version. Opening it

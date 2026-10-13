@@ -22,6 +22,17 @@ namespace MeisterDev.Ai.Providers.AzureOpenAiAddIn.Tests;
 public sealed class AzureOpenAiProviderDriverTests
 {
     [Theory]
+    [InlineData(ProviderDeclaredProtocolModes.Auto, true)]
+    [InlineData(AzureOpenAiProviderDriver.ChatCompletionsProtocol, true)]
+    [InlineData(AzureOpenAiProviderDriver.ResponsesProtocol, true)]
+    [InlineData(ProviderDeclaredProtocolModes.Embeddings, false)]
+    [InlineData("unknown:Protocol", false)]
+    public void LowEffort_IsAvailableOnlyOnTheDeclaredChatTransports(string protocolMode, bool expected)
+    {
+        Assert.Equal(expected, Driver().SupportsLowReasoningEffort(protocolMode));
+    }
+
+    [Theory]
     [InlineData("https://contoso.openai.azure.com/")]
     [InlineData("https://contoso.services.ai.azure.com/")]
     [InlineData("https://contoso.cognitiveservices.azure.com/")]

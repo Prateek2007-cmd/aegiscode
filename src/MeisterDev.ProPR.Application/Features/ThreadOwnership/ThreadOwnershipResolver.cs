@@ -32,15 +32,17 @@ public sealed class ThreadOwnershipResolver
 
     private readonly IReadOnlyDictionary<string, IReadOnlyList<PostedCommentOriginRow>> _originsByCommentId;
     private readonly ProviderCommentIdScope _commentIdScope;
+    private readonly IReadOnlySet<string> _trustedPublicationThreadIds;
 
     private ThreadOwnershipResolver(
         IReadOnlyDictionary<string, IReadOnlyList<PostedCommentOriginRow>> originsByCommentId,
         ThreadOwnerIdentity identity,
-        ProviderCommentIdScope commentIdScope)
+        ProviderCommentIdScope commentIdScope, IReadOnlySet<string>? trustedPublicationThreadIds = null)
     {
         this._originsByCommentId = originsByCommentId;
         this._commentIdScope = commentIdScope;
         this.Identity = identity;
+        this._trustedPublicationThreadIds = trustedPublicationThreadIds ?? new HashSet<string>(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -76,16 +78,19 @@ public sealed class ThreadOwnershipResolver
     ///     <see cref="ProviderCommentIdScopes.For" />. The caller states it because the caller knows the
     ///     provider; a resolver cannot tell the two regimes apart from the rows alone.
     /// </param>
+    /// <param name="trustedPublicationThreadIds">
+    ///     Native thread identities from retained publication receipts in this pass's captured namespace.
+    /// </param>
     public static ThreadOwnershipResolver Create(
         IReadOnlyList<PostedCommentOriginRow> provenance,
         ThreadOwnerIdentity identity,
-        ProviderCommentIdScope commentIdScope)
+        ProviderCommentIdScope commentIdScope, IReadOnlySet<string>? trustedPublicationThreadIds = null)
     {
         ArgumentNullException.ThrowIfNull(provenance);
 
         if (provenance.Count == 0)
         {
-            return new ThreadOwnershipResolver(NoOrigins, identity, commentIdScope);
+            return new ThreadOwnershipResolver(NoOrigins, identity, commentIdScope, trustedPublicationThreadIds);
         }
 
         var originsByCommentId = provenance
@@ -95,7 +100,7 @@ public sealed class ThreadOwnershipResolver
                 group => (IReadOnlyList<PostedCommentOriginRow>)group.ToList(),
                 StringComparer.Ordinal);
 
-        return new ThreadOwnershipResolver(originsByCommentId, identity, commentIdScope);
+        return new ThreadOwnershipResolver(originsByCommentId, identity, commentIdScope, trustedPublicationThreadIds);
     }
 
     /// <summary>
@@ -127,7 +132,8 @@ public sealed class ThreadOwnershipResolver
     /// </param>
     public bool OwnsThread(ThreadCommentRef firstComment)
     {
-        return this.Owns(firstComment);
+        return (firstComment.ProviderThreadId is not null && this._trustedPublicationThreadIds.Contains(firstComment.ProviderThreadId)) ||
+               this.Owns(firstComment);
     }
 
     /// <summary>Whether this single comment is ProPR's own, the same question at comment granularity.</summary>

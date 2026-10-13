@@ -103,6 +103,11 @@ window; see the note in [configuration.md](../operate/configuration.md).
 The heartbeat renews the lease and carries directives back to the runner: stop, superseded, and budget
 cut all arrive as a refusal the runner can act on.
 
+Successful completion of the held generation ends heartbeat renewal without canceling the pending
+submission response. This lets awaited completion hooks and Code Insights intake finish after the
+durable result is stored. Host shutdown and caller cancellation still apply. Both the control plane
+and runner must support the `Completed` reason; see [the heartbeat contract](runner-contract.md#successful-completion-heartbeat).
+
 If a runner disappears, its lease expires and a sweep reclaims the job and requeues it. Each reclaim
 spends one of the job's reclaim budgets, three consecutive and twelve total by default. Past that the
 job fails with a reason an operator can read. The next attempt reads prior results back and pays only

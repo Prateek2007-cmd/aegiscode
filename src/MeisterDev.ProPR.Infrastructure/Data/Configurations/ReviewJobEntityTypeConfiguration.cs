@@ -6,6 +6,7 @@ using System.Text.Json;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Data.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -188,14 +189,14 @@ internal sealed class ReviewJobEntityTypeConfiguration : IEntityTypeConfiguratio
             .HasDefaultValue(0)
             .IsRequired();
 
-        // Store ReviewResult as two separate columns: summary text + comments JSONB
+        // Persist the complete result, including internal withheld evidence, in the existing JSONB column.
         builder.Property(j => j.Result)
             .HasColumnName("result_json")
             .HasColumnType("jsonb")
             .IsRequired(false)
             .HasConversion(
-                v => v == null ? null : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
-                v => v == null ? null : JsonSerializer.Deserialize<ReviewResult>(v, (JsonSerializerOptions?)null));
+                v => v == null ? null : ReviewResultPersistenceSerializer.Serialize(v),
+                v => v == null ? null : ReviewResultPersistenceSerializer.Deserialize(v));
 
         // Denormalized summary so the overview list never has to materialize result_json.
         builder.Property(j => j.ResultSummary)

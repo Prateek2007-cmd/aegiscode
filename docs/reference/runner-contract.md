@@ -52,6 +52,19 @@ renewal naming the skew. A runner old enough not to send it is gated at its next
 `runner.register`, `runner.credential.renew` and `runner.lease` run before the caller holds a job. Every
 other operation carries the caller's job identity and lease generation and is authorized against them. A caller presenting a superseded generation is refused even for its own job.
 
+### Successful completion heartbeat
+
+A heartbeat for the generation that completed successfully returns `accepted: false`,
+`expiresAt: null` and `stopReason: "Completed"`. The runner stops heartbeats and allows its in-flight
+findings submission to finish. The durable result is stored before awaited completion hooks and
+Code Insights intake. Further execution calls still require a current lease. Stale generations and
+other refused renewals retain their cancellation behavior; host shutdown and caller cancellation
+still cancel the submission.
+
+Deploy the control plane and runner with support for this reason together. A runner without this
+handling cancels an in-flight submission when it receives `Completed`. The response shape and
+contract version are unchanged.
+
 ## Runner dispatch eligibility
 
 A runner requests a lease only when it has a free slot, and reports how many it has. The control plane
@@ -73,6 +86,27 @@ same candidate resolve it in the database. A job that cannot be prepared, or who
 resolved, is returned to the queue and the next candidate is tried.
 
 A pending job whose client requires a tag no active runner declares is reported as **unroutable**.
+
+## Withheld finding evidence
+
+Per-file ingest outcomes, prior-result responses and final submission annotations carry optional
+`withheldFindings` arrays. Each entry contains the original review comment and its withholding reason.
+Entries require a comment and a nonblank `reasonCode` of at most 128 characters. Null entries and
+malformed evidence receive HTTP 400 before ingestion or publication.
+These entries remain separate from comments submitted for SCM publication. The control plane stores
+checkpoint evidence for recovery and passes final evidence to authorized Code Insights collection.
+
+An omitted or null array means no withheld evidence was supplied. Older payloads remain valid, and batch and
+submission retries retain their existing identifiers. An older peer ignores these additive fields;
+end-to-end retention requires both the runner and control plane to support them.
+
+Each model binding has an optional `supportsLowReasoningEffort` flag. The control plane sets it only
+when the exact model advertises low effort and the selected transport supports it. Missing or false
+leaves automatic judge effort at provider defaults. The output budgets and bounded recovery still apply.
+
+Chat options carry optional `toolMode: "none"` when tool declarations must remain present but no further
+lookups are allowed. An omitted mode preserves provider defaults. Prior-result responses use the
+`{ unavailable, value }` envelope; `value` contains the per-file checkpoints when available.
 
 ## The job manifest
 

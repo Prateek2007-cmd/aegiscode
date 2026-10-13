@@ -4,7 +4,6 @@
 
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Domain.Entities;
-using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Runner.Contracts;
@@ -93,12 +92,12 @@ internal static class RunnerReviewSubject
                 // Rebuilt through the same factory the control plane used to write it, so synthesis sees a
                 // carried-forward row, which suppresses its candidates and labels the file, instead of a
                 // freshly reviewed row that happens to have old comments.
-                result.MarkCompleted(seed.PerFileSummary ?? string.Empty, seed.Comments, seed.ReviewedPassKeys);
+                result.MarkCompleted(seed.PerFileSummary ?? string.Empty, seed.Comments, seed.ReviewedPassKeys, seed.WithheldFindings);
                 result = ReviewFileResult.CreateCarriedForward(job.Id, result);
             }
             else if (seed.IsComplete)
             {
-                result.MarkCompleted(seed.PerFileSummary ?? string.Empty, seed.Comments, seed.ReviewedPassKeys);
+                result.MarkCompleted(seed.PerFileSummary ?? string.Empty, seed.Comments, seed.ReviewedPassKeys, seed.WithheldFindings);
             }
 
             job.FileReviewResults.Add(result);

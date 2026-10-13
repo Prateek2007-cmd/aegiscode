@@ -20,9 +20,9 @@ Three groups depart from that:
 - `MEISTER_SESSION_IDLE_MINUTES` and `MEISTER_SESSION_ABSOLUTE_HOURS` fail startup on anything that is
   not a positive integer. They do not fall back to their default.
 - A value under the minimum of an interval marked "clamped" is silently raised to that minimum.
-- **The `AI_*` review-tuning settings are not range-checked at all.** An out-of-range value is used as
-  given. The ranges listed for them are the values the review loop is built for, not a guard. A
-  nonsensical value degrades reviews silently and startup still succeeds.
+- **Most `AI_*` review-tuning settings are not range-checked.** An out-of-range value is used as
+  given. Their listed ranges describe supported operation. The two
+  [evidence judge budgets](#evidence-judge-budgets) are validated at startup.
 
 Other symptoms, and the page that fixes each: [troubleshooting](troubleshooting.md).
 
@@ -506,6 +506,26 @@ review working on several files at once stops sending requests the provider has 
 Which files land in which complexity tier is decided per review - see
 [reviews](../concepts/reviews.md).
 
+## Evidence judge budgets
+
+The evidence judge requests `low` reasoning effort when the bundled catalog advertises it for the exact
+model and the selected transport supports it. Unknown or incompatible bindings use provider defaults.
+The output ceiling includes reasoning tokens. An output-limit response, or an unusable verdict at the
+measured ceiling, receives one larger retry. Completed tool results remain available; the retry permits
+no further lookups and shares the claim's 120-second deadline. Both attempts are recorded and charged.
+A retry that also exhausts its
+ceiling withholds the finding with `judge_output_limit`.
+
+| Variable | What it does | Default | Accepted | Example stack |
+|---|---|---|---|---|
+| `AI_EVIDENCE_JUDGE_MAX_OUTPUT_TOKENS` | Initial reasoning-inclusive output ceiling per judge call | `4000` | 512–32768 | no |
+| `AI_EVIDENCE_JUDGE_RETRY_MAX_OUTPUT_TOKENS` | Output ceiling for the single recovery attempt | `8000` | 512–32768; greater than the initial ceiling | no |
+
+Both the control plane and runner read these installation settings. A parsable value outside these
+bounds, or a retry ceiling no greater than the initial ceiling, fails startup. Unparsable values use
+the defaults. These checks apply only to the two judge budgets. Configure both ceilings within the
+judge model's supported completion limit.
+
 ## Finding thresholds
 
 | Variable | What it does | Default | Accepted | Example stack |
@@ -648,8 +668,10 @@ control background work and retention; the example stack does not forward them b
 | Variable | What it does | Default | Accepted |
 |---|---|---|---|
 | `CODE_INSIGHTS_CLASSIFICATION_INTERVAL_SECONDS` | Interval between classification backlog sweeps | `60` | Integer, floored at 10 seconds |
-| `CODE_INSIGHTS_CATCHUP_INTERVAL_SECONDS` | Interval between projection and seal catch-up sweeps | `21600` | Integer, floored at 600 seconds |
+| `CODE_INSIGHTS_CATCHUP_INTERVAL_SECONDS` | Interval between projection, seal and provider-evidence catch-up sweeps | `21600` | Integer, floored at 600 seconds |
 | `CODE_INSIGHTS_BACKFILL_MAX_JOBS` | Maximum jobs processed in one catch-up sweep | `50` | Integer, floored at 1 |
+| `CODE_INSIGHTS_PROVIDER_EVIDENCE_BACKFILL_MAX_PULL_REQUESTS` | Maximum retained pull requests refreshed from provider evidence per catch-up sweep | `25` | Integer, clamped to 1–250 |
+| `CODE_INSIGHTS_PROVIDER_EVIDENCE_SWEEP_BUDGET_SECONDS` | Time budget for one provider-evidence sweep | `300` | Integer, clamped to 10–600 seconds |
 | `CODE_INSIGHTS_PURGE_INTERVAL_SECONDS` | Interval between source and saved-report expiration sweeps | `3600` | Integer, floored at 60 seconds |
 | `CODE_INSIGHTS_RETENTION_DAYS` | Ordinary collected source-data retention | `365` | Integer, floored at 1 day |
 | `CODE_INSIGHTS_REPORT_RETENTION_DAYS` | Independent immutable saved-report retention | `365` | Integer, floored at 1 day |
@@ -657,6 +679,9 @@ control background work and retention; the example stack does not forward them b
 Source expiration preserves reports until their independent expiry. Collection opt-out stops new
 collection and retains authorized reports until expiry or deletion. Client collection-data deletion and
 client deletion remove complete reports containing that client's data, including mixed-client reports.
+Provider refresh runs after projection and sealing, with its own batch and time limits. Each attempt
+expires after 15 minutes. Unavailable evidence retries after six hours; incomplete provider reads keep
+collection unavailable.
 [Reviewer performance](../concepts/reviewer-performance.md) describes live score ranges and saved reports.
 
 ## Observability

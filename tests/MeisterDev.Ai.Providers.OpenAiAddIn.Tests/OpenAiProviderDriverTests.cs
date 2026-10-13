@@ -22,6 +22,17 @@ namespace MeisterDev.Ai.Providers.OpenAiAddIn.Tests;
 /// </remarks>
 public sealed class OpenAiProviderDriverTests
 {
+    [Theory]
+    [InlineData(ProviderDeclaredProtocolModes.Auto, true)]
+    [InlineData(OpenAiProviderDriver.ChatCompletionsProtocol, true)]
+    [InlineData(OpenAiProviderDriver.ResponsesProtocol, true)]
+    [InlineData(ProviderDeclaredProtocolModes.Embeddings, false)]
+    [InlineData("unknown:Protocol", false)]
+    public void LowEffort_IsAvailableOnlyOnTheDeclaredChatTransports(string protocolMode, bool expected)
+    {
+        Assert.Equal(expected, Driver().SupportsLowReasoningEffort(protocolMode));
+    }
+
     // A wire shape another family declares, which a binding holds after a connection is repointed and
     // is a shape this family cannot serve.
     private const string AnotherFamilysProtocol = "meisterdev/anthropic:AnthropicMessages";

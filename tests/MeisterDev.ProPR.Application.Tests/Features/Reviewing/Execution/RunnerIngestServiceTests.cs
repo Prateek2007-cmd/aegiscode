@@ -4,6 +4,7 @@
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
+using System.Text.Json;
 using MeisterDev.ProPR.Application.Options;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -52,6 +53,28 @@ public sealed class RunnerIngestServiceTests
             this._ledger,
             this._writer,
             Microsoft.Extensions.Options.Options.Create(new RunnerIngestOptions { MaxItemsPerBatch = maxItems }));
+    }
+
+    [Fact]
+    public async Task AnOlderCheckpointPayload_RetriesWithTheSameSequenceIdentity()
+    {
+        var payload = """
+                      {"sequence":1,"idempotencyKey":"older-batch","events":[],"spend":[],"fileResults":[
+                       {"filePath":"src/a.cs","isComplete":true,"isFailed":false,"summary":"Summary","reviewedPassKeys":[],"comments":[]}]}
+                      """;
+        var batch = JsonSerializer.Deserialize<RunnerIngestBatch>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var service = this.CreateService();
+        this._ledger.GetExpectedSequenceAsync(JobId, Arg.Any<CancellationToken>()).Returns(1, 2);
+
+        var first = await service.IngestAsync(Call, batch);
+        var replay = await service.IngestAsync(Call, batch);
+
+        Assert.Equal(RunnerIngestOutcome.Applied, first.Outcome);
+        Assert.Equal(RunnerIngestOutcome.AlreadyApplied, replay.Outcome);
+        await this._writer.Received(1).WriteFileResultsAsync(
+            JobId,
+            Arg.Is<IReadOnlyList<RunnerFileOutcome>>(rows => rows.Count == 1 && rows[0].WithheldFindings == null), Arg.Any<CancellationToken>());
+        await this._ledger.Received(1).TryRecordAsync(JobId, 1, "older-batch", Arg.Any<CancellationToken>());
     }
 
     [Fact]

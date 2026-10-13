@@ -1,6 +1,8 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using System.Text.Json.Serialization;
+
 namespace MeisterDev.ProPR.Domain.ValueObjects;
 
 /// <summary>
@@ -12,6 +14,10 @@ public sealed record ReviewResult(
     string Summary,
     IReadOnlyList<ReviewComment> Comments)
 {
+    /// <summary>Generated findings withheld by verification or the final gate, for internal evidence collection.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<WithheldReviewFinding> WithheldFindings { get; init; } = [];
+
     /// <summary>
     ///     File paths whose results were carried forward from a prior iteration's review.
     ///     Empty for full (non-incremental) reviews.

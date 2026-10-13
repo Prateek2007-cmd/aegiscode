@@ -21,6 +21,17 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 /// </summary>
 public sealed class RunnerRelayedChatOptionsTests
 {
+    [Theory]
+    [InlineData("low", ReasoningEffort.Low)]
+    [InlineData("medium", ReasoningEffort.Medium)]
+    [InlineData("high", ReasoningEffort.High)]
+    public void RelayedEffort_IsRebuiltForBothOpenAiTransportModes(string wireEffort, ReasoningEffort expected)
+    {
+        var options = RunnerRelayedChatOptions.ToChatOptions(new RunnerChatOptions(ReasoningEffort: wireEffort));
+
+        Assert.Equal(expected, options!.Reasoning!.Effort);
+    }
+
     [Fact]
     public void NothingOnTheWire_MeansNoOptions()
     {

@@ -49,6 +49,7 @@ public sealed record RunnerTraceEvent(DateTimeOffset OccurredAt, string Name, st
 /// </param>
 /// <param name="IsExcluded">Whether the file matched an exclusion and was never reviewed.</param>
 /// <param name="ExclusionReason">The matching rule, when it was excluded.</param>
+/// <param name="WithheldFindings">Generated findings excluded from publication and retained with the checkpoint.</param>
 public sealed record RunnerFileOutcome(
     string FilePath,
     bool IsComplete,
@@ -58,7 +59,8 @@ public sealed record RunnerFileOutcome(
     IReadOnlyList<string> ReviewedPassKeys,
     IReadOnlyList<ReviewComment>? Comments = null,
     bool IsExcluded = false,
-    string? ExclusionReason = null);
+    string? ExclusionReason = null,
+    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null);
 
 /// <summary>What one relayed completion cost.</summary>
 /// <remarks>

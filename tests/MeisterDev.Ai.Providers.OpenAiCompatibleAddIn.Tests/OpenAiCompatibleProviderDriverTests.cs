@@ -16,6 +16,16 @@ namespace MeisterDev.Ai.Providers.OpenAiCompatibleAddIn.Tests;
 /// </summary>
 public sealed class OpenAiCompatibleProviderDriverTests
 {
+    [Theory]
+    [InlineData(ProviderDeclaredProtocolModes.Auto, true)]
+    [InlineData(OpenAiCompatibleProviderDriver.ChatCompletionsProtocol, true)]
+    [InlineData(ProviderDeclaredProtocolModes.Embeddings, false)]
+    [InlineData("unknown:Protocol", false)]
+    public void LowEffort_IsAvailableOnlyOnTheDeclaredChatTransports(string protocolMode, bool expected)
+    {
+        Assert.Equal(expected, Driver().SupportsLowReasoningEffort(protocolMode));
+    }
+
     // The Responses shape under this family's own key. It is deliberately not declared: the surface is
     // OpenAI-specific and assuming it of a compatible endpoint turns into a 404 on the first call.
     private const string UndeclaredResponsesProtocol = OpenAiCompatibleProviderDriver.FamilyKey + ":Responses";

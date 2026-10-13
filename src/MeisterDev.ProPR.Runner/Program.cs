@@ -115,7 +115,9 @@ builder.Services.AddSingleton<MeisterDev.ProPR.Runner.Execution.WorkspaceFetcher
 // The review options decide how the pipeline behaves, and are bound by the pipeline's own binder so this
 // host reads the same variables into the same fields the control plane does. Two bindings would drift.
 builder.Services.AddOptions<AiReviewOptions>()
-    .Configure(options => AiReviewOptionsBinder.Bind(options, builder.Configuration));
+    .Configure(options => AiReviewOptionsBinder.Bind(options, builder.Configuration))
+    .Validate(options => options.HasValidEvidenceJudgeOutputBudgets(), "Evidence judge output budgets must be bounded and increasing.")
+    .ValidateOnStart();
 builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<AiReviewOptions>>().Value);
 
 // The workspace root the review's git worktrees live under is the runner's own work root: it holds one

@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.DTOs.ProCursor;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.ValueObjects;
@@ -11,6 +12,8 @@ using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Diagnostics.Persistence;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Strategies.PrWideAgentic;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.ReviewFindingGate;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Verification;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -19,6 +22,46 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 
 public sealed class PrWideAgenticReviewOrchestratorTests
 {
+    [Fact]
+    public async Task NativePrWideReview_RetainsJudgeWithheldCandidateWithoutPublishingIt()
+    {
+        var chat = Substitute.For<IChatClient>();
+        chat.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>()).Returns(
+            new ChatResponse(
+                new ChatMessage(
+                    ChatRole.Assistant, """
+                                        {"summary":"Review summary.","candidate_findings":[{"id":"candidate","message":"ExecuteAsync dereferences configuration when it is null.",
+                                        "severity":"warning","category":"per_file_comment","file_path":"src/Web/Program.cs","line_number":1,
+                                        "supporting_files":["src/Web/Program.cs"]}]}
+                                        """)));
+        var verifier = Substitute.For<IReviewFindingVerifier>();
+        verifier.VerifyAsync(
+            Arg.Any<IReadOnlyList<VerificationWorkItem>>(), Arg.Any<IReadOnlyList<InvariantFact>>(),
+            Arg.Any<ReviewVerificationContext?>(), Arg.Any<CancellationToken>()).Returns(call => Task.FromResult<IReadOnlyList<VerificationOutcome>>(
+            call.Arg<IReadOnlyList<VerificationWorkItem>>().Select(item => new VerificationOutcome(
+                    item.Claim.ClaimId, item.Claim.FindingId,
+                    VerificationOutcome.NonVerifiableKind, FinalGateDecision.SummaryOnlyDisposition, [ReviewFindingGateReasonCodes.MissingVerifiedClaimSupport],
+                    [],
+                    VerificationOutcome.NoEvidence,
+                    "Judge output budget exhausted.", VerificationOutcome.AiMicroVerifierEvaluator, true)
+                { JudgeDegradation = EvidenceJudgeDegradations.OutputLimit }).ToList()));
+        var tools = Substitute.For<IReviewContextTools>();
+        tools.GetFileContentAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns("configuration.Execute();");
+        var fallback = Substitute.For<IFileByFileReviewOrchestrator>();
+        var sut = new PrWideAgenticReviewOrchestrator(
+            fallback, Microsoft.Extensions.Options.Options.Create(new AiReviewOptions()),
+            Substitute.For<ILogger<PrWideAgenticReviewOrchestrator>>(), new DeterministicReviewFindingGate(),
+            reviewClaimExtractor: new DeterministicReviewClaimExtractor(), reviewEvidenceCollector: Substitute.For<IReviewEvidenceCollector>(),
+            summaryReconciliationService: new SummaryReconciliationService(), reviewFindingVerifier: verifier);
+
+        var result = await sut.ReviewAsync(CreateJob(), CreatePr(), new ReviewSystemContext(null, [], tools), CancellationToken.None, chat);
+
+        Assert.Empty(result.Comments);
+        Assert.Equal(EvidenceJudgeDegradations.OutputLimit, Assert.Single(result.WithheldFindings).ReasonCode);
+        await fallback.DidNotReceiveWithAnyArgs().ReviewAsync(default!, default!, default!, default, default);
+    }
+
     [Fact]
     public async Task ReviewAsync_CreatesPlanRunsBoundedInvestigationsAndRecordsStageEvents()
     {

@@ -20,6 +20,23 @@ public sealed partial class AdoPrFetcher(
 {
     public ScmProvider Provider => ScmProvider.AzureDevOps;
 
+    internal Func<string, CancellationToken, Task<GitHttpClient>>? GitClientResolver { get; set; }
+
+    public async Task<IReadOnlyList<PrCommentThread>> FetchFeedbackThreadsAsync(
+        string organizationUrl,
+        string projectId,
+        string repositoryId,
+        int pullRequestId,
+        Guid clientId,
+        CancellationToken cancellationToken = default)
+    {
+        // Passive thread-retention path: fetch only the pull request's comment threads in one API call and
+        // never download changed-file content. This runs once per crawl cycle when thread retention is on, so
+        // it must not pull the whole pull request the way the review-grade FetchAsync does.
+        var gitClient = await this.ResolveThreadClientAsync(organizationUrl, clientId, cancellationToken);
+        return await this.LoadThreadsAsync(gitClient, projectId, repositoryId, pullRequestId, cancellationToken, true);
+    }
+
     public async Task<PullRequestRef> FetchRefAsync(
         string organizationUrl,
         string projectId,
@@ -328,7 +345,7 @@ public sealed partial class AdoPrFetcher(
             },
             threads,
             changedFileManifest,
-            AuthorizedIdentityId: authorizedIdentityId,
+            authorizedIdentityId,
             Author: ToPullRequestAuthor(host, pr.CreatedBy));
     }
 
@@ -343,16 +360,22 @@ public sealed partial class AdoPrFetcher(
         // Passive thread-retention path: fetch only the pull request's comment threads in one API call and
         // never download changed-file content. This runs once per crawl cycle when thread retention is on, so
         // it must not pull the whole pull request the way the review-grade FetchAsync does.
-        var credentials = await AdoProviderAdapterHelpers.ResolveCredentialsAsync(
-            connectionRepository,
-            clientId,
-            organizationUrl,
-            cancellationToken);
-        var connection = await connectionFactory.GetConnectionAsync(organizationUrl, credentials, cancellationToken);
-        await connection.ConnectAsync(cancellationToken);
-        var gitClient = await connection.GetClientAsync<GitHttpClient>(cancellationToken);
+        var gitClient = await this.ResolveThreadClientAsync(organizationUrl, clientId, cancellationToken);
 
         return await this.FetchExistingThreadsAsync(gitClient, projectId, repositoryId, pullRequestId, cancellationToken);
+    }
+
+    private async Task<GitHttpClient> ResolveThreadClientAsync(string organizationUrl, Guid? clientId, CancellationToken ct)
+    {
+        if (this.GitClientResolver is not null)
+        {
+            return await this.GitClientResolver(organizationUrl, ct);
+        }
+
+        var credentials = await AdoProviderAdapterHelpers.ResolveCredentialsAsync(connectionRepository, clientId, organizationUrl, ct);
+        var connection = await connectionFactory.GetConnectionAsync(organizationUrl, credentials, ct);
+        await connection.ConnectAsync(ct);
+        return await connection.GetClientAsync<GitHttpClient>(ct);
     }
 
     // Azure DevOps returns repo-root-absolute item paths (with a leading slash); the rest of the pipeline
@@ -724,6 +747,10 @@ public sealed partial class AdoPrFetcher(
         {
             return await this.LoadThreadsAsync(gitClient, projectId, repositoryId, pullRequestId, cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             LogThreadFetchWarning(logger, pullRequestId, ex);
@@ -736,13 +763,19 @@ public sealed partial class AdoPrFetcher(
         string projectId,
         string repositoryId,
         int pullRequestId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool strict = false)
     {
         var rawThreads = await gitClient.GetThreadsAsync(
             projectId,
             repositoryId,
             pullRequestId,
             cancellationToken: cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (strict && rawThreads is null)
+        {
+            throw new CodeInsightIncompleteEnumerationException();
+        }
 
         return (rawThreads ?? [])
             .Where(t => !t.IsDeleted && t.Comments?.Count > 0)

@@ -123,9 +123,9 @@ public sealed class InMemoryReviewJobLeaseStore(
                     ReviewJobFailureReason.MaxDurationExceeded);
                 if (!failed)
                 {
-                    // The durable statement matches no row in this case and the renewal is refused without a
-                    // write. The job is already terminal, so the execution stops on its own next checkpoint.
-                    return ReviewJobLeaseRenewal.Rejected;
+                    // Completion can win the conditional failure. Preserve its outcome and classify the
+                    // generation that is now retained, as the durable store does.
+                    return ExplainRefusal(jobs.GetById(lease.JobId), lease);
                 }
 
                 // The durable repository clears the lease as part of failing a job, and a terminal job is
@@ -305,6 +305,7 @@ public sealed class InMemoryReviewJobLeaseStore(
 
         return job.Status switch
         {
+            JobStatus.Completed => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Completed),
             JobStatus.Stopped or JobStatus.Cancelled =>
                 ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.OperatorStop),
             JobStatus.Superseded => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Superseded),

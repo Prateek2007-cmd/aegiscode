@@ -78,10 +78,10 @@ public sealed class CodeInsightMiss
     public string ProviderThreadId { get; init; } = string.Empty;
 
     /// <summary>File the comment was anchored to, or <see langword="null" /> for a pull-request-level thread.</summary>
-    public string? FilePath { get; init; }
+    public string? FilePath { get; set; }
 
     /// <summary>Line the comment was anchored to, or <see langword="null" /> when unknown.</summary>
-    public int? LineNumber { get; init; }
+    public int? LineNumber { get; set; }
 
     /// <summary>
     ///     The discussion the judgement was made from, encrypted at rest. Replaced along with the judgement when a

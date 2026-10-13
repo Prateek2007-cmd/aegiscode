@@ -173,7 +173,11 @@ internal sealed class PrLevelReviewVerificationExecutor(
                 effectiveFinding.CandidateSummaryText,
                 effectiveFinding.InvariantCheckContext,
                 outcome,
-                effectiveFinding.ScopeRelation);
+                effectiveFinding.ScopeRelation)
+            {
+                ReadGrounding = effectiveFinding.ReadGrounding,
+                MergedFinding = effectiveFinding.MergedFinding,
+            };
         }
 
         return verified.Select(finding => finding!).ToList();
@@ -221,6 +225,7 @@ internal sealed class PrLevelReviewVerificationExecutor(
             finding.ScopeRelation)
         {
             MergedFinding = finding.MergedFinding,
+            ReadGrounding = finding.ReadGrounding,
         };
     }
 
@@ -232,9 +237,9 @@ internal sealed class PrLevelReviewVerificationExecutor(
             return finding;
         }
 
-        return new CandidateReviewFinding(
-            finding.FindingId,
-            new CandidateFindingProvenance(
+        return finding with
+        {
+            Provenance = new CandidateFindingProvenance(
                 finding.Provenance.OriginKind,
                 finding.Provenance.GeneratedByStage,
                 finding.Provenance.SourceFilePath,
@@ -244,19 +249,18 @@ internal sealed class PrLevelReviewVerificationExecutor(
                 true,
                 finding.Provenance.SourceOriginId,
                 finding.Provenance.ReviewPassKind,
-                finding.Provenance.FindingProvenanceKind),
-            finding.Severity,
-            finding.Message,
-            finding.Category,
-            finding.FilePath,
-            finding.LineNumber,
-            finding.Evidence,
-            finding.CandidateSummaryText,
-            finding.InvariantCheckContext,
-            finding.VerificationOutcome,
-            finding.ScopeRelation)
-        {
-            MergedFinding = finding.MergedFinding,
+                finding.Provenance.FindingProvenanceKind,
+                finding.Provenance.UnionPassIndex,
+                finding.Provenance.UnionArmLabel,
+                finding.Provenance.UnionLens,
+                finding.Provenance.Shadow,
+                finding.Provenance.OriginModelId,
+                finding.Provenance.OriginLogicalModelName,
+                finding.Provenance.OriginSymbolName,
+                finding.Provenance.OriginSymbolKind)
+            {
+                RequiresEvidenceVerification = finding.Provenance.RequiresEvidenceVerification,
+            },
         };
     }
 
@@ -413,7 +417,11 @@ internal sealed class PrLevelReviewVerificationExecutor(
                 VerificationOutcome.DeterministicRulesEvaluator,
                 ReviewFindingGateReasonCodes.VerificationDegraded,
                 $"PR-level claim extraction degraded: {error}"),
-            finding.ScopeRelation);
+            finding.ScopeRelation)
+        {
+            ReadGrounding = finding.ReadGrounding,
+            MergedFinding = finding.MergedFinding,
+        };
     }
 
     private static CandidateReviewFinding CreateEvidenceCollectionDegradedFinding(
@@ -437,7 +445,11 @@ internal sealed class PrLevelReviewVerificationExecutor(
                 VerificationOutcome.AiMicroVerifierEvaluator,
                 ReviewFindingGateReasonCodes.VerificationDegraded,
                 $"PR-level evidence collection degraded: {error}"),
-            finding.ScopeRelation);
+            finding.ScopeRelation)
+        {
+            ReadGrounding = finding.ReadGrounding,
+            MergedFinding = finding.MergedFinding,
+        };
     }
 
     private static EvidenceReference BuildUpdatedEvidence(CandidateReviewFinding finding, EvidenceBundle evidence)

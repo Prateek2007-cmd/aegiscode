@@ -37,6 +37,9 @@ public static class AiReviewOptionsBinder
         opts.MaxIterationsLow = TryGetInt(configuration, "AI_MAX_ITERATIONS_LOW") ?? opts.MaxIterationsLow;
         opts.MaxIterationsMedium = TryGetInt(configuration, "AI_MAX_ITERATIONS_MEDIUM") ?? opts.MaxIterationsMedium;
         opts.MaxIterationsHigh = TryGetInt(configuration, "AI_MAX_ITERATIONS_HIGH") ?? opts.MaxIterationsHigh;
+        opts.EvidenceJudgeMaxOutputTokens = TryGetInt(configuration, "AI_EVIDENCE_JUDGE_MAX_OUTPUT_TOKENS") ?? opts.EvidenceJudgeMaxOutputTokens;
+        opts.EvidenceJudgeRetryMaxOutputTokens =
+            TryGetInt(configuration, "AI_EVIDENCE_JUDGE_RETRY_MAX_OUTPUT_TOKENS") ?? opts.EvidenceJudgeRetryMaxOutputTokens;
         opts.ConfidenceFloorError = TryGetInt(configuration, "AI_CONFIDENCE_FLOOR_ERROR") ?? opts.ConfidenceFloorError;
         opts.ConfidenceFloorWarning = TryGetInt(configuration, "AI_CONFIDENCE_FLOOR_WARNING") ?? opts.ConfidenceFloorWarning;
         opts.QualityFilterThreshold = TryGetInt(configuration, "AI_QUALITY_FILTER_THRESHOLD") ?? opts.QualityFilterThreshold;

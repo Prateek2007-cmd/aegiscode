@@ -3,11 +3,12 @@
 
 using System.Net;
 using System.Text.Json;
-using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.DTOs;
+using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Reviewing;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Security;
 using NSubstitute;
@@ -557,6 +558,87 @@ public sealed class GitHubReviewThreadStatusProviderTests
         Assert.Equal(
             ThreadAnchorCodeChange.Unchanged,
             result.Single(entry => entry.ThreadId == "PRRT_601").CodeChangedSinceRaised);
+    }
+
+    [Theory]
+    [InlineData(false, "{\"errors\":[{\"message\":\"Denied\"}]} ")]
+    [InlineData(false, "{\"data\":{\"repository\":null}}")]
+    [InlineData(
+        false,
+        "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T\",\"comments\":{\"nodes\":[],\"pageInfo\":{\"hasNextPage\":true,\"endCursor\":\"next\"}}}],\"pageInfo\":{\"hasNextPage\":false}}}}}}")]
+    [InlineData(true, "{\"errors\":[{\"message\":\"Denied\"}]} ")]
+    [InlineData(true, "{\"data\":{\"repository\":null}}")]
+    [InlineData(
+        true,
+        "{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"nodes\":[{\"id\":\"T\",\"comments\":{\"nodes\":[],\"pageInfo\":{\"hasNextPage\":true,\"endCursor\":\"next\"}}}],\"pageInfo\":{\"hasNextPage\":false}}}}}}")]
+    public async Task HistoricalFeedbackRejectsUnavailableOrIncompleteGraphQl(bool threadReader, string graphQl)
+    {
+        var clientId = Guid.NewGuid();
+        var host = new ProviderHostRef(ScmProvider.GitHub, "https://github.com");
+        var factory = CreateHttpClientFactory(request => request.RequestUri!.AbsoluteUri == "https://api.github.com/user"
+            ? CreateJsonResponse(new { login = "meister-dev" })
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(graphQl) });
+        IProviderReviewerThreadStatusFetcher sut =
+            new GitHubReviewThreadStatusProvider(new GitHubConnectionVerifier(CreateConnectionRepository(clientId, host), factory), factory);
+        if (threadReader)
+        {
+            IProviderPullRequestFetcher fetcher =
+                new GitHubPullRequestFetcher(new GitHubConnectionVerifier(CreateConnectionRepository(clientId, host), factory), factory);
+            await Assert.ThrowsAnyAsync<InvalidOperationException>(() => fetcher.FetchFeedbackThreadsAsync(
+                "https://github.com", "acme", "acme/propr", 42, clientId));
+            return;
+        }
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sut.GetFeedbackStatusesAsync(
+            "https://github.com", "acme", "acme/propr",
+            42, ThreadOwnershipResolver.None, clientId));
+    }
+
+    [Fact]
+    public async Task HistoricalFeedbackDoesNotInferUnchangedCodeFromAMissingOutdatedFlag()
+    {
+        var clientId = Guid.NewGuid();
+        var host = new ProviderHostRef(ScmProvider.GitHub, "https://github.com");
+        var factory = CreateHttpClientFactory(request => request.RequestUri!.AbsoluteUri == "https://api.github.com/user"
+            ? CreateJsonResponse(new { login = "meister-dev" })
+            : CreateJsonResponse(
+                new
+                {
+                    data = new
+                    {
+                        repository = new
+                        {
+                            pullRequest = new
+                            {
+                                reviewThreads = new
+                                {
+                                    pageInfo = new { hasNextPage = false }, nodes = new[]
+                                    {
+                                        new
+                                        {
+                                            id = "T", isResolved = true,
+                                            comments = new
+                                            {
+                                                pageInfo = new { hasNextPage = false }, nodes = new[]
+                                                {
+                                                    new
+                                                    {
+                                                        databaseId = 501,
+                                                        body = "Concern", author = new { login = "meister-dev" },
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                }));
+        IProviderReviewerThreadStatusFetcher sut =
+            new GitHubReviewThreadStatusProvider(new GitHubConnectionVerifier(CreateConnectionRepository(clientId, host), factory), factory);
+        var rows = await sut.GetFeedbackStatusesAsync("https://github.com", "acme", "acme/propr", 42, ThreadOwnershipResolver.None, clientId);
+        Assert.Equal(ThreadAnchorCodeChange.Unknown, Assert.Single(rows).CodeChangedSinceRaised);
     }
 
     private static IClientScmConnectionRepository CreateConnectionRepository(Guid clientId, ProviderHostRef host)

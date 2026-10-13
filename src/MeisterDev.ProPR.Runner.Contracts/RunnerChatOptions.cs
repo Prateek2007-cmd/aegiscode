@@ -12,8 +12,8 @@ namespace MeisterDev.ProPR.Runner.Contracts;
 ///         The review pipeline shapes every call with tools, a temperature, an output ceiling, and reasoning
 ///         settings. On the runner those live in an in-memory options object that cannot be serialized,
 ///         because the tools carry their implementations. This record therefore carries the parts the
-///         provider needs to see: each tool as a declaration (name, description, parameter schema) and the
-///         reasoning settings in neutral terms. A relay that dropped any of this would turn a tool-using
+///         provider needs to see: each tool as a declaration (name, description, parameter schema), tool
+///         selection and reasoning settings in neutral terms. A relay that dropped any of this would turn a tool-using
 ///         review into a single-turn review, which happened before the options were sent.
 ///     </para>
 /// </summary>
@@ -25,12 +25,17 @@ namespace MeisterDev.ProPR.Runner.Contracts;
 ///     at its default. Carried as text so the contract stays free of library enums.
 /// </param>
 /// <param name="CaptureReasoning">Whether the call asks the model to return a reasoning summary.</param>
+/// <param name="ToolMode">
+///     The tool-selection policy. <c>none</c> retains declarations while disabling model tool calls.
+///     Null or an unknown value leaves selection at the provider default.
+/// </param>
 public sealed record RunnerChatOptions(
     float? Temperature = null,
     int? MaxOutputTokens = null,
     IReadOnlyList<RunnerChatToolDefinition>? Tools = null,
     string? ReasoningEffort = null,
-    bool CaptureReasoning = false);
+    bool CaptureReasoning = false,
+    string? ToolMode = null);
 
 /// <summary>
 ///     One tool as the provider needs to see it: a name, a description, and a parameter schema. The

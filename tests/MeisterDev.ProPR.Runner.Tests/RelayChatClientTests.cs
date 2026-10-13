@@ -7,6 +7,8 @@ using System.Text.Json;
 using MeisterDev.Ai.Providers.Contracts;
 using MeisterDev.Ai.Providers.Enums;
 using MeisterDev.Ai.Providers.Usage;
+using MeisterDev.ProPR.Infrastructure.AI;
+using MeisterDev.ProPR.Runner.Contracts;
 using MeisterDev.ProPR.Runner.Execution;
 using Microsoft.Extensions.AI;
 
@@ -97,6 +99,36 @@ public sealed class RelayChatClientTests
 
         using var body = JsonDocument.Parse(handler.LastBody!);
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("options").ValueKind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DisabledToolSelection_SurvivesRelaySerializationAndRebuild(bool includeTools)
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, Envelope(softCapReached: false));
+        var client = Create(handler, new RunnerBudgetSignal());
+        var options = new ChatOptions
+        {
+            ToolMode = ChatToolMode.None,
+            Tools = includeTools ? [AIFunctionFactory.Create((string path) => path, "get_file_content")] : null,
+        };
+
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "Return the verdict.")], options);
+
+        using var body = JsonDocument.Parse(handler.LastBody!);
+        var wire = body.RootElement.GetProperty("options").Deserialize<RunnerChatOptions>(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(wire);
+        var rebuilt = RunnerRelayedChatOptions.ToChatOptions(wire);
+        Assert.IsType<NoneChatToolMode>(rebuilt!.ToolMode);
+        if (includeTools)
+        {
+            Assert.Equal("get_file_content", Assert.Single(rebuilt.Tools!).Name);
+        }
+        else
+        {
+            Assert.Null(rebuilt.Tools);
+        }
     }
 
     // This host resolves no provider driver, so the counters it meters are the ones the control plane's driver

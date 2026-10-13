@@ -362,6 +362,14 @@ public sealed partial class RunnerWorkLoop(
 
             if (!beat.Held)
             {
+                if (string.Equals(beat.StopReason, "Completed", StringComparison.Ordinal))
+                {
+                    // The control plane persists success before finishing awaited intake and returning
+                    // the submission response. Stop renewal while the existing request token stays active.
+                    LogCompletedHeartbeat(logger, manifest.JobId, manifest.LeaseGeneration);
+                    return;
+                }
+
                 LogLeaseLost(logger, manifest.JobId, manifest.LeaseGeneration, beat.StopReason);
                 await jobCts.CancelAsync();
                 return;
@@ -498,6 +506,13 @@ public sealed partial class RunnerWorkLoop(
         Level = LogLevel.Warning,
         Message = "Job {JobId} generation {Generation} is no longer this runner's to execute ({StopReason}); it has been stopped")]
     private static partial void LogLeaseLost(ILogger logger, Guid jobId, int generation, string stopReason);
+
+    [LoggerMessage(
+        EventId = 6018,
+        EventName = "CompletedHeartbeat",
+        Level = LogLevel.Debug,
+        Message = "Stopped lease renewal for completed job {JobId} generation {Generation}")]
+    private static partial void LogCompletedHeartbeat(ILogger logger, Guid jobId, int generation);
 
     [LoggerMessage(EventId = 6001, Level = LogLevel.Information, Message = "Runner {DisplayName} started with capacity {Capacity}")]
     private static partial void LogRunnerStarted(ILogger logger, string displayName, int capacity);

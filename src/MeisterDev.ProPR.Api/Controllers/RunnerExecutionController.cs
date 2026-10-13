@@ -197,7 +197,7 @@ public sealed class RunnerExecutionController(
                 usage.IsEstimated);
     }
 
-    /// <summary>Applies one batch of trace events, per-file results, and spend.</summary>
+    /// <summary>Applies trace events, per-file checkpoints with optional withheld evidence, and spend.</summary>
     [HttpPost("ingest")]
     public async Task<IActionResult> Ingest([FromBody] RunnerIngestRequest request, CancellationToken ct)
     {
@@ -232,7 +232,7 @@ public sealed class RunnerExecutionController(
     }
 
     /// <summary>
-    ///     What this job already has reviewed, for an executor picking it up after a reclaim.
+    ///     Returns this job's per-file checkpoints, including optional withheld evidence, after a reclaim.
     ///     <para>
     ///         Read here rather than carried in the manifest: a completed file result holds its findings, so
     ///         a job most of the way through a large review would put all of them in every lease offer, and
@@ -240,6 +240,7 @@ public sealed class RunnerExecutionController(
     ///     </para>
     /// </summary>
     [HttpPost("prior-results")]
+    [ProducesResponseType(typeof(RunnerPriorResultsResponse), StatusCodes.Status200OK)]
     public async Task<IActionResult> GetPriorResults([FromBody] RunnerJobCallRequest request, CancellationToken ct)
     {
         if (!this.TryBuildCall(request, out var call, out var failure))
@@ -248,10 +249,12 @@ public sealed class RunnerExecutionController(
         }
 
         var result = await priorResults.ReadAsync(call, ct);
-        return ToolResponse(result, result.Value);
+        return result.Refusal != RunnerCallRefusal.None
+            ? this.LeaseRefusal(result.Refusal)
+            : this.Ok(new RunnerPriorResultsResponse(result.Unavailable, result.Value));
     }
 
-    /// <summary>Submits one chunk of the review's findings for the control plane to publish.</summary>
+    /// <summary>Submits publication candidates and optional withheld evidence in a review-result chunk.</summary>
     [HttpPost("findings")]
     public async Task<IActionResult> SubmitFindings([FromBody] RunnerFindingsRequest request, CancellationToken ct)
     {
@@ -425,6 +428,11 @@ public sealed class RunnerExecutionController(
             : this.Ok(new { unavailable = result.Unavailable, value });
     }
 }
+
+/// <summary>Per-file checkpoints returned to a runner, with their availability state.</summary>
+/// <param name="Unavailable">Whether checkpoint retrieval is unavailable.</param>
+/// <param name="Value">Recorded checkpoints, or null when no value was returned.</param>
+public sealed record RunnerPriorResultsResponse(bool Unavailable, IReadOnlyList<RunnerPriorFileResult>? Value);
 
 /// <summary>What every runner call carries: which job, which generation, and which contract version.</summary>
 public class RunnerJobCallRequest

@@ -8,6 +8,7 @@ using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using System.Text.Json;
 using NSubstitute;
 
 namespace MeisterDev.ProPR.Application.Tests.Features.Reviewing.Execution;
@@ -19,6 +20,50 @@ public sealed class RunnerFindingsIntakeTests
 
     private readonly IRunnerCallAuthorizer _authorizer = Substitute.For<IRunnerCallAuthorizer>();
     private readonly IReviewResultPublisher _publisher = Substitute.For<IReviewResultPublisher>();
+
+    [Fact]
+    public async Task WithheldAnnotations_SurviveAssemblyAndSubmissionReplayWithoutBecomingComments()
+    {
+        ReviewResult? result = null;
+        this._publisher.PublishAsync(JobId, Arg.Do<ReviewResult>(value => result = value), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
+        var withheld = new WithheldReviewFinding(Comment("src/withheld.cs"), "judge_output_limit");
+        var source = new ReviewResult("Summary", [Comment("src/published.cs")]) { WithheldFindings = [withheld] };
+        var wireOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var annotations = JsonSerializer.Deserialize<RunnerResultAnnotations>(
+            JsonSerializer.Serialize(RunnerResultAnnotations.FromResult(source), wireOptions), wireOptions);
+        var chunk = Chunk() with { Annotations = annotations };
+
+        await this.CreateIntake().SubmitAsync(Call, chunk);
+        await this.CreateIntake().SubmitAsync(Call, chunk);
+
+        Assert.Equal(withheld, Assert.Single(result!.WithheldFindings));
+        Assert.Single(result.Comments);
+        Assert.DoesNotContain(result.Comments, comment => comment.FilePath == "src/withheld.cs");
+        await this._publisher.Received(1).PublishAsync(JobId, Arg.Any<ReviewResult>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task AnOlderAnnotationsPayload_RetriesWithoutChangingPublicationOrAddingEvidence()
+    {
+        var json = """
+                   {"carriedForwardFilePaths":[],"carriedForwardCandidatesSkipped":0,"contextDegradedFilePaths":[],
+                    "contextSkippedFilePaths":[],"budgetSoftCapped":false,"budgetSoftCapThresholdUsd":null,
+                    "budgetSoftCapSpentUsd":null,"budgetSoftCapSkippedFilePaths":[]}
+                   """;
+        var annotations = JsonSerializer.Deserialize<RunnerResultAnnotations>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Null(annotations!.WithheldFindings);
+        ReviewResult? published = null;
+        this._publisher.PublishAsync(JobId, Arg.Do<ReviewResult>(value => published = value), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
+        var chunk = Chunk() with { Annotations = annotations };
+
+        var first = await this.CreateIntake().SubmitAsync(Call, chunk);
+        var replay = await this.CreateIntake().SubmitAsync(Call, chunk);
+
+        Assert.Equal(RunnerSubmissionOutcome.Published, first.Outcome);
+        Assert.Equal(RunnerSubmissionOutcome.AlreadyPublished, replay.Outcome);
+        Assert.Empty(published!.WithheldFindings);
+        await this._publisher.Received(1).PublishAsync(JobId, Arg.Any<ReviewResult>(), Arg.Any<CancellationToken>());
+    }
 
     private static ReviewComment Comment(string path)
     {

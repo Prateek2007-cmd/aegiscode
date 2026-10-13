@@ -45,8 +45,8 @@ public sealed record ReviewFindingsProducedEvent(
 ///     disposition consumer uses to recognise the finding when its thread resolves.
 /// </summary>
 /// <param name="Ordinal">
-///     Zero-based position of the finding within the increment's finding list. Part of the natural key,
-///     because two findings may legitimately share the same file and line within one increment.
+///     Zero-based publication-candidate index, or a negative index for separately retained evidence. Part of the
+///     natural key because two findings may share the same file and line within one increment.
 /// </param>
 /// <param name="FilePath">File the finding is anchored to, or <c>null</c> for pull-request-level findings.</param>
 /// <param name="LineNumber">Line the finding is anchored to, or <c>null</c> when unknown.</param>

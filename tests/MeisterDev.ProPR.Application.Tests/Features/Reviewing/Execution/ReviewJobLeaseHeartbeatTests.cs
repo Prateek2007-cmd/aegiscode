@@ -17,6 +17,24 @@ public sealed class ReviewJobLeaseHeartbeatTests
     private static readonly ReviewJobLease Lease =
         new(Guid.NewGuid(), "host-a:1234", 7, DateTimeOffset.UtcNow.AddMinutes(2));
 
+    [Fact]
+    public async Task CompletedRenewalStopsHeartbeatWithoutCancelingAwaitedCompletionWork()
+    {
+        var store = Substitute.For<IReviewJobLeaseStore>();
+        store.TryRenewAsync(Arg.Any<ReviewJobLease>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Completed));
+        var time = new FakeTimeProvider();
+        await using var heartbeat = Start(store, time);
+        var leaseLost = heartbeat.LeaseLost;
+
+        await AdvanceUntilAsync(time, () => heartbeat.StopReason == ReviewJobStopReason.Completed, "The completion response was not processed.");
+        await heartbeat.DisposeAsync();
+
+        Assert.False(leaseLost.IsCancellationRequested);
+        Assert.Equal(ReviewJobStopReason.Completed, heartbeat.StopReason);
+        await store.Received(1).TryRenewAsync(Lease, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+    }
+
     private static ReviewLeaseOptions Options(int maxFailures = 3)
     {
         return new ReviewLeaseOptions

@@ -296,7 +296,8 @@ public sealed class ReviewJobLeaseStore(
     /// </summary>
     private async Task<ReviewJobLeaseRenewal> ExplainRefusedRenewalAsync(
         ReviewJobLease lease,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowDurationFailure = true)
     {
         var current = await dbContext.ReviewJobs
             .AsNoTracking()
@@ -329,13 +330,14 @@ public sealed class ReviewJobLeaseStore(
         // clock involved; comparing the elapsed time here would introduce this process's clock as a second
         // one. A predicate added to that statement has to be re-checked above, or it will be reported as a
         // duration breach.
-        if (current.Status == JobStatus.Processing && current.ProcessingStartedAt is not null)
+        if (allowDurationFailure && current.Status == JobStatus.Processing && current.ProcessingStartedAt is not null)
         {
             return await this.FailForMaxDurationAsync(lease, ct);
         }
 
         return current.Status switch
         {
+            JobStatus.Completed => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Completed),
             JobStatus.Stopped => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.OperatorStop),
             JobStatus.Superseded => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Superseded),
             JobStatus.BudgetExceeded => ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.BudgetCapReached),
@@ -387,7 +389,9 @@ public sealed class ReviewJobLeaseStore(
 
         if (fenced == 0)
         {
-            return ReviewJobLeaseRenewal.Rejected;
+            // Completion can commit between the refusal read and this conditional failure. Classify the
+            // current generation without attempting another duration transition.
+            return await this.ExplainRefusedRenewalAsync(lease, ct, allowDurationFailure: false);
         }
 
         // The row is terminal and unclaimable now, so this closes the protocols the execution left open

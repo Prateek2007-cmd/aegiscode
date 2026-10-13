@@ -24,6 +24,9 @@ public interface IResolvedAiChatRuntime
     /// <summary>Gets the chat client ready for execution.</summary>
     IChatClient ChatClient { get; }
 
+    /// <summary>Whether the model and selected transport positively support low reasoning effort.</summary>
+    bool SupportsLowReasoningEffort => false;
+
     /// <summary>Gets runtime capabilities relevant to session-aware review execution.</summary>
     AgentReviewRuntimeCapabilities Capabilities { get; }
 

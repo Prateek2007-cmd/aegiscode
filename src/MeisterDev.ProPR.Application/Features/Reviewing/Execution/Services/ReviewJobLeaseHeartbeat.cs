@@ -20,6 +20,10 @@ namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
 ///         cancelled. Continuing to work past that point means two parties reviewing the same job, so the
 ///         caller is expected to stop.
 ///     </para>
+///     <para>
+///         Successful completion of the held generation stops renewal without canceling awaited completion
+///         hooks or analytics intake. Host and caller cancellation still apply to those operations.
+///     </para>
 /// </summary>
 public sealed partial class ReviewJobLeaseHeartbeat : IAsyncDisposable
 {
@@ -135,6 +139,20 @@ public sealed partial class ReviewJobLeaseHeartbeat : IAsyncDisposable
             try
             {
                 var renewal = await this._store.TryRenewAsync(this._lease, this._options.LeaseDuration, ct);
+                if (renewal is
+                    {
+                        Accepted: false,
+                        ExpiresAt: null,
+                        Directive: ReviewJobDirective.Stop,
+                        StopReason: ReviewJobStopReason.Completed,
+                    })
+                {
+                    // The durable result precedes awaited completion hooks and analytics intake. This
+                    // generation's success ends renewal without canceling that remaining work.
+                    this.StopReason = ReviewJobStopReason.Completed;
+                    return;
+                }
+
                 if (renewal.Directive == ReviewJobDirective.Stop)
                 {
                     // Definitive rather than transient, whichever reason it carries: either the job was told

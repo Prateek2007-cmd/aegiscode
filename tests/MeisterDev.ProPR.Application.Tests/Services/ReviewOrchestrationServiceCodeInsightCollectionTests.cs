@@ -4,6 +4,7 @@
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.Services;
@@ -15,6 +16,7 @@ using MeisterDev.ProPR.Domain.Events;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -25,6 +27,141 @@ public sealed class ReviewOrchestrationServiceCodeInsightCollectionTests
 {
     private const string OrganizationUrl = "https://dev.azure.com/org";
     private static readonly Guid ClientId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompletedHeartbeatPreservesAwaitedPublishedAndWithheldIntakeWhileCallerCancellationStillApplies(bool cancelCaller)
+    {
+        var published = new ReviewComment("file.cs", 1, CommentSeverity.Warning, "Published concern.");
+        var withheld = new WithheldReviewFinding(new ReviewComment("file.cs", 2, CommentSeverity.Warning, "Withheld concern."), "judge_output_limit");
+        var leases = Substitute.For<IReviewJobLeaseStore>();
+        leases.TryMarkPublishingAsync(Arg.Any<Guid>(), Arg.Any<ReviewJobLease?>(), Arg.Any<CancellationToken>()).Returns(true);
+        leases.TryRenewAsync(Arg.Any<ReviewJobLease>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(ReviewJobLeaseRenewal.StoppedBecause(ReviewJobStopReason.Completed));
+        var harness = new Harness(
+            comments: [published], withheldFindings: [withheld], leaseStore: leases,
+            postedComments: [new("comment", "thread", "file.cs", 1, FindingOrdinal: 0)]);
+        var resultStored = false;
+        harness.Jobs.SetResultAsync(harness.JobId, Arg.Any<ReviewResult>(), Arg.Any<CancellationToken>()).Returns(_ =>
+        {
+            resultStored = true;
+            return Task.CompletedTask;
+        });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ReviewFindingsProducedEvent? retained = null;
+        var intakeCanceled = false;
+        harness.IngestionService.HandleReviewFindingsProducedAsync(Arg.Any<ReviewFindingsProducedEvent>(), Arg.Any<CancellationToken>()).Returns(async c =>
+        {
+            Assert.True(resultStored);
+            entered.SetResult();
+            var ct = c.ArgAt<CancellationToken>(1);
+            try
+            {
+                await release.Task.WaitAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                intakeCanceled = true;
+                throw;
+            }
+
+            retained = c.ArgAt<ReviewFindingsProducedEvent>(0);
+        });
+        var time = new FakeTimeProvider();
+        using var caller = new CancellationTokenSource();
+        await using var heartbeat = ReviewJobLeaseHeartbeat.Start(
+            new(harness.JobId, "host", 1, DateTimeOffset.UtcNow.AddMinutes(2)), leases,
+            new ReviewLeaseOptions { HeartbeatIntervalSeconds = 20, HeartbeatJitterFraction = 0 }, time, NullLogger.Instance, caller.Token);
+        using var workToken = CancellationTokenSource.CreateLinkedTokenSource(caller.Token, heartbeat.LeaseLost);
+        var work = harness.RunAsync(workToken.Token);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+            while (heartbeat.StopReason != ReviewJobStopReason.Completed && DateTimeOffset.UtcNow < deadline)
+            {
+                time.Advance(TimeSpan.FromSeconds(30));
+                await Task.Delay(5);
+            }
+
+            await heartbeat.DisposeAsync();
+            var canceledByCompletion = workToken.IsCancellationRequested;
+            if (cancelCaller)
+            {
+                caller.Cancel();
+            }
+
+            release.SetResult();
+            var error = await Record.ExceptionAsync(() => work);
+            Assert.Equal(ReviewJobStopReason.Completed, heartbeat.StopReason);
+            Assert.False(canceledByCompletion);
+            if (cancelCaller)
+            {
+                Assert.True(workToken.IsCancellationRequested);
+                Assert.True(intakeCanceled);
+                Assert.True(error is null or OperationCanceledException);
+                Assert.Null(retained);
+            }
+            else
+            {
+                Assert.Null(error);
+                Assert.NotNull(retained);
+                Assert.Equal(2, retained.Findings.Count);
+                Assert.Contains(retained.Findings, f => f.PublicationState == CodeInsightPublicationState.Published);
+                Assert.Contains(retained.Findings, f => f.PublicationState == CodeInsightPublicationState.PolicyWithheld);
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            caller.Cancel();
+            await Record.ExceptionAsync(() => work);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProcessAsync_CollectsJudgeWithheldEvidenceWithoutPublishingItsComments(bool postingEnabled)
+    {
+        var published = new ReviewComment("src/Service.cs", 42, CommentSeverity.Warning, "Publish this finding.");
+        var withheld = new WithheldReviewFinding(
+            new ReviewComment("src/Service.cs", 42, CommentSeverity.Warning, "Withheld candidate.")
+            {
+                OriginModelId = "review-model", OriginLogicalModelName = "reviewer", OriginPassKind = "Baseline",
+                ScopeRelation = ReviewCommentScopeRelation.OnChangedLine,
+            }, "judge_output_limit");
+        var harness = new Harness(
+            comments: [published], withheldFindings: [withheld], postingEnabled: postingEnabled,
+            postedComments: [new("comment", "thread", "src/Service.cs", 42, FindingOrdinal: 0)]);
+
+        await harness.RunAsync();
+
+        await harness.IngestionService.Received(1).HandleReviewFindingsProducedAsync(
+            Arg.Is<ReviewFindingsProducedEvent>(evt => evt.Findings.Count == 2 && evt.Findings[0].Ordinal == 0
+                                                                               && evt.Findings[1].Ordinal == -1 &&
+                                                                               evt.Findings[1].Message == withheld.Comment.Message
+                                                                               && evt.Findings[1].PublicationState == CodeInsightPublicationState.PolicyWithheld
+                                                                               && evt.Findings[1].PublicationReason == "judge_output_limit" &&
+                                                                               evt.Findings[1].ProviderThreadId == null
+                                                                               && evt.Findings[1].ProviderCommentId == null &&
+                                                                               evt.Findings[1].OriginModelId == "review-model"
+                                                                               && evt.Findings[1].ProviderScope == "AzureDevOps:https://dev.azure.com"),
+            Arg.Any<CancellationToken>());
+        if (postingEnabled)
+        {
+            await harness.Publisher.Received(1).PublishReviewAsync(
+                Arg.Any<Guid>(), Arg.Any<CodeReviewRef>(), Arg.Any<ReviewRevision>(),
+                Arg.Is<ReviewResult>(result => result.Comments.Count == 1 && result.Comments[0].Message == published.Message),
+                Arg.Any<ReviewerIdentity>(), Arg.Any<CancellationToken>(), Arg.Any<ReviewPublicationContext?>());
+        }
+        else
+        {
+            await harness.Publisher.DidNotReceiveWithAnyArgs().PublishReviewAsync(default, default!, default!, default!, default!, default, default);
+        }
+    }
 
     // A push supersedes the job while its comments are going out. The publishing mark is the control plane's
     // answer to whether this review is still wanted, and publishing over a refusal puts a review on the pull
@@ -289,7 +426,9 @@ public sealed class ReviewOrchestrationServiceCodeInsightCollectionTests
             bool withConsumer = true,
             IReviewJobLeaseStore? leaseStore = null,
             string organizationUrl = OrganizationUrl,
-            IReadOnlyList<ReviewCommentPostingFailure>? postingFailures = null)
+            IReadOnlyList<ReviewCommentPostingFailure>? postingFailures = null,
+            IReadOnlyList<WithheldReviewFinding>? withheldFindings = null,
+            bool postingEnabled = true)
         {
             this.IngestionService = Substitute.For<ICodeInsightFindingIngestionService>();
             if (collectionThrows)
@@ -328,7 +467,7 @@ public sealed class ReviewOrchestrationServiceCodeInsightCollectionTests
 
             var clientRegistry = Substitute.For<IClientRegistry>();
             clientRegistry.GetScmCommentPostingEnabledAsync(ClientId, Arg.Any<CancellationToken>())
-                .Returns(true);
+                .Returns(postingEnabled);
             clientRegistry.GetCustomSystemMessageAsync(ClientId, Arg.Any<CancellationToken>())
                 .Returns((string?)null);
             clientRegistry.GetMinimumSeverityToPostAsync(ClientId, Arg.Any<CancellationToken>())
@@ -345,7 +484,7 @@ public sealed class ReviewOrchestrationServiceCodeInsightCollectionTests
                     Arg.Any<ReviewSystemContext>(),
                     Arg.Any<CancellationToken>(),
                     Arg.Any<IChatClient?>())
-                .Returns(new ReviewResult("Summary", comments ?? CreateComments()));
+                .Returns(new ReviewResult("Summary", comments ?? CreateComments()) { WithheldFindings = withheldFindings ?? [] });
 
             var providerRegistry = CreateProviderRegistry(postedComments ?? [], postingFailures ?? []);
             this.Publisher = providerRegistry.GetCodeReviewPublicationService(ScmProvider.AzureDevOps);
@@ -378,9 +517,9 @@ public sealed class ReviewOrchestrationServiceCodeInsightCollectionTests
 
         public Guid JobId { get; }
 
-        public Task RunAsync()
+        public Task RunAsync(CancellationToken ct = default)
         {
-            return this._sut.ProcessAsync(this._job, CancellationToken.None);
+            return this._sut.ProcessAsync(this._job, ct);
         }
 
         private static IReadOnlyList<ReviewComment> CreateComments()

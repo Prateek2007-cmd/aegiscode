@@ -7,8 +7,9 @@ using MeisterDev.ProPR.CodeInsights.Rollups;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace MeisterDev.ProPR.CodeInsights.Persistence;
 
@@ -23,9 +24,36 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
 {
     private const int MaximumWriteAttempts = 3;
 
-    public async Task RecordAsync(
+    public async Task<CodeInsightEvidenceAcknowledgment> RecordAcknowledgedAsync(
+        CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct = default)
+    {
+        if (!await gate.IsCollectionEnabledAsync(key.ClientId, ct))
+        {
+            return new CodeInsightEvidenceAcknowledgment(false);
+        }
+
+        await this.RecordCoreAsync(key, providerScope, allHumanThreadsResolved, observedAt, ct, true, true);
+        await using var lease = await CodeInsightDbContextLease.CreateAsync(dbContext, contextFactory, ct);
+        var aggregateId = await lease.Context.CodeInsightPullRequests.AsNoTracking().Where(row => row.ClientId == key.ClientId
+                                                                                                  && row.RepositoryId == key.RepositoryId &&
+                                                                                                  row.PullRequestId == key.PullRequestId)
+            .Select(row => (Guid?)row.Id).SingleOrDefaultAsync(ct);
+        var coverage = await lease.Context.CodeInsightHarvestCoverage.AsNoTracking().FirstOrDefaultAsync(
+            row =>
+                row.CodeInsightPullRequestId == aggregateId && row.ProviderScope == providerScope, ct);
+        return new CodeInsightEvidenceAcknowledgment(coverage is { EnumerationComplete: true } && coverage.ObservedAt >= observedAt);
+    }
+
+    public Task RecordAsync(
         CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct = default,
         bool enumerationComplete = true)
+    {
+        return this.RecordCoreAsync(key, providerScope, allHumanThreadsResolved, observedAt, ct, enumerationComplete, false);
+    }
+
+    private async Task RecordCoreAsync(
+        CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct,
+        bool enumerationComplete, bool requireExistingAggregate)
     {
         try
         {
@@ -43,10 +71,11 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
                 Guid? aggregate;
                 try
                 {
-                    aggregate = await RetainAsync(db, key, providerScope, allHumanThreadsResolved, observedAt, enumerationComplete, ct);
+                    aggregate = await RetainAsync(
+                        db, key, providerScope, allHumanThreadsResolved, observedAt, enumerationComplete, requireExistingAggregate, ct);
                 }
                 catch (DbUpdateException exception) when (attempt < MaximumWriteAttempts - 1 &&
-                                                          exception.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+                                                          exception.InnerException is PostgresException { SqlState: "23505" })
                 {
                     if (contextFactory is null)
                     {
@@ -72,12 +101,16 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
 
     private static async Task<Guid?> RetainAsync(
         MeisterProPRDbContext db, CodeInsightPullRequestKey key, string providerScope,
-        bool allHumanThreadsResolved, DateTimeOffset observedAt, bool enumerationComplete, CancellationToken ct)
+        bool allHumanThreadsResolved, DateTimeOffset observedAt, bool enumerationComplete, bool requireExistingAggregate, CancellationToken ct)
     {
         await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
         await CodeInsightAggregateWriteLock.AcquireAsync(db, key, ct);
 
-        var pr = await LoadAggregateAsync(db, key, observedAt, ct);
+        var pr = await LoadAggregateAsync(db, key, observedAt, requireExistingAggregate, ct);
+        if (pr is null)
+        {
+            return null;
+        }
 
         var coverage = await db.CodeInsightHarvestCoverage.FirstOrDefaultAsync(
             row => row.CodeInsightPullRequestId == pr.Id && row.ProviderScope == providerScope, ct);
@@ -86,19 +119,20 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
             await db.Entry(coverage).ReloadAsync(ct);
         }
 
-        if (coverage is not null && (coverage.ObservedAt > observedAt || coverage.ObservedAt == observedAt
-                && coverage.AllHumanThreadsResolved == allHumanThreadsResolved && coverage.EnumerationComplete == enumerationComplete))
+        if (coverage is not null && (coverage.ObservedAt > observedAt || (coverage.ObservedAt == observedAt
+                                                                          && coverage.AllHumanThreadsResolved == allHumanThreadsResolved &&
+                                                                          coverage.EnumerationComplete == enumerationComplete)))
         {
             return null;
         }
 
         if (coverage is null)
         {
-            coverage = new()
+            coverage = new CodeInsightHarvestCoverage
             {
                 Id = Guid.CreateVersion7(),
                 CodeInsightPullRequestId = pr.Id,
-                ProviderScope = providerScope
+                ProviderScope = providerScope,
             };
             db.CodeInsightHarvestCoverage.Add(coverage);
         }
@@ -114,14 +148,19 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
         return pr.Id;
     }
 
-    private static async Task<CodeInsightPullRequest> LoadAggregateAsync(
+    private static async Task<CodeInsightPullRequest?> LoadAggregateAsync(
         MeisterProPRDbContext db, CodeInsightPullRequestKey key,
-        DateTimeOffset observedAt, CancellationToken ct)
+        DateTimeOffset observedAt, bool requireExistingAggregate, CancellationToken ct)
     {
         var pr = await db.CodeInsightPullRequests.FirstOrDefaultAsync(
             row => row.ClientId == key.ClientId && row.RepositoryId == key.RepositoryId && row.PullRequestId == key.PullRequestId, ct);
         if (pr is null)
         {
+            if (requireExistingAggregate)
+            {
+                return null;
+            }
+
             pr = new CodeInsightPullRequest
             {
                 Id = Guid.CreateVersion7(),
@@ -130,7 +169,7 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
                 PullRequestId = key.PullRequestId,
                 CreatedAt = observedAt,
                 LastActivityAt = observedAt,
-                UpdatedAt = observedAt
+                UpdatedAt = observedAt,
             };
             db.CodeInsightPullRequests.Add(pr);
         }

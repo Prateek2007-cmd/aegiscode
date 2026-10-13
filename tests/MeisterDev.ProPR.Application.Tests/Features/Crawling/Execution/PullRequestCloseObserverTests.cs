@@ -10,6 +10,7 @@ using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.Events;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.TestSupport;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -23,17 +24,95 @@ namespace MeisterDev.ProPR.Application.Tests.Features.Crawling.Execution;
 /// </summary>
 public sealed class PullRequestCloseObserverTests
 {
+    /// <summary>The provider thread the harness's collected finding was raised as.</summary>
+    private const string FindingThreadId = "propr-thread-1";
+
     private static readonly Guid ClientId = Guid.Parse("66666666-6666-6666-6666-666666666666");
     private static readonly Guid ConnectionId = Guid.Parse("77777777-7777-7777-7777-777777777777");
     private static readonly Guid HumanAuthorId = Guid.Parse("88888888-8888-8888-8888-888888888888");
 
-    /// <summary>The provider thread the harness's collected finding was raised as.</summary>
-    private const string FindingThreadId = "propr-thread-1";
+    [Fact]
+    public async Task OrdinaryObservationRoutesEveryProviderThroughTheInjectedFeedbackPort()
+    {
+        var reader = Substitute.For<ICodeInsightProviderFeedbackReader>();
+        reader.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+                CodeInsightObservationMode.Current)
+            .Returns(
+                new CodeInsightProviderFeedback(
+                    [], [
+                        new PrCommentThread(
+                            "ported-human", "file.cs", 2,
+                            [new PrThreadComment("Human", "Check this operation.")], "Fixed")
+                    ]));
+        var h = new Harness(
+            connectionRows: [Harness.CreateConnection(ScmProvider.Forgejo, hostBaseUrl: "https://forge.example.test")],
+            scopePath: "https://forge.example.test", feedbackReader: reader);
+        h.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        await h.ObserveAsync("https://forge.example.test");
+
+        await reader.Received(1).ReadAsync(
+            Arg.Is<CodeInsightProviderEvidenceTarget>(t => t.Provider == ScmProvider.Forgejo),
+            Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(), CodeInsightObservationMode.Current);
+        await h.Harvester.Received(1).HandleThreadObservedAsync(
+            Arg.Is<ThreadUpdatedEvent>(e => e.ThreadId == "ported-human"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OrdinaryForgejoObservationUsesItsExistingCapabilitiesWhenStrictHistoricalCorrelationIsUnavailable()
+    {
+        var strict = Substitute.For<ICodeInsightProviderFeedbackReader>();
+        strict.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+                CodeInsightObservationMode.HistoricalBackfill)
+            .ThrowsAsync(new CodeInsightProviderIdentityException());
+        strict.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+                CodeInsightObservationMode.Current)
+            .Returns(
+                new CodeInsightProviderFeedback(
+                    [], [
+                        new PrCommentThread(
+                            "human", "file.cs", 2,
+                            [new PrThreadComment("Human", "Check this operation.")], "Fixed")
+                    ]));
+        var h = new Harness(
+            connectionRows: [Harness.CreateConnection(ScmProvider.Forgejo, hostBaseUrl: "https://forge.example.test")],
+            scopePath: "https://forge.example.test", feedbackReader: strict);
+        h.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        await h.ObserveAsync("https://forge.example.test");
+
+        await h.Harvester.Received().HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+        await strict.Received(1).ReadAsync(
+            Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(), CodeInsightObservationMode.Current);
+        await strict.DidNotReceive().ReadAsync(
+            Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+            CodeInsightObservationMode.HistoricalBackfill);
+        await h.Coverage.Received(1).RecordAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), true);
+    }
+
+    [Fact]
+    public async Task FailedReviewerEnumerationCannotCertifyOrdinaryCloseCoverage()
+    {
+        var harness = new Harness();
+        harness.ReviewerThreads.GetReviewerThreadStatusesAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
+            Arg.Any<ThreadOwnershipResolver>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).ThrowsAsync(new InvalidOperationException("unavailable"));
+        harness.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
+        await harness.ObserveAsync();
+        await harness.Coverage.Received(1).RecordAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<bool>(),
+            Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), false);
+    }
 
     [Fact]
     public async Task CloseObservationUsesNativeResolutionIntentWithoutChangingCapturedStatus()
     {
-        var registry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
+        var registry = LocalScmPolicies.CreateRuntimeSubstitute();
         var policy = Substitute.For<ICodeReviewPreparationPolicy>();
         registry.GetCodeReviewPreparationPolicy(ScmProvider.AzureDevOps).Returns(policy);
         policy.InterpretThreadResolution("Active").Returns(ThreadResolutionIntent.AcceptedByHuman);
@@ -47,7 +126,7 @@ public sealed class PullRequestCloseObserverTests
 
         await harness.Coverage.Received(1).RecordAsync(
             Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), true,
-            Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), true);
+            Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
         await harness.Dispositions.Received(1).HandleThreadResolvedAsync(
             Arg.Is<ThreadResolvedDomainEvent>(evt => evt.Intent == ThreadResolutionIntent.AcceptedByHuman
                                                      && evt.NativeStatus == "Active"), Arg.Any<CancellationToken>());
@@ -56,7 +135,7 @@ public sealed class PullRequestCloseObserverTests
     [Fact]
     public async Task CloseObservationUsesTheInjectedNativeConnectionPredicate()
     {
-        var registry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
+        var registry = LocalScmPolicies.CreateRuntimeSubstitute();
         var policy = Substitute.For<IScmConnectionConfigurationPolicy>();
         registry.GetConnectionConfigurationPolicy(ScmProvider.AzureDevOps).Returns(policy);
         policy.MatchesObservedConnectionHost(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
@@ -76,7 +155,7 @@ public sealed class PullRequestCloseObserverTests
             connectionRows:
             [
                 Harness.CreateConnection(hostBaseUrl: "https://server.test/tfs/team"),
-                Harness.CreateConnection(id: selectedId, hostBaseUrl: "https://server.test/tfs/sibling-longer")
+                Harness.CreateConnection(id: selectedId, hostBaseUrl: "https://server.test/tfs/sibling-longer"),
             ],
             scopePath: "https://server.test/tfs/team");
 
@@ -93,7 +172,7 @@ public sealed class PullRequestCloseObserverTests
 
         await harness.ObserveAsync();
 
-        await harness.Fetcher.DidNotReceiveWithAnyArgs().FetchThreadsAsync(default!, default!, default!, default, default);
+        await harness.Fetcher.DidNotReceiveWithAnyArgs().FetchThreadsAsync(default!, default!, default!, default);
         await harness.Harvester.DidNotReceiveWithAnyArgs().HandleThreadObservedAsync(default!);
     }
 
@@ -247,7 +326,7 @@ public sealed class PullRequestCloseObserverTests
         var harness = new Harness(
             connectionRows:
             [
-                Harness.CreateConnection(ScmProvider.AzureDevOps, Guid.NewGuid(), hostBaseUrl: "   "),
+                Harness.CreateConnection(ScmProvider.AzureDevOps, Guid.NewGuid(), "   "),
                 Harness.CreateConnection(),
             ]);
 
@@ -348,12 +427,12 @@ public sealed class PullRequestCloseObserverTests
             [
                 new PrCommentThread(
                     "activity", null, null,
-                    [new PrThreadComment("Provider", text, null, 1, DateTimeOffset.UtcNow, IsSystemGenerated: systemGenerated)], "Active")
+                    [new PrThreadComment("Provider", text, null, 1, DateTimeOffset.UtcNow, systemGenerated)], "Active"),
             ]);
         harness.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
         await harness.ObserveAsync();
         await harness.Coverage.Received(1).RecordAsync(
-            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), true, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), true);
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), true, Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -365,7 +444,7 @@ public sealed class PullRequestCloseObserverTests
             .Returns(
             [
                 new PrCommentThread(
-                    "", "src/Service.cs", 1, [new PrThreadComment("Human", "This race needs a fix", HumanAuthorId, 1, DateTimeOffset.UtcNow)], "Fixed")
+                    "", "src/Service.cs", 1, [new PrThreadComment("Human", "This race needs a fix", HumanAuthorId, 1, DateTimeOffset.UtcNow)], "Fixed"),
             ]);
         await harness.ObserveAsync();
         await harness.Coverage.Received(1).RecordAsync(
@@ -491,7 +570,7 @@ public sealed class PullRequestCloseObserverTests
         List<string> logged = [];
         var harness = new Harness(withConnection: false, logger: new CapturingLogger<PullRequestCloseObserver>(logged));
 
-        await harness.ObserveAsync(scopePath: "https://svc:s3cr3t@dev.azure.com/org");
+        await harness.ObserveAsync("https://svc:s3cr3t@dev.azure.com/org");
 
         Assert.NotEmpty(logged);
         Assert.All(logged, line => Assert.DoesNotContain("s3cr3t", line, StringComparison.Ordinal));
@@ -504,7 +583,7 @@ public sealed class PullRequestCloseObserverTests
     {
         var harness = new Harness();
 
-        await harness.ObserveAsync(scopePath: "not-an-absolute-url");
+        await harness.ObserveAsync("not-an-absolute-url");
 
         await harness.Fetcher.DidNotReceive().FetchThreadsAsync(
             Arg.Any<string>(),
@@ -520,7 +599,7 @@ public sealed class PullRequestCloseObserverTests
     {
         // An installation that collects no code insights must not pay a provider round trip per closed pull
         // request for an observation nothing consumes.
-        var harness = new Harness(withHarvester: false);
+        var harness = new Harness(false);
 
         await harness.ObserveAsync();
 
@@ -612,6 +691,26 @@ public sealed class PullRequestCloseObserverTests
             Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("https://ado.example.test", "https://ado.example.test/collection")]
+    [InlineData("https://ado.example.test/tfs", "https://ado.example.test/tfs/defaultcollection")]
+    public async Task NestedSelfHostedCloseUsesTheCollectionNamespaceForThreadsDispositionsAndCoverage(string connectionBase, string collection)
+    {
+        var harness = new Harness(
+            connectionRows: [Harness.CreateConnection(hostBaseUrl: connectionBase)],
+            reviewerThreads: [Harness.ReviewerThread(FindingThreadId, "Fixed")], scopePath: collection);
+        harness.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
+        await harness.ObserveAsync(collection);
+        var expected = "AzureDevOps:" + collection;
+        await harness.Harvester.Received(1).HandleThreadObservedAsync(
+            Arg.Is<ThreadUpdatedEvent>(evt => evt.ProviderScope == expected), Arg.Any<CancellationToken>());
+        await harness.Dispositions.Received(1).HandleThreadResolvedAsync(
+            Arg.Is<ThreadResolvedDomainEvent>(evt => evt.ProviderScope == expected), Arg.Any<CancellationToken>());
+        await harness.Coverage.Received(1).RecordAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), expected, Arg.Any<bool>(), Arg.Any<DateTimeOffset>(),
+            Arg.Any<CancellationToken>());
+    }
+
     /// <summary>Keeps the rendered message, which is where a leaked secret would show up.</summary>
     private sealed class CapturingLogger<T>(List<string> messages) : ILogger<T>
     {
@@ -638,30 +737,10 @@ public sealed class PullRequestCloseObserverTests
         }
     }
 
-    [Theory]
-    [InlineData("https://ado.example.test", "https://ado.example.test/collection")]
-    [InlineData("https://ado.example.test/tfs", "https://ado.example.test/tfs/defaultcollection")]
-    public async Task NestedSelfHostedCloseUsesTheCollectionNamespaceForThreadsDispositionsAndCoverage(string connectionBase, string collection)
-    {
-        var harness = new Harness(
-            connectionRows: [Harness.CreateConnection(hostBaseUrl: connectionBase)],
-            reviewerThreads: [Harness.ReviewerThread(FindingThreadId, "Fixed")], scopePath: collection);
-        harness.Harvester.HandleThreadObservedAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(true);
-        await harness.ObserveAsync(collection);
-        var expected = "AzureDevOps:" + collection;
-        await harness.Harvester.Received(1).HandleThreadObservedAsync(
-            Arg.Is<ThreadUpdatedEvent>(evt => evt.ProviderScope == expected), Arg.Any<CancellationToken>());
-        await harness.Dispositions.Received(1).HandleThreadResolvedAsync(
-            Arg.Is<ThreadResolvedDomainEvent>(evt => evt.ProviderScope == expected), Arg.Any<CancellationToken>());
-        await harness.Coverage.Received(1).RecordAsync(
-            Arg.Any<CodeInsightPullRequestKey>(), expected, Arg.Any<bool>(), Arg.Any<DateTimeOffset>(),
-            Arg.Any<CancellationToken>(), true);
-    }
-
     private sealed class Harness
     {
-        private readonly PullRequestCloseObserver _sut;
         private readonly IPostedCommentOriginStore _origins;
+        private readonly PullRequestCloseObserver _sut;
 
         public Harness(
             bool withHarvester = true,
@@ -676,7 +755,7 @@ public sealed class PullRequestCloseObserverTests
             bool withReviewerThreadStatuses = true,
             bool withDispositionService = true,
             ILogger<PullRequestCloseObserver>? logger = null, string scopePath = "https://dev.azure.com/org", bool withCoverageRecorder = true,
-            IScmProviderRegistry? providerRegistry = null)
+            IScmProviderRegistry? providerRegistry = null, ICodeInsightProviderFeedbackReader? feedbackReader = null)
         {
             this.Harvester = Substitute.For<ICodeInsightMissHarvester>();
             this.Fetcher = Substitute.For<IPullRequestFetcher>();
@@ -721,7 +800,7 @@ public sealed class PullRequestCloseObserverTests
                 .Returns(reviewerThreads ?? []);
 
             this._sut = new PullRequestCloseObserver(
-                providerRegistry ?? MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry,
+                providerRegistry ?? LocalScmPolicies.Registry,
                 logger ?? NullLogger<PullRequestCloseObserver>.Instance,
                 this.Fetcher,
                 withHarvester ? this.Harvester : null,
@@ -730,7 +809,7 @@ public sealed class PullRequestCloseObserverTests
                 connections,
                 this._origins,
                 withReviewerThreadStatuses ? this.ReviewerThreads : null,
-                withDispositionService ? this.Dispositions : null, withCoverageRecorder ? this.Coverage : null);
+                withDispositionService ? this.Dispositions : null, withCoverageRecorder ? this.Coverage : null, feedbackReader);
         }
 
         public ICodeInsightMissHarvester Harvester { get; }
@@ -818,7 +897,7 @@ public sealed class PullRequestCloseObserverTests
             var publishedAt = new DateTimeOffset(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
             List<PrThreadComment> firstThreadComments =
             [
-                new PrThreadComment(
+                new(
                     "Jane Dev",
                     "This retry loop swallows the cancellation token, so a shutdown hangs.",
                     HumanAuthorId,
@@ -839,7 +918,7 @@ public sealed class PullRequestCloseObserverTests
 
             List<PrCommentThread> threads =
             [
-                new PrCommentThread("17", "/src/file.ts", 12, firstThreadComments, status),
+                new("17", "/src/file.ts", 12, firstThreadComments, status),
             ];
 
             if (secondStatus is not null)

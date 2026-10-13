@@ -7,6 +7,16 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Providers.Common;
 
 public sealed class ProviderRestPagerTests
 {
+    [Theory]
+    [InlineData(true, null)]
+    [InlineData(null, 3)]
+    public async Task StrictEnumerationRejectsEmptyPageWithOutstandingProviderContinuation(bool? hasMore, int? total)
+    {
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ProviderRestPager.LoadAllAsync<string>(
+            (_, _, _) => Task.FromResult(new ProviderRestPager.RestPage<string>([], hasMore, total)),
+            item => item, "feedback", CancellationToken.None, requireComplete: true));
+    }
+
     [Fact]
     public async Task LoadAllAsync_ProviderReportsAnotherPage_ReturnsTheUnionOfEveryPage()
     {
@@ -27,7 +37,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 3);
+            3);
 
         Assert.Equal([1, 2], requestedPages);
         Assert.Equal(["a1", "a2", "a3", "b1", "b2"], items);
@@ -48,7 +58,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 3);
+            3);
 
         Assert.Equal(1, requestCount);
         Assert.Equal(["only"], items);
@@ -78,7 +88,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 10);
+            10);
 
         Assert.Equal([1, 2, 3], requestedPages);
         Assert.Equal(["p1a", "p1b", "p2a", "p2b", "p3a"], items);
@@ -97,7 +107,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 2);
+            2);
 
         Assert.Equal(["a", "b", "c"], items);
     }
@@ -117,7 +127,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 2));
+            2));
 
         // Stopped at the repeat rather than spinning to the bound.
         Assert.Equal(2, requestCount);
@@ -140,8 +150,8 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 1,
-            maxPages: 4));
+            1,
+            4));
 
         Assert.Equal(4, page);
         Assert.Contains("exceeds the 4 items", exception.Message, StringComparison.Ordinal);
@@ -159,7 +169,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 2);
+            2);
 
         Assert.Equal(["a1", "a2"], items);
     }
@@ -172,7 +182,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 2);
+            2);
 
         Assert.Null(items);
     }
@@ -185,7 +195,7 @@ public sealed class ProviderRestPagerTests
             item => item,
             "the collection",
             CancellationToken.None,
-            pageSize: 2);
+            2);
 
         Assert.Equal(["a"], items!);
     }

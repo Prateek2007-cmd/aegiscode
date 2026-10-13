@@ -175,6 +175,14 @@ public interface IAiProviderDriver
         ProviderModelDescriptor model,
         string protocolMode);
 
+    /// <summary>Whether the selected transport can apply low reasoning effort to a model that advertises it.</summary>
+    /// <param name="protocolMode">The protocol selected for the chat binding.</param>
+    /// <remarks>Model support must also be established before the caller requests this effort.</remarks>
+    bool SupportsLowReasoningEffort(string protocolMode)
+    {
+        return false;
+    }
+
     /// <summary>Creates an embedding generator for one resolved model binding.</summary>
     IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(
         ProviderEndpoint endpoint,

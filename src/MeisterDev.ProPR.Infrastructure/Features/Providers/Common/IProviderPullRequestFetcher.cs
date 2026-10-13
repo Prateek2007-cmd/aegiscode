@@ -11,6 +11,12 @@ internal interface IProviderPullRequestFetcher
 {
     ScmProvider Provider { get; }
 
+    Task<IReadOnlyList<PrCommentThread>> FetchFeedbackThreadsAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId, Guid clientId, CancellationToken ct = default)
+    {
+        return this.FetchThreadsAsync(organizationUrl, projectId, repositoryId, pullRequestId, clientId, ct);
+    }
+
     Task<PullRequest> FetchAsync(
         string organizationUrl,
         string projectId,

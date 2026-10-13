@@ -201,6 +201,9 @@ public sealed class RelayChatRuntime : IResolvedAiChatRuntime
 
     public IChatClient ChatClient { get; }
 
+    /// <inheritdoc />
+    public bool SupportsLowReasoningEffort => this._binding.SupportsLowReasoningEffort;
+
     /// <summary>
     ///     What the relay supports. Whole completions only: a provider-managed session or a background
     ///     response would be held on the control plane's connection rather than this one, and claiming

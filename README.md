@@ -28,7 +28,8 @@ requests come in or on demand from CI.
 - **Self-hosted.** You run the whole stack. Provider and AI credentials are scoped per client and
   protected at rest.
 - **Every decision is on the record.** Reviews, AI calls, tool calls, filter decisions and timing are
-  stored, and the management UI shows them.
+  stored, and the management UI shows them. Verification-withheld findings remain internal evidence;
+  enabled Code Insights collection records their nonpublication without assigning outcome credit.
 - **Tuned for cost and relevance.** Token-aware reviews, per-file passes and relevance filtering limit
   what a review sends to the model and what it posts back.
 

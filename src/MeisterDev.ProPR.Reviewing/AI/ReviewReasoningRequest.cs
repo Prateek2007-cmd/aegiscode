@@ -104,6 +104,24 @@ internal static class ReviewReasoningRequest
             chatOptions.Temperature = null;
         }
 
+        if (stateWhenNothingIsAsked)
+        {
+            // Resolved and relayed requests must carry effort to both OpenAI transports. Chat Completions
+            // reads the standard setting because its adapter does not accept Responses options.
+            chatOptions.Reasoning = effortLevel is null
+                ? null
+                : new ReasoningOptions
+                {
+                    Effort = reasoningEffort switch
+                    {
+                        ReviewReasoningEffort.Low => ReasoningEffort.Low,
+                        ReviewReasoningEffort.Medium => ReasoningEffort.Medium,
+                        ReviewReasoningEffort.High => ReasoningEffort.High,
+                        _ => (ReasoningEffort?)null,
+                    },
+                };
+        }
+
         chatOptions.RawRepresentationFactory =
             new ShapedReasoningRequest(captureReasoning, reasoningEffort, effortLevel).Build;
 

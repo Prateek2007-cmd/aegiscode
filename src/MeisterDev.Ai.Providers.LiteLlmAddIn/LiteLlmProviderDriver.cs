@@ -236,6 +236,14 @@ public sealed class LiteLlmProviderDriver : IAiProviderDriver
     }
 
     /// <inheritdoc />
+    public bool SupportsLowReasoningEffort(string protocolMode)
+    {
+        return ProviderVocabulary.ValuesEqual(protocolMode, ProviderDeclaredProtocolModes.Auto)
+               || ProviderVocabulary.ValuesEqual(protocolMode, ResponsesProtocol)
+               || ProviderVocabulary.ValuesEqual(protocolMode, ChatCompletionsProtocol);
+    }
+
+    /// <inheritdoc />
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(
         ProviderEndpoint endpoint,
         ProviderModelDescriptor model,

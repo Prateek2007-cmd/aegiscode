@@ -55,6 +55,11 @@ public interface IPostedCommentOriginStore
         long pullRequestId,
         CancellationToken ct = default);
 
+    /// <summary>Separates matching captured-source origins from origins whose source cannot be verified.</summary>
+    Task<PostedCommentOriginSourceSnapshot> GetOriginsForProviderSourceAsync(
+        Guid clientId, string repositoryId, long pullRequestId,
+        MeisterDev.ProPR.Domain.Enums.ScmProvider provider, string providerScope, CancellationToken ct = default);
+
     /// <summary>
     ///     Returns which of the supplied <paramref name="jobIds" /> already have a provenance row, so a caller
     ///     rebuilding lost attribution can tell what is genuinely missing from what is merely already there.
@@ -111,3 +116,8 @@ public readonly record struct PostedCommentOriginRow(
     string? ProviderThreadId,
     string ProviderCommentId,
     Guid JobId);
+
+/// <summary>Provider-qualified ownership evidence and retained receipts whose captured source is unavailable.</summary>
+public sealed record PostedCommentOriginSourceSnapshot(
+    IReadOnlyList<PostedCommentOriginRow> Matched,
+    IReadOnlyList<PostedCommentOriginRow> Unverifiable);

@@ -18,16 +18,26 @@ internal static class CodeInsightAggregateWriteLock
     {
         if (db.Database.IsNpgsql())
         {
-            var hash = SHA256.HashData(
-                JsonSerializer.SerializeToUtf8Bytes(
-                    new
-                    {
-                        key.ClientId,
-                        key.RepositoryId,
-                        key.PullRequestId
-                    }));
-            var lockId = BinaryPrimitives.ReadInt64LittleEndian(hash);
-            await PostgresAdvisoryLocks.AcquireTransactionAsync(db, lockId, ct);
+            await PostgresAdvisoryLocks.AcquireTransactionAsync(db, LockId(key), ct);
         }
+    }
+
+    /// <summary>Skips an active writer when the caller already holds the aggregate row lock.</summary>
+    internal static async Task<bool> TryAcquireAsync(MeisterProPRDbContext db, CodeInsightPullRequestKey key, CancellationToken ct)
+    {
+        return !db.Database.IsNpgsql() || await db.Database.SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock({LockId(key)}) AS \"Value\"").SingleAsync(ct);
+    }
+
+    private static long LockId(CodeInsightPullRequestKey key)
+    {
+        var hash = SHA256.HashData(
+            JsonSerializer.SerializeToUtf8Bytes(
+                new
+                {
+                    key.ClientId,
+                    key.RepositoryId,
+                    key.PullRequestId
+                }));
+        return BinaryPrimitives.ReadInt64LittleEndian(hash);
     }
 }

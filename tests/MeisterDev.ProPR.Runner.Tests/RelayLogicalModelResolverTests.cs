@@ -16,6 +16,22 @@ namespace MeisterDev.ProPR.Runner.Tests;
 /// </summary>
 public sealed class RelayLogicalModelResolverTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AResolvedModel_CarriesTheLowEffortSupportTheManifestVouchesFor(bool supported)
+    {
+        var manifest = RunnerManifests.Sample() with
+        {
+            DefaultModel = RunnerManifests.Model("reviewer-default", "None") with { SupportsLowReasoningEffort = supported },
+        };
+        var resolver = CreateResolver(manifest, _ => Substitute.For<IChatClient>());
+
+        var resolved = await resolver.ResolveChatRuntimeAsync(Guid.NewGuid(), "reviewer-default");
+
+        Assert.Equal(supported, resolved.Runtime.SupportsLowReasoningEffort);
+    }
+
     [Fact]
     public async Task APassModel_ResolvesToItsOwnRelayAndItsOwnEffort()
     {

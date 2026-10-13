@@ -3,14 +3,13 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using MeisterDev.ProPR.Application.Interfaces;
-using MeisterDev.ProPR.Domain.Entities;
-using MeisterDev.ProPR.Domain.Enums;
-using MeisterDev.ProPR.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore;
 using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.CodeInsights.Ports;
 using MeisterDev.ProPR.CodeInsights.Survival;
 using MeisterDev.ProPR.CodeInsights.Taxonomy;
+using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using static MeisterDev.ProPR.CodeInsights.Persistence.CodeInsightProviderScopeLookup;
 using static MeisterDev.ProPR.CodeInsights.Persistence.CodeInsightPullRequestPersistence;
 
@@ -34,233 +33,7 @@ public sealed class CodeInsightFindingStore(
 {
     private const string FindingMessagePurpose = "code-insight-finding-message";
 
-    public Task TouchPullRequestAsync(
-        CodeInsightPullRequestKey key,
-        string pullRequestState,
-        DateTimeOffset lastActivityAt,
-        string? repositoryName = null,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(key);
-
-        return this.WithDbAsync(
-            async db =>
-            {
-                await GetOrCreatePullRequestAsync(db, key, pullRequestState, lastActivityAt, ct, repositoryName);
-                await db.SaveChangesAsync(ct);
-            },
-            ct);
-    }
-
-    public Task<int> MaterialiseFindingsAsync(
-        CodeInsightPullRequestKey key,
-        Guid jobId,
-        string revisionKey,
-        DateTimeOffset observedAt,
-        IReadOnlyList<CodeInsightFindingSnapshot> findings,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(key);
-        ArgumentException.ThrowIfNullOrWhiteSpace(revisionKey);
-        ArgumentNullException.ThrowIfNull(findings);
-
-        if (findings.Count == 0)
-        {
-            return Task.FromResult(0);
-        }
-
-        return this.WithDbAsync(
-            async db =>
-            {
-                var pullRequest = await GetOrCreatePullRequestAsync(db, key, null, observedAt, ct);
-
-                // Load the increment's already-materialised records once and match on the natural key, so a
-                // re-processed event refreshes them in place. Recreating them would hand out new surrogate
-                // identifiers and orphan every tag, disposition, and memory link already pointing at the old
-                // ones.
-                var existing = await db.CodeInsightFindings
-                    .Where(candidate => candidate.CodeInsightPullRequestId == pullRequest.Id
-                                        && candidate.RevisionKey == revisionKey)
-                    .ToDictionaryAsync(candidate => candidate.Ordinal, ct);
-
-                // The previous increment's findings, with the chain each belongs to. A finding that restates one
-                // of them continues its chain; anything else starts a new one. This is what turns per-increment
-                // rows into an answer to "was it still being raised when the pull request finished".
-                var earlier = await LoadPreviousIncrementAsync(db, pullRequest.Id, revisionKey, ct);
-                var continuedChains = new HashSet<Guid>();
-
-                var now = DateTimeOffset.UtcNow;
-                var created = 0;
-
-                foreach (var finding in findings)
-                {
-                    var encryptedMessage = secretProtectionCodec.Protect(finding.Message, FindingMessagePurpose);
-
-                    if (existing.TryGetValue(finding.Ordinal, out var current))
-                    {
-                        CodeInsightFindingPublicationUpdater.Apply(db, current, finding, now);
-                        continue;
-                    }
-
-                    var continuedChain = FindingChainMatcher.FindContinuedChain(
-                        finding.FilePath,
-                        finding.Message,
-                        earlier,
-                        continuedChains);
-
-                    if (continuedChain is not null)
-                    {
-                        continuedChains.Add(continuedChain.Value);
-                    }
-
-                    db.CodeInsightFindings.Add(
-                        new CodeInsightFinding
-                        {
-                            Id = Guid.CreateVersion7(),
-                            CodeInsightPullRequestId = pullRequest.Id,
-                            JobId = jobId,
-                            RevisionKey = revisionKey,
-                            FindingChainId = continuedChain ?? Guid.CreateVersion7(),
-                            Ordinal = finding.Ordinal,
-                            FilePath = finding.FilePath,
-                            LineNumber = finding.LineNumber,
-                            Severity = finding.Severity,
-                            EncryptedMessage = encryptedMessage,
-                            OriginPassKind = finding.OriginPassKind,
-                            OriginPassIndex = finding.OriginPassIndex,
-                            OriginPassLens = finding.OriginPassLens,
-                            OriginPassShadow = finding.OriginPassShadow,
-                            OriginModelId = finding.OriginModelId,
-                            OriginLogicalModelName = finding.OriginLogicalModelName,
-                            OriginSymbolName = finding.OriginSymbolName,
-                            OriginSymbolKind = finding.OriginSymbolKind,
-                            ScopeRelation = finding.ScopeRelation,
-                            SourceReadGrounding = finding.SourceReadGrounding,
-                            ProviderThreadId = finding.ProviderThreadId,
-                            ProviderCommentId = finding.ProviderCommentId,
-                            ProviderScope = finding.ProviderScope,
-                            PerformanceEvidenceUpdatedAt = now,
-                            PublicationState = finding.PublicationState,
-                            PublicationReason = finding.PublicationReason,
-                            MatchedProviderThreadId = finding.MatchedProviderThreadId,
-                            DuplicateState = finding.DuplicateState,
-                            DuplicateOfPublicationId = finding.DuplicateOfPublicationId,
-                            DuplicateVerificationSource = finding.DuplicateVerificationSource,
-                            DuplicateVerificationConfidence = finding.DuplicateVerificationConfidence,
-                            DuplicateVerifiedAt = finding.DuplicateVerifiedAt,
-                            ObservedAt = observedAt,
-                            CreatedAt = now,
-                        });
-                    created++;
-                }
-
-                await db.SaveChangesAsync(ct);
-
-                // The newest increment collected, which a chain's fate is judged against. Derived from the
-                // rows rather than assumed to be the one just written: increments can be re-processed out of
-                // order, and letting an older one claim to be newest would make every persisting chain look
-                // abandoned.
-                pullRequest.LatestRevisionKey = await ResolveLatestRevisionKeyAsync(db, pullRequest.Id, ct);
-                await db.SaveChangesAsync(ct);
-
-                return created;
-            },
-            ct);
-    }
-
-    /// <summary>
-    ///     Loads the findings of the increment immediately before <paramref name="revisionKey" />, decrypted, with
-    ///     the chain each already belongs to.
-    /// </summary>
-    /// <remarks>
-    ///     Only the previous increment, not the whole history. A problem that was raised, disappeared for an
-    ///     increment, and came back is a new chain, which is the honest reading: the reviewer stopped reporting it
-    ///     and started again, and treating that as one unbroken chain would hide exactly the flakiness this
-    ///     measurement exists to show.
-    /// </remarks>
-    private async Task<List<FindingChainCandidate>> LoadPreviousIncrementAsync(
-        MeisterProPRDbContext db,
-        Guid aggregateId,
-        string revisionKey,
-        CancellationToken ct)
-    {
-        var previousKey = await db.CodeInsightFindings
-            .Where(finding => finding.CodeInsightPullRequestId == aggregateId && finding.RevisionKey != revisionKey)
-            .OrderByDescending(finding => finding.ObservedAt)
-            .Select(finding => finding.RevisionKey)
-            .FirstOrDefaultAsync(ct);
-
-        if (string.IsNullOrEmpty(previousKey))
-        {
-            return [];
-        }
-
-        var rows = await db.CodeInsightFindings
-            .Where(finding => finding.CodeInsightPullRequestId == aggregateId && finding.RevisionKey == previousKey)
-            .Select(finding => new
-            {
-                finding.FindingChainId,
-                finding.FilePath,
-                finding.EncryptedMessage,
-            })
-            .ToListAsync(ct);
-
-        return rows
-            .Select(row => new FindingChainCandidate(
-                row.FindingChainId,
-                row.FilePath,
-                secretProtectionCodec.Unprotect(row.EncryptedMessage, FindingMessagePurpose)))
-            .ToList();
-    }
-
-    /// <summary>
-    ///     Returns the revision key of the pull request's newest collected increment.
-    /// </summary>
-    /// <remarks>
-    ///     A revision key is opaque (an iteration number, a commit sha, or a patch identity depending on the
-    ///     provider) so it cannot be ordered by value. Observation time is the one ordering that holds across all
-    ///     of them, and reading it back from the rows makes the answer independent of the order increments arrived
-    ///     in.
-    /// </remarks>
-    private static async Task<string> ResolveLatestRevisionKeyAsync(
-        MeisterProPRDbContext db,
-        Guid aggregateId,
-        CancellationToken ct)
-    {
-        var latest = await db.CodeInsightFindings
-            .Where(finding => finding.CodeInsightPullRequestId == aggregateId)
-            .OrderByDescending(finding => finding.ObservedAt)
-            .Select(finding => finding.RevisionKey)
-            .FirstOrDefaultAsync(ct);
-
-        return latest ?? string.Empty;
-    }
-
-    public Task<IReadOnlyList<CodeInsightFindingView>> GetFindingsForPullRequestAsync(
-        CodeInsightPullRequestKey key,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(key);
-
-        return this.WithDbAsync<IReadOnlyList<CodeInsightFindingView>>(
-            async db =>
-            {
-                var pullRequestId = await FindPullRequestIdAsync(db, key, ct);
-                if (pullRequestId is null)
-                {
-                    return [];
-                }
-
-                var records = await db.CodeInsightFindings
-                    .Where(finding => finding.CodeInsightPullRequestId == pullRequestId.Value)
-                    .OrderBy(finding => finding.RevisionKey)
-                    .ThenBy(finding => finding.Ordinal)
-                    .ToListAsync(ct);
-
-                return records.Select(this.ToView).ToList();
-            },
-            ct);
-    }
+    private readonly CodeInsightMissStore _missStore = new(dbContext, secretProtectionCodec, contextFactory);
 
     public Task<IReadOnlyList<CodeInsightFindingClassificationView>> GetClassificationsForJobAsync(
         Guid jobId,
@@ -337,64 +110,6 @@ public sealed class CodeInsightFindingStore(
             ct);
     }
 
-    private static CodeInsightClassificationStatus ResolveStatus(
-        DateTimeOffset? classifiedAt,
-        int attempts,
-        int maxAttempts)
-    {
-        if (classifiedAt is not null)
-        {
-            return CodeInsightClassificationStatus.Classified;
-        }
-
-        // Still retryable means "not yet", which a caller must be able to tell apart from "the model could not
-        // place this": otherwise a freshly finished review looks like one with nothing to say about it.
-        return attempts < maxAttempts
-            ? CodeInsightClassificationStatus.Pending
-            : CodeInsightClassificationStatus.Unclassifiable;
-    }
-
-    public Task<CodeInsightFindingView?> FindByProviderThreadAsync(
-        Guid clientId,
-        string repositoryId,
-        long pullRequestId,
-        string providerThreadId,
-        CancellationToken ct = default,
-        string? providerScope = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(providerThreadId);
-
-        return this.WithDbAsync(
-            async db =>
-            {
-                var key = new CodeInsightPullRequestKey(clientId, repositoryId, pullRequestId);
-                var aggregateId = await FindPullRequestIdAsync(db, key, ct);
-                if (aggregateId is null)
-                {
-                    return null;
-                }
-
-                var candidates = db.CodeInsightFindings.Where(finding =>
-                    finding.CodeInsightPullRequestId == aggregateId.Value && finding.ProviderThreadId == providerThreadId);
-                var scopes = await candidates.Select(row => row.ProviderScope).Distinct().ToListAsync(ct);
-                if (string.IsNullOrWhiteSpace(providerScope) && scopes.Count > 1)
-                {
-                    return null;
-                }
-
-                if (!string.IsNullOrWhiteSpace(providerScope))
-                {
-                    candidates = candidates.Where(row => row.ProviderScope == providerScope);
-                }
-
-                var record = await candidates.OrderBy(finding => finding.CreatedAt).ThenBy(finding => finding.Id).FirstOrDefaultAsync(ct);
-
-                return record is null ? null : this.ToView(record);
-            },
-            ct);
-    }
-
     public Task<IReadOnlyList<CodeInsightUnclassifiedFinding>> ListUnclassifiedAsync(
         int limit,
         int maxAttempts,
@@ -437,7 +152,7 @@ public sealed class CodeInsightFindingStore(
                     .Select(pullRequest => new
                     {
                         pullRequest.Id,
-                        pullRequest.ClientId
+                        pullRequest.ClientId,
                     })
                     .ToDictionaryAsync(pullRequest => pullRequest.Id, pullRequest => pullRequest.ClientId, ct);
 
@@ -625,42 +340,310 @@ public sealed class CodeInsightFindingStore(
             ct);
     }
 
-    private readonly CodeInsightMissStore _missStore = new(dbContext, secretProtectionCodec, contextFactory);
+    public Task TouchPullRequestAsync(
+        CodeInsightPullRequestKey key,
+        string pullRequestState,
+        DateTimeOffset lastActivityAt,
+        string? repositoryName = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        return this.WithDbAsync(
+            async db =>
+            {
+                await GetOrCreatePullRequestAsync(db, key, pullRequestState, lastActivityAt, ct, repositoryName);
+                await db.SaveChangesAsync(ct);
+            },
+            ct);
+    }
+
+    public Task<int> MaterialiseFindingsAsync(
+        CodeInsightPullRequestKey key,
+        Guid jobId,
+        string revisionKey,
+        DateTimeOffset observedAt,
+        IReadOnlyList<CodeInsightFindingSnapshot> findings,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentException.ThrowIfNullOrWhiteSpace(revisionKey);
+        ArgumentNullException.ThrowIfNull(findings);
+
+        if (findings.Count == 0)
+        {
+            return Task.FromResult(0);
+        }
+
+        return this.WithDbAsync(
+            async db =>
+            {
+                var pullRequest = await GetOrCreatePullRequestAsync(db, key, null, observedAt, ct);
+
+                // Load the increment's already-materialized records once and match on the natural key, so a
+                // re-processed event refreshes them in place. Recreating them would hand out new surrogate
+                // identifiers and orphan every tag, disposition, and memory link already pointing at the old
+                // ones.
+                var existing = await db.CodeInsightFindings
+                    .Where(candidate => candidate.CodeInsightPullRequestId == pullRequest.Id
+                                        && candidate.RevisionKey == revisionKey)
+                    .ToDictionaryAsync(candidate => candidate.Ordinal, ct);
+
+                // The previous increment's findings, with the chain each belongs to. A finding that restates one
+                // of them continues its chain; anything else starts a new one. This is what turns per-increment
+                // rows into an answer to "was it still being raised when the pull request finished".
+                var earlier = await this.LoadPreviousIncrementAsync(db, pullRequest.Id, revisionKey, ct);
+                var continuedChains = new HashSet<Guid>();
+
+                var now = DateTimeOffset.UtcNow;
+                var created = 0;
+
+                foreach (var finding in findings)
+                {
+                    var encryptedMessage = secretProtectionCodec.Protect(finding.Message, FindingMessagePurpose);
+
+                    if (existing.TryGetValue(finding.Ordinal, out var current))
+                    {
+                        CodeInsightFindingPublicationUpdater.Apply(db, current, finding, now);
+                        continue;
+                    }
+
+                    var continuedChain = FindingChainMatcher.FindContinuedChain(
+                        finding.FilePath,
+                        finding.Message,
+                        earlier,
+                        continuedChains);
+
+                    if (continuedChain is not null)
+                    {
+                        continuedChains.Add(continuedChain.Value);
+                    }
+
+                    db.CodeInsightFindings.Add(
+                        new CodeInsightFinding
+                        {
+                            Id = Guid.CreateVersion7(),
+                            CodeInsightPullRequestId = pullRequest.Id,
+                            JobId = jobId,
+                            RevisionKey = revisionKey,
+                            FindingChainId = continuedChain ?? Guid.CreateVersion7(),
+                            Ordinal = finding.Ordinal,
+                            FilePath = finding.FilePath,
+                            LineNumber = finding.LineNumber,
+                            Severity = finding.Severity,
+                            EncryptedMessage = encryptedMessage,
+                            OriginPassKind = finding.OriginPassKind,
+                            OriginPassIndex = finding.OriginPassIndex,
+                            OriginPassLens = finding.OriginPassLens,
+                            OriginPassShadow = finding.OriginPassShadow,
+                            OriginModelId = finding.OriginModelId,
+                            OriginLogicalModelName = finding.OriginLogicalModelName,
+                            OriginSymbolName = finding.OriginSymbolName,
+                            OriginSymbolKind = finding.OriginSymbolKind,
+                            ScopeRelation = finding.ScopeRelation,
+                            SourceReadGrounding = finding.SourceReadGrounding,
+                            ProviderThreadId = finding.ProviderThreadId,
+                            ProviderCommentId = finding.ProviderCommentId,
+                            ProviderScope = finding.ProviderScope,
+                            PerformanceEvidenceUpdatedAt = now,
+                            PublicationState = finding.PublicationState,
+                            PublicationReason = finding.PublicationReason,
+                            MatchedProviderThreadId = finding.MatchedProviderThreadId,
+                            DuplicateState = finding.DuplicateState,
+                            DuplicateOfPublicationId = finding.DuplicateOfPublicationId,
+                            DuplicateVerificationSource = finding.DuplicateVerificationSource,
+                            DuplicateVerificationConfidence = finding.DuplicateVerificationConfidence,
+                            DuplicateVerifiedAt = finding.DuplicateVerifiedAt,
+                            ObservedAt = observedAt,
+                            CreatedAt = now,
+                        });
+                    created++;
+                }
+
+                await db.SaveChangesAsync(ct);
+
+                // The newest increment collected, which a chain's fate is judged against. Derived from the
+                // rows rather than assumed to be the one just written: increments can be re-processed out of
+                // order, and letting an older one claim to be newest would make every persisting chain look
+                // abandoned.
+                pullRequest.LatestRevisionKey = await ResolveLatestRevisionKeyAsync(db, pullRequest.Id, ct);
+                await db.SaveChangesAsync(ct);
+
+                return created;
+            },
+            ct);
+    }
+
+    public Task<IReadOnlyList<CodeInsightFindingView>> GetFindingsForPullRequestAsync(
+        CodeInsightPullRequestKey key,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        return this.WithDbAsync<IReadOnlyList<CodeInsightFindingView>>(
+            async db =>
+            {
+                var pullRequestId = await FindPullRequestIdAsync(db, key, ct);
+                if (pullRequestId is null)
+                {
+                    return [];
+                }
+
+                var records = await db.CodeInsightFindings
+                    .Where(finding => finding.CodeInsightPullRequestId == pullRequestId.Value)
+                    .OrderBy(finding => finding.RevisionKey)
+                    .ThenBy(finding => finding.Ordinal)
+                    .ToListAsync(ct);
+
+                return records.Select(this.ToView).ToList();
+            },
+            ct);
+    }
+
+    public Task<IReadOnlyList<string>> GetHistoricalMissThreadIdsAsync(CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(providerScope);
+
+        return this.WithDbAsync<IReadOnlyList<string>>(
+            async db =>
+            {
+                var id = await FindPullRequestIdAsync(db, key, ct);
+                if (id is null)
+                {
+                    return [];
+                }
+
+                return await db.CodeInsightMisses.AsNoTracking().Where(m => m.CodeInsightPullRequestId == id.Value
+                                                                            && m.ProviderScope == providerScope)
+                    .Select(m => m.ProviderThreadId).ToListAsync(ct);
+            }, ct);
+    }
+
+    public Task<IReadOnlyList<CodeInsightNativeFindingSnapshot>> GetNativeFeedbackFindingsAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(providerScope);
+
+        return this.WithDbAsync<IReadOnlyList<CodeInsightNativeFindingSnapshot>>(
+            async db =>
+            {
+                var id = await FindPullRequestIdAsync(db, key, ct);
+                if (id is null)
+                {
+                    return [];
+                }
+
+                var records = await db.CodeInsightFindings.AsNoTracking().Where(f => f.CodeInsightPullRequestId == id.Value &&
+                                                                                     f.ProviderScope == providerScope).OrderBy(f => f.CreatedAt)
+                    .ThenBy(f => f.Id).ToListAsync(ct);
+                return records.Select(f => new CodeInsightNativeFindingSnapshot(
+                    this.ToView(f), f.PublicationState,
+                    f.CurrentDisposition, f.OutcomeObservedAt)).ToList();
+            }, ct);
+    }
+
+    public Task<CodeInsightFindingView?> FindByProviderThreadAsync(
+        Guid clientId,
+        string repositoryId,
+        long pullRequestId,
+        string providerThreadId,
+        CancellationToken ct = default,
+        string? providerScope = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repositoryId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerThreadId);
+
+        return this.WithDbAsync(
+            async db =>
+            {
+                var key = new CodeInsightPullRequestKey(clientId, repositoryId, pullRequestId);
+                var aggregateId = await FindPullRequestIdAsync(db, key, ct);
+                if (aggregateId is null)
+                {
+                    return null;
+                }
+
+                var candidates = db.CodeInsightFindings.Where(finding =>
+                    finding.CodeInsightPullRequestId == aggregateId.Value && finding.ProviderThreadId == providerThreadId);
+                var scopes = await candidates.Select(row => row.ProviderScope).Distinct().ToListAsync(ct);
+                if (string.IsNullOrWhiteSpace(providerScope) && scopes.Count > 1)
+                {
+                    return null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(providerScope))
+                {
+                    candidates = candidates.Where(row => row.ProviderScope == providerScope);
+                }
+
+                var record = await candidates.OrderBy(finding => finding.CreatedAt).ThenBy(finding => finding.Id).FirstOrDefaultAsync(ct);
+
+                return record is null ? null : this.ToView(record);
+            },
+            ct);
+    }
+
+    public Task<string?> ResolveProviderScopeAsync(Guid clientId, Guid? connectionId, CancellationToken ct = default)
+    {
+        return this.WithDbAsync<string?>(async db => await ResolveMissProviderScopeAsync(db, clientId, connectionId, ct), ct);
+    }
 
     public Task<CodeInsightThreadEligibilityObservation> ObserveThreadEligibilityAsync(
         CodeInsightPullRequestKey key, string threadId, string providerScope, bool excludedFromHumanMisses, DateTimeOffset observedAt,
-        CancellationToken ct = default) =>
-        this._missStore.ObserveThreadEligibilityAsync(key, threadId, providerScope, excludedFromHumanMisses, observedAt, ct);
+        CancellationToken ct = default, CodeInsightObservationMode mode = CodeInsightObservationMode.Current)
+    {
+        return this._missStore.ObserveThreadEligibilityAsync(key, threadId, providerScope, excludedFromHumanMisses, observedAt, ct, mode);
+    }
 
     public Task<CodeInsightThreadEligibilityObservation?> GetThreadEligibilityAsync(
-        CodeInsightPullRequestKey key, string threadId, string providerScope, CancellationToken ct = default) =>
-        this._missStore.GetThreadEligibilityAsync(key, threadId, providerScope, ct);
+        CodeInsightPullRequestKey key, string threadId, string providerScope, CancellationToken ct = default)
+    {
+        return this._missStore.GetThreadEligibilityAsync(key, threadId, providerScope, ct);
+    }
 
-    public Task<bool> RecordMissAsync(CodeInsightPullRequestKey key, CodeInsightMissRecord miss, CancellationToken ct = default) =>
-        this._missStore.RecordMissAsync(key, miss, ct);
+    public Task<bool> RecordMissAsync(CodeInsightPullRequestKey key, CodeInsightMissRecord miss, CancellationToken ct = default)
+    {
+        return this._missStore.RecordMissAsync(key, miss, ct);
+    }
 
     public Task<CodeInsightMissAcknowledgment> ObserveUnchangedMissAsync(
         CodeInsightPullRequestKey key, string threadId, string fingerprint, DateTimeOffset observedAt, CancellationToken ct = default,
-        Guid? connectionId = null, string? dimensionClassifierVersion = null, bool excludedAsOwnFinding = false, string? providerScope = null) =>
-        this._missStore.ObserveUnchangedMissAsync(
+        Guid? connectionId = null, string? dimensionClassifierVersion = null, bool excludedAsOwnFinding = false, string? providerScope = null)
+    {
+        return this._missStore.ObserveUnchangedMissAsync(
             key, threadId, fingerprint, observedAt, ct, connectionId, dimensionClassifierVersion, excludedAsOwnFinding, providerScope);
+    }
 
     public Task<CodeInsightMissObservation?> GetObservationAsync(
-        CodeInsightPullRequestKey key, string threadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null) =>
-        this._missStore.GetObservationAsync(key, threadId, ct, connectionId, providerScope);
+        CodeInsightPullRequestKey key, string threadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null)
+    {
+        return this._missStore.GetObservationAsync(key, threadId, ct, connectionId, providerScope);
+    }
+
+    public Task<CodeInsightEvidenceAcknowledgment> TryPreserveHistoricalMissAsync(
+        CodeInsightPullRequestKey key,
+        CodeInsightHistoricalMissObservation observation, CancellationToken ct = default)
+    {
+        return this._missStore.TryPreserveHistoricalMissAsync(key, observation, ct);
+    }
 
     public Task<bool?> GetJudgedThreadResolvedAsync(
-        CodeInsightPullRequestKey key, string providerThreadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null) =>
-        this._missStore.GetJudgedThreadResolvedAsync(key, providerThreadId, ct, connectionId, providerScope);
+        CodeInsightPullRequestKey key, string providerThreadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null)
+    {
+        return this._missStore.GetJudgedThreadResolvedAsync(key, providerThreadId, ct, connectionId, providerScope);
+    }
 
-    public Task<bool> RejudgeMissAsync(CodeInsightPullRequestKey key, CodeInsightMissRecord miss, CancellationToken ct = default) =>
-        this._missStore.RejudgeMissAsync(key, miss, ct);
+    public Task<bool> RejudgeMissAsync(CodeInsightPullRequestKey key, CodeInsightMissRecord miss, CancellationToken ct = default)
+    {
+        return this._missStore.RejudgeMissAsync(key, miss, ct);
+    }
 
-    public Task<IReadOnlyList<CodeInsightMissView>> GetMissesForPullRequestAsync(CodeInsightPullRequestKey key, CancellationToken ct = default) =>
-        this._missStore.GetMissesForPullRequestAsync(key, ct);
-
-    public Task<string?> ResolveProviderScopeAsync(Guid clientId, Guid? connectionId, CancellationToken ct = default) =>
-        this.WithDbAsync<string?>(async db => await ResolveMissProviderScopeAsync(db, clientId, connectionId, ct), ct);
+    public Task<IReadOnlyList<CodeInsightMissView>> GetMissesForPullRequestAsync(CodeInsightPullRequestKey key, CancellationToken ct = default)
+    {
+        return this._missStore.GetMissesForPullRequestAsync(key, ct);
+    }
 
     public Task<int> PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default)
     {
@@ -693,6 +676,91 @@ public sealed class CodeInsightFindingStore(
                 return await RemovePullRequestsAsync(db, owned, ct);
             },
             ct);
+    }
+
+    /// <summary>
+    ///     Loads the findings of the increment immediately before <paramref name="revisionKey" />, decrypted, with
+    ///     the chain each already belongs to.
+    /// </summary>
+    /// <remarks>
+    ///     Only the previous increment, not the whole history. A problem that was raised, disappeared for an
+    ///     increment, and came back is a new chain, which is the honest reading: the reviewer stopped reporting it
+    ///     and started again, and treating that as one unbroken chain would hide exactly the flakiness this
+    ///     measurement exists to show.
+    /// </remarks>
+    private async Task<List<FindingChainCandidate>> LoadPreviousIncrementAsync(
+        MeisterProPRDbContext db,
+        Guid aggregateId,
+        string revisionKey,
+        CancellationToken ct)
+    {
+        var previousKey = await db.CodeInsightFindings
+            .Where(finding => finding.CodeInsightPullRequestId == aggregateId && finding.RevisionKey != revisionKey)
+            .OrderByDescending(finding => finding.ObservedAt)
+            .Select(finding => finding.RevisionKey)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrEmpty(previousKey))
+        {
+            return [];
+        }
+
+        var rows = await db.CodeInsightFindings
+            .Where(finding => finding.CodeInsightPullRequestId == aggregateId && finding.RevisionKey == previousKey)
+            .Select(finding => new
+            {
+                finding.FindingChainId,
+                finding.FilePath,
+                finding.EncryptedMessage,
+            })
+            .ToListAsync(ct);
+
+        return rows
+            .Select(row => new FindingChainCandidate(
+                row.FindingChainId,
+                row.FilePath,
+                secretProtectionCodec.Unprotect(row.EncryptedMessage, FindingMessagePurpose)))
+            .ToList();
+    }
+
+    /// <summary>
+    ///     Returns the revision key of the pull request's newest collected increment.
+    /// </summary>
+    /// <remarks>
+    ///     A revision key is opaque (an iteration number, a commit sha, or a patch identity depending on the
+    ///     provider) so it cannot be ordered by value. Observation time is the one ordering that holds across all
+    ///     of them, and reading it back from the rows makes the answer independent of the order increments arrived
+    ///     in.
+    /// </remarks>
+    private static async Task<string> ResolveLatestRevisionKeyAsync(
+        MeisterProPRDbContext db,
+        Guid aggregateId,
+        CancellationToken ct)
+    {
+        var latest = await db.CodeInsightFindings
+            .Where(finding => finding.CodeInsightPullRequestId == aggregateId)
+            .OrderByDescending(finding => finding.ObservedAt)
+            .Select(finding => finding.RevisionKey)
+            .FirstOrDefaultAsync(ct);
+
+        return latest ?? string.Empty;
+    }
+
+    private static CodeInsightClassificationStatus ResolveStatus(
+        DateTimeOffset? classifiedAt,
+        int attempts,
+        int maxAttempts)
+    {
+        if (classifiedAt is not null)
+        {
+            return CodeInsightClassificationStatus.Classified;
+        }
+
+        // Still retryable means "not yet", which a caller must be able to tell apart from "the model could not
+        // place this": otherwise a freshly finished review looks like one with nothing to say about it.
+        return attempts < maxAttempts
+            ? CodeInsightClassificationStatus.Pending
+            : CodeInsightClassificationStatus.Unclassifiable;
     }
 
     // Purge each pull request in its own transaction: a single SaveChangesAsync removes everything collected

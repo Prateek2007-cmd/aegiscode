@@ -19,6 +19,13 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// </remarks>
 public interface ICodeInsightDispositionService
 {
+    /// <summary>Processes one historical receipt family and positively acknowledges its retained evidence.</summary>
+    Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(
+        CodeInsightNativeFindingSnapshot finding, ThreadResolvedDomainEvent evt, CancellationToken ct = default)
+    {
+        return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
+    }
+
     /// <summary>
     ///     Records the disposition for the finding the resolved thread belongs to. A thread that does not
     ///     correspond to a collected finding (raised before collection was enabled, or authored by a human)

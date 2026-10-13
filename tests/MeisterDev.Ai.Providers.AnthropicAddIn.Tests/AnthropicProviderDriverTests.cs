@@ -16,6 +16,14 @@ namespace MeisterDev.Ai.Providers.AnthropicAddIn.Tests;
 /// </summary>
 public sealed class AnthropicProviderDriverTests
 {
+    [Fact]
+    public void AnUnadvertisedLowEffortTransport_KeepsTheConservativeDefault()
+    {
+        MeisterDev.Ai.Providers.Drivers.IAiProviderDriver driver = Driver();
+
+        Assert.False(driver.SupportsLowReasoningEffort(ProviderDeclaredProtocolModes.Auto));
+    }
+
     // A credential shape another family declares, which a connection holds after it is repointed and is
     // material this family cannot read.
     private const string AnotherFamilysCredential = "meisterdev/azureOpenAi:AzureIdentity";

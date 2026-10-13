@@ -102,7 +102,8 @@ internal sealed class RunnerReviewPipeline : IDisposable
             new EvidenceBackedReviewVerifier(
                 recorder,
                 loggerFactory.CreateLogger<EvidenceBackedReviewVerifier>(),
-                AiConnectionModelCategory.Default));
+                AiConnectionModelCategory.Default,
+                reviewOptions: reviewOptions));
         var invariantFactProviders = new IReviewInvariantFactProvider[]
         {
             new DomainReviewInvariantFactProvider(),

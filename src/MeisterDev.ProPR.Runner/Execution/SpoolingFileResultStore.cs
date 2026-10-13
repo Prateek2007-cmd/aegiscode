@@ -91,6 +91,7 @@ public sealed class SpoolingFileResultStore(ReviewJob job, JobSpool spool) : IRe
                 // next attempt, as a finished file that found nothing, and synthesis treats it as such.
                 result.Comments is { Count: > 0 } ? [.. result.Comments] : null,
                 result.IsExcluded,
-                result.ExclusionReason));
+                result.ExclusionReason,
+                result.WithheldFindings));
     }
 }

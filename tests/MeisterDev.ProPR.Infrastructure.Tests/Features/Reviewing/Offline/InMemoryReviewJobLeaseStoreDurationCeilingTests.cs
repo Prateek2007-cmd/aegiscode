@@ -7,6 +7,8 @@ using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline;
+using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Reviewing.Offline;
 
@@ -18,6 +20,31 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Reviewing.Offline;
 public sealed class InMemoryReviewJobLeaseStoreDurationCeilingTests
 {
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
+
+    [Fact]
+    public async Task CompletionBetweenTheDurationCheckAndConditionalFailureEndsRenewalWithoutCancelingCompletion()
+    {
+        var jobs = new InMemoryReviewJobRepository();
+        var options = Substitute.For<IOptions<ReviewLeaseOptions>>();
+        var store = new InMemoryReviewJobLeaseStore(jobs, options);
+        var job = CreateJob();
+        await jobs.AddAsync(job);
+        var lease = await ClaimAsync(store, job);
+        job.ProcessingStartedAt = DateTimeOffset.UtcNow.AddMinutes(-61);
+        options.Value.Returns(_ =>
+        {
+            jobs.SetResultAsync(job.Id, new ReviewResult("Concurrent completion", [])).GetAwaiter().GetResult();
+            return new ReviewLeaseOptions { MaxReviewDurationMinutes = 60 };
+        });
+
+        var renewal = await store.TryRenewAsync(lease, LeaseDuration);
+
+        Assert.False(renewal.Accepted);
+        Assert.Null(renewal.ExpiresAt);
+        Assert.Equal("Completed", renewal.StopReason.ToString());
+        Assert.Equal(JobStatus.Completed, jobs.GetById(job.Id)!.Status);
+        Assert.Equal("Concurrent completion", jobs.GetById(job.Id)!.Result!.Summary);
+    }
 
     [Fact]
     public async Task TryRenewAsync_WithinTheCeiling_KeepsRenewing()
