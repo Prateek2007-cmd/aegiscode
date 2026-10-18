@@ -34,6 +34,53 @@ public sealed class ReviewArchiveStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RepeatedOrStatusOnlySnapshotPreservesCommentIdentityAndCiphertext()
+    {
+        var key = NewKey();
+        var stamp = DateTimeOffset.UtcNow;
+        var snapshot = new RetainedThreadSnapshot(
+            "thread-1", "a.cs", 1, "Active", stamp,
+            [new RetainedCommentSnapshot("c1", "alice", false, stamp, "Unchanged body")]);
+        await this._store.UpsertThreadAsync(key, snapshot);
+        var original = await this._dbContext.RetainedThreadComments.AsNoTracking().SingleAsync();
+        await this._store.UpsertThreadAsync(key, snapshot with { Status = "Fixed", UpdatedAt = stamp.AddMinutes(1) });
+        var current = await this._dbContext.RetainedThreadComments.AsNoTracking().SingleAsync();
+        Assert.Equal(original.Id, current.Id);
+        Assert.Equal(original.EncryptedText, current.EncryptedText);
+    }
+
+    [Fact]
+    public async Task UnchangedObservationDoesNotExtendSourceActivityOrThreadTimestamps()
+    {
+        var key = NewKey();
+        var activity = DateTimeOffset.UtcNow.AddDays(-3);
+        var snapshot = new RetainedThreadSnapshot(
+            "1", "file.cs", 1, "Fixed", activity,
+            [new RetainedCommentSnapshot("1", "Human", false, activity, "Original concern")]);
+        await this._store.ApplyThreadObservationAsync(key, "Active", activity.AddDays(1), [snapshot]);
+        var initial = await this._dbContext.RetainedPullRequests.AsNoTracking().SingleAsync();
+        await this._store.ApplyThreadObservationAsync(key, "Active", activity.AddDays(2), []);
+        var current = await this._dbContext.RetainedPullRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(activity, initial.LastActivityAt);
+        Assert.Equal(initial.LastActivityAt, current.LastActivityAt);
+        Assert.Equal(activity, (await this._dbContext.RetainedThreads.SingleAsync()).UpdatedAt);
+    }
+
+    [Fact]
+    public async Task ChangedOlderThreadCannotRegressPullRequestActivity()
+    {
+        var key = NewKey();
+        var recent = DateTimeOffset.UtcNow.AddDays(-1);
+        await this._store.ApplyThreadObservationAsync(
+            key, "Active", recent,
+            [new RetainedThreadSnapshot("recent", null, null, "Active", recent, [])]);
+        await this._store.ApplyThreadObservationAsync(
+            key, "Active", recent.AddDays(1),
+            [new RetainedThreadSnapshot("older", null, null, "Fixed", recent.AddDays(-1), [])]);
+        Assert.Equal(recent, (await this._dbContext.RetainedPullRequests.SingleAsync()).LastActivityAt);
+    }
+
+    [Fact]
     public async Task UpsertThreadAsync_RoundTripsThreadAndDecryptsComments()
     {
         var key = NewKey();
@@ -423,6 +470,68 @@ public sealed class ReviewArchiveStoreTests : IDisposable
         Assert.Equal(0, await this._dbContext.RetainedThreads.CountAsync());
         Assert.Equal(0, await this._dbContext.RetainedThreadComments.CountAsync());
         Assert.Equal(2, await this._dbContext.RetainedFileDiffs.CountAsync());
+    }
+
+    [Fact]
+    public async Task UnchangedLegacyPlaintextIsProtectedWhenObserved()
+    {
+        var key = NewKey();
+        var stamp = DateTimeOffset.UtcNow;
+        var snapshot = new RetainedThreadSnapshot(
+            "thread", null, null, "Active", stamp,
+            [new RetainedCommentSnapshot("comment", "alice", false, stamp, "Sensitive body")]);
+        await this._store.UpsertThreadAsync(key, snapshot);
+        var stored = await this._dbContext.RetainedThreadComments.SingleAsync();
+        stored.EncryptedText = "Sensitive body";
+        await this._dbContext.SaveChangesAsync();
+        await this._store.UpsertThreadAsync(key, snapshot);
+        Assert.True(this._codec.IsProtected(stored.EncryptedText));
+        Assert.Equal(
+            "Sensitive body",
+            Assert.Single(Assert.Single(await this._store.GetThreadsForPullRequestAsync(key.ClientId, key.RepositoryId, key.PullRequestId)).Comments).Text);
+    }
+
+    [Fact]
+    public async Task DuplicateIncomingCommentIdsRetainOneCurrentBody()
+    {
+        var key = NewKey();
+        var stamp = DateTimeOffset.UtcNow;
+        var snapshot = new RetainedThreadSnapshot(
+            "thread", null, null, "Active", stamp,
+            [
+                new RetainedCommentSnapshot("comment", "alice", false, stamp, "First body"),
+                new RetainedCommentSnapshot("comment", "alice", false, stamp, "Current body"),
+            ]);
+        await this._store.UpsertThreadAsync(key, snapshot);
+        await this._store.UpsertThreadAsync(key, snapshot);
+        Assert.Single(await this._dbContext.RetainedThreadComments.ToListAsync());
+        Assert.Equal(
+            "Current body",
+            Assert.Single(Assert.Single(await this._store.GetThreadsForPullRequestAsync(key.ClientId, key.RepositoryId, key.PullRequestId)).Comments).Text);
+    }
+
+    [Fact]
+    public async Task DuplicateStoredCommentIdsAreConsolidatedDuringObservation()
+    {
+        var key = NewKey();
+        var stamp = DateTimeOffset.UtcNow;
+        var snapshot = new RetainedThreadSnapshot(
+            "thread", null, null, "Active", stamp,
+            [new RetainedCommentSnapshot("comment", "alice", false, stamp, "Current body")]);
+        await this._store.UpsertThreadAsync(key, snapshot);
+        var stored = await this._dbContext.RetainedThreadComments.SingleAsync();
+        this._dbContext.RetainedThreadComments.Add(
+            new MeisterDev.ProPR.Domain.Entities.RetainedThreadComment
+            {
+                Id = Guid.NewGuid(), RetainedThreadId = stored.RetainedThreadId, CommentId = stored.CommentId,
+                AuthorIdentity = "alice", PublishedAt = stamp, EncryptedText = this._codec.Protect("Older body", "review-archive-thread-comment"),
+            });
+        await this._dbContext.SaveChangesAsync();
+        await this._store.UpsertThreadAsync(key, snapshot);
+        Assert.Single(await this._dbContext.RetainedThreadComments.ToListAsync());
+        Assert.Equal(
+            "Current body",
+            Assert.Single(Assert.Single(await this._store.GetThreadsForPullRequestAsync(key.ClientId, key.RepositoryId, key.PullRequestId)).Comments).Text);
     }
 
     private static PullRequestRetentionKey NewKey()

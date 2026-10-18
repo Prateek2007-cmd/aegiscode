@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 
 namespace MeisterDev.ProPR.Application.Interfaces;
 
@@ -13,6 +14,11 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// </summary>
 public interface IBlockedPullRequestStore
 {
+    /// <summary>Checks provider-equivalent stored coordinates without requiring scan progress.</summary>
+    Task<bool> IsBlockedByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default);
+
     /// <summary>Returns whether the pull request is currently blocked for the client.</summary>
     Task<bool> IsBlockedAsync(
         Guid clientId,

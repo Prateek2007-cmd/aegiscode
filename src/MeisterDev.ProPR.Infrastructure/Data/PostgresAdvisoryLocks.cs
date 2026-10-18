@@ -51,7 +51,27 @@ public static class PostgresAdvisoryLocks
         }
     }
 
-    private sealed class SessionLease(NpgsqlConnection connection, string key) : IAsyncDisposable
+    /// <summary>Tries to lock the caller's open connection without waiting for another session.</summary>
+    /// <remarks>The returned lease releases the lock; the caller retains connection ownership.</remarks>
+    internal static async Task<IAsyncDisposable?> TryAcquireSessionAsync(NpgsqlConnection connection, string key, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            await using var command = new NpgsqlCommand("SELECT pg_try_advisory_lock(hashtextextended(@key, 0))", connection);
+            command.Parameters.AddWithValue("key", key);
+            return await command.ExecuteScalarAsync(ct).ConfigureAwait(false) is true
+                ? new SessionLease(connection, key, false)
+                : null;
+        }
+        catch
+        {
+            await new SessionLease(connection, key, false).DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private sealed class SessionLease(NpgsqlConnection connection, string key, bool ownsConnection = true) : IAsyncDisposable
     {
         private bool _disposed;
 
@@ -81,7 +101,10 @@ public static class PostgresAdvisoryLocks
             }
             finally
             {
-                await connection.DisposeAsync().ConfigureAwait(false);
+                if (ownsConnection)
+                {
+                    await connection.DisposeAsync().ConfigureAwait(false);
+                }
             }
         }
     }

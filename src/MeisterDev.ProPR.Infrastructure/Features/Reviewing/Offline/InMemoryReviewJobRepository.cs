@@ -34,6 +34,25 @@ public sealed class InMemoryReviewJobRepository(IEnumerable<IReviewSourcePolicy>
     /// </summary>
     private readonly object _statusLock = new();
 
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ReviewJob>> FindActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default)
+    {
+        lock (this._statusLock)
+        {
+            IReadOnlyList<ReviewJob> matches = provider != ScmProvider.AzureDevOps
+                ? []
+                : this._jobs.Values.Where(job =>
+                    job.ClientId == clientId && job.Provider == provider && job.PullRequestId == pullRequestId &&
+                    job.Status is JobStatus.Pending or JobStatus.Processing or JobStatus.BudgetHeld or JobStatus.BudgetExceeded or JobStatus.AdmissionHeld &&
+                    string.Equals(job.OrganizationUrl.TrimEnd('/'), scope.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(job.ProjectId, project, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(job.RepositoryId, repository, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return Task.FromResult(matches);
+        }
+    }
+
     public Task AddAsync(ReviewJob job, CancellationToken ct = default)
     {
         // Under the same lock as the atomic add: an insert made beside it can land between that operation's

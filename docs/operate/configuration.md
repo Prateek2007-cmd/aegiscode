@@ -726,3 +726,17 @@ loopback or link-local address without `MEISTER_ALLOW_PRIVATE_EGRESS` - see
 [outbound request protection](../reference/security.md#outbound-request-protection). An address this
 installation refuses stops the service from starting, with the variable named. `AI_API_KEY` travels in a
 request header, so a plain `http` endpoint would put it on the wire unencrypted.
+
+## Discussion synchronization
+
+| Variable | What it does | Default | Accepted | Example stack |
+|---|---|---|---|---|
+| `DISCUSSION_RECONCILIATION_INTERVAL_SECONDS` | Full discussion reconciliation cadence, independent of PR discovery | `300` | integer seconds, clamped to at least `10` | no |
+| `CRAWL_GLOBAL_CONCURRENCY` | Concurrent crawl and discussion operations across the process | `8` | integer, clamped to at least `1` | no |
+| `CRAWL_PROVIDER_HOST_CONCURRENCY` | Concurrent operations for one provider and host | `4` | integer, clamped to at least `1` | no |
+| `CRAWL_CLIENT_PROVIDER_HOST_CONCURRENCY` | Concurrent operations for one client, provider and host | `1` | integer, clamped to at least `1` | no |
+| `CRAWL_OPERATION_TIMEOUT_SECONDS` | Deadline for an individual pull-request synchronization operation | `90` | integer seconds, clamped to at least `10` | no |
+
+Authenticated webhook notifications make affected discussions eligible immediately. Full reconciliation
+recovers missed notifications and providers with incomplete event coverage.
+See [discussion synchronization](discussion-synchronization.md) for retries, retention and diagnostics.

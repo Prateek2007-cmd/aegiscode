@@ -23,7 +23,7 @@ public sealed class AiProviderMetrics : IDisposable
     /// <summary>Creates the meter and its instruments.</summary>
     public AiProviderMetrics()
     {
-        this._meter = new Meter("MeisterProPR", "1.0.0");
+        this._meter = new Meter("MeisterDEV.ProPR", "1.0.0");
         this._calls = this._meter.CreateCounter<long>(
             "meisterpropr_ai_provider_calls_total",
             "calls",

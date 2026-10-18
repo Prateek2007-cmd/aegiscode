@@ -83,7 +83,12 @@ internal sealed class AdoWebhookIngressService(
             null,
             delivery.SourceBranch,
             delivery.TargetBranch,
-            null);
+            null)
+        {
+            ThreadId = delivery.ThreadId,
+            CommentId = delivery.CommentId,
+            HasReliableDeliveryId = TryReadString(root, "id") is not null,
+        };
     }
 
     private async Task<Guid?> ResolveConfiguredReviewerIdAsync(Guid clientId, ProviderHostRef host, CancellationToken ct)
@@ -125,10 +130,18 @@ internal sealed class AdoWebhookIngressService(
         JsonElement payload,
         IncomingWebhookDelivery delivery)
     {
-        var repositoryName = TryReadString(payload, "resource", "repository", "name")
+        var resource = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("resource", out var raw) && raw.ValueKind == JsonValueKind.Object
+            ? raw
+            : payload;
+        if (resource.ValueKind == JsonValueKind.Object && resource.TryGetProperty("pullRequest", out var nested) && nested.ValueKind == JsonValueKind.Object)
+        {
+            resource = nested;
+        }
+
+        var repositoryName = TryReadString(resource, "repository", "name")
                              ?? delivery.RepositoryId;
-        var projectName = TryReadString(payload, "resource", "repository", "project", "name")
-                          ?? TryReadString(payload, "resource", "repository", "project", "id")
+        var projectName = TryReadString(resource, "repository", "project", "name")
+                          ?? TryReadString(resource, "repository", "project", "id")
                           ?? repositoryName;
 
         return new RepositoryRef(host, delivery.RepositoryId, projectName, projectName, repositoryName);
@@ -139,6 +152,6 @@ internal sealed class AdoWebhookIngressService(
         return TryReadString(payload, "id")
                ?? TryReadString(payload, "message", "id")
                ??
-               $"{delivery.EventType}:{delivery.RepositoryId}:{delivery.PullRequestId.ToString(CultureInfo.InvariantCulture)}";
+               Guid.NewGuid().ToString("N");
     }
 }

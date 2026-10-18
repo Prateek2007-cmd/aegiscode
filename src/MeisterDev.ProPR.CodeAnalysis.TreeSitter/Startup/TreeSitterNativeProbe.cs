@@ -30,7 +30,7 @@ namespace MeisterDev.ProPR.CodeAnalysis.TreeSitter.Startup;
 /// </remarks>
 internal sealed class TreeSitterNativeProbe : IStructuralAnalyzerProbe
 {
-    internal const string MeterName = "MeisterDev.ProPR.CodeAnalysis.TreeSitter";
+    internal const string MeterName = "MeisterDEV.ProPR.CodeAnalysis.TreeSitter";
     internal const string ProbeOutcomeCounterName = "tree_sitter.native_probe.outcomes";
 
     private static readonly Meter Meter = new(MeterName, "1.0.0");

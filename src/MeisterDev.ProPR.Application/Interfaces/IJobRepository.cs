@@ -14,6 +14,11 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// <summary>Interface for managing review jobs in the repository.</summary>
 public interface IJobRepository : IReviewFileResultStore
 {
+    /// <summary>Finds active jobs by provider-equivalent coordinates before a first scan exists.</summary>
+    Task<IReadOnlyList<ReviewJob>> FindActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope,
+        string project, string repository, int pullRequestId, CancellationToken ct = default);
+
     /// <summary>Persists a new review job.</summary>
     Task AddAsync(ReviewJob job, CancellationToken ct = default);
 

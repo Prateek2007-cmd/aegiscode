@@ -27,7 +27,7 @@ namespace MeisterDev.ProPR.Api.Telemetry;
 public sealed class RunnerFleetMetrics : IDisposable
 {
     /// <summary>The meter every review metric shares, so nothing needs its own exporter configuration.</summary>
-    internal const string DefaultMeterName = "MeisterProPR";
+    internal const string DefaultMeterName = "MeisterDEV.ProPR";
 
     private readonly Counter<long> _leaseReclaims;
     private readonly Counter<long> _leaseExpiries;

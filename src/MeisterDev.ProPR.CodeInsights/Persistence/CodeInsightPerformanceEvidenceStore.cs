@@ -180,7 +180,7 @@ public sealed class CodeInsightPerformanceEvidenceStore(MeisterProPRDbContext db
 
     public async Task<CodeInsightEvidenceAcknowledgment> AcknowledgeOutcomeAsync(
         Guid findingId, CodeInsightPublicationReceipt receipt, string nativeStatus, string fingerprint,
-        DateTimeOffset observedAt, CancellationToken ct = default)
+        DateTimeOffset observedAt, CancellationToken ct = default, bool allowFailedAttemptCap = false)
     {
         ct.ThrowIfCancellationRequested();
         await using var lease = await CodeInsightDbContextLease.CreateAsync(dbContext, contextFactory, ct);
@@ -200,7 +200,8 @@ public sealed class CodeInsightPerformanceEvidenceStore(MeisterProPRDbContext db
         var intent = CodeInsightNativeResolution.InterpretKnown(finding.NativeStatus);
         if (intent is null || (intent != ThreadResolutionIntent.Active &&
                                (finding.CurrentDisposition is null ||
-                                (finding.CurrentClassifierVersion is not null && finding.CurrentClassifierConfidence is null))))
+                                (finding.CurrentClassifierVersion is not null && finding.CurrentClassifierConfidence is null
+                                                                              && (!allowFailedAttemptCap || finding.OutcomeJudgementAttempts < 3)))))
         {
             return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable);
         }

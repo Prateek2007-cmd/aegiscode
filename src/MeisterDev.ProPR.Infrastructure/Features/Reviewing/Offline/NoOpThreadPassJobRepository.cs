@@ -19,6 +19,11 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline;
 public sealed class NoOpThreadPassJobRepository : IThreadPassJobRepository
 {
     /// <inheritdoc />
+    public Task<int> CancelActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default) => Task.FromResult(0);
+
+    /// <inheritdoc />
     public Task<TryClaimThreadPassResult> TryClaimAsync(ThreadPassJob job, CancellationToken ct = default)
     {
         return Task.FromResult(new TryClaimThreadPassResult(false, null));

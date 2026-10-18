@@ -133,7 +133,7 @@ public sealed partial class WebhookDeliveryWorker(
                     item.PathKey,
                     headers,
                     item.Payload,
-                    WebhookDeliveryProcessingMode.Process),
+                    WebhookDeliveryProcessingMode.Process, item.Id, item.DiscussionRefreshRequested),
                 ct);
 
             await queue.CompleteAsync(item.Id, ct);

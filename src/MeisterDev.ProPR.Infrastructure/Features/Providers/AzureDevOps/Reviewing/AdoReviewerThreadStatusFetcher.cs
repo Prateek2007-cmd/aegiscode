@@ -2,6 +2,11 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Globalization;
+using System.Net;
+using Microsoft.VisualStudio.Services.WebApi;
+using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Domain.ValueObjects;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
@@ -49,87 +54,9 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
         string organizationUrl, string projectId, string repositoryId, int pullRequestId,
         ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct, bool requireComplete)
     {
-        ArgumentNullException.ThrowIfNull(ownership);
-        ct.ThrowIfCancellationRequested();
-
         try
         {
-            var (gitClient, authorizedIdentityId) = await this.ResolveGitClientAndAuthorizedIdentityAsync(
-                organizationUrl,
-                clientId,
-                ct);
-
-            // Azure DevOps names an author by identity GUID, and the connection handshake above is the only
-            // place that identity exists, so the pass's resolver is completed with it here. It is contributed
-            // into the instance the caller handed down, so the consumers that run later in the same pass, and
-            // never see a connection of their own, decide with the identity too.
-            ownership.ContributeIdentity(new ThreadOwnerIdentity(authorizedIdentityId));
-
-            var rawThreads = await gitClient.GetThreadsAsync(
-                projectId,
-                repositoryId,
-                pullRequestId,
-                cancellationToken: ct);
-
-            if (rawThreads is null)
-            {
-                if (requireComplete)
-                {
-                    throw new InvalidOperationException("Azure DevOps thread lookup returned no payload.");
-                }
-
-                return [];
-            }
-
-            var results = new List<PrThreadStatusEntry>();
-            var iterationChanges = new IterationChangeCache();
-
-            foreach (var thread in rawThreads)
-            {
-                if (thread.IsDeleted || thread.Comments is null || thread.Comments.Count == 0)
-                {
-                    continue;
-                }
-
-                // Keep only threads ProPR owns, decided by the first comment that still exists.
-                var firstComment = thread.Comments.FirstOrDefault(c => !c.IsDeleted);
-                if (firstComment is null)
-                {
-                    continue;
-                }
-
-                var threadId = thread.Id.ToString(CultureInfo.InvariantCulture);
-                if (!ownership.OwnsThread(ToCommentRef(threadId, firstComment)))
-                {
-                    continue;
-                }
-
-                var commentHistory = BuildCommentHistory(thread);
-                var nonReviewerReplyCount = thread.Comments.Count(c =>
-                    !c.IsDeleted &&
-                    !string.Equals(c.CommentType.ToString(), "system", StringComparison.OrdinalIgnoreCase) &&
-                    !ownership.OwnsComment(ToCommentRef(threadId, c)));
-
-                var codeChange = await this.ResolveAnchorCodeChangeAsync(
-                    gitClient,
-                    projectId,
-                    repositoryId,
-                    pullRequestId,
-                    thread,
-                    iterationChanges,
-                    ct);
-
-                results.Add(
-                    new PrThreadStatusEntry(
-                        thread.Id.ToString(CultureInfo.InvariantCulture),
-                        thread.Status.ToString(),
-                        thread.ThreadContext?.FilePath,
-                        commentHistory,
-                        nonReviewerReplyCount,
-                        codeChange));
-            }
-
-            return results.AsReadOnly();
+            return (await this.ReadSnapshotAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct)).ReviewerThreads;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -142,11 +69,145 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
         }
     }
 
+    public async Task<PullRequestThreadSnapshot> ReadSnapshotAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct = default, Guid? connectionId = null)
+    {
+        ArgumentNullException.ThrowIfNull(ownership);
+        ct.ThrowIfCancellationRequested();
+        var (gitClient, authorizedIdentityId) = await this.ResolveGitClientAndAuthorizedIdentityAsync(organizationUrl, clientId, ct, connectionId);
+        ownership.ContributeIdentity(new ThreadOwnerIdentity(authorizedIdentityId));
+        var observedAt = DateTimeOffset.UtcNow;
+        var rawThreads = await gitClient.GetThreadsAsync(projectId, repositoryId, pullRequestId, cancellationToken: ct)
+                         ?? throw new InvalidOperationException("Azure DevOps thread lookup returned no payload.");
+        return await this.ProjectSnapshotAsync(gitClient, projectId, repositoryId, pullRequestId, ownership, rawThreads, observedAt, ct);
+    }
+
+    public async Task<PullRequestThreadSnapshot> ReadTargetedSnapshotAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId, IReadOnlyList<string> threadIds,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct = default, Guid? connectionId = null)
+    {
+        ArgumentNullException.ThrowIfNull(threadIds);
+        var numbers = new HashSet<int>();
+        foreach (var id in threadIds)
+        {
+            if (!int.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var number) || number <= 0)
+            {
+                return await this.ReadSnapshotAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, connectionId);
+            }
+
+            numbers.Add(number);
+        }
+
+        if (numbers.Count == 0)
+        {
+            return await this.ReadSnapshotAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, connectionId);
+        }
+
+        var ids = numbers.Order().Select(number => number.ToString(CultureInfo.InvariantCulture)).ToArray();
+        var (gitClient, authorizedIdentityId) = await this.ResolveGitClientAndAuthorizedIdentityAsync(organizationUrl, clientId, ct, connectionId);
+        ownership.ContributeIdentity(new ThreadOwnerIdentity(authorizedIdentityId));
+        var observedAt = DateTimeOffset.UtcNow;
+        var rawThreads = new List<GitPullRequestCommentThread>();
+        foreach (var id in ids)
+        {
+            var number = int.Parse(id, CultureInfo.InvariantCulture);
+            try
+            {
+                var thread = await gitClient.GetPullRequestThreadAsync(projectId, repositoryId, pullRequestId, number, cancellationToken: ct)
+                             ?? throw new InvalidOperationException("Azure DevOps thread lookup returned no payload.");
+                if (thread.Id != number)
+                {
+                    throw new InvalidOperationException("Azure DevOps returned a different discussion thread.");
+                }
+
+                rawThreads.Add(thread);
+            }
+            catch (VssServiceResponseException exception) when (exception.HttpStatusCode == HttpStatusCode.NotFound)
+            {
+                rawThreads.Add(new GitPullRequestCommentThread { Id = number, IsDeleted = true, Comments = [] });
+            }
+        }
+
+        var snapshot = await this.ProjectSnapshotAsync(gitClient, projectId, repositoryId, pullRequestId, ownership, rawThreads, observedAt, ct);
+        return snapshot with { EnumerationComplete = false, TargetThreadId = ids.Length == 1 ? ids[0] : null, TargetThreadIds = ids };
+    }
+
+    private async Task<PullRequestThreadSnapshot> ProjectSnapshotAsync(
+        GitHttpClient gitClient, string projectId, string repositoryId,
+        int pullRequestId, ThreadOwnershipResolver ownership, IReadOnlyList<GitPullRequestCommentThread> rawThreads,
+        DateTimeOffset observedAt, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var results = new List<PrThreadStatusEntry>();
+        var iterationChanges = new IterationChangeCache();
+
+        foreach (var thread in rawThreads)
+        {
+            if (thread.IsDeleted || thread.Comments is null || thread.Comments.Count == 0)
+            {
+                continue;
+            }
+
+            // Keep only threads ProPR owns, decided by the first comment that still exists.
+            var firstComment = thread.Comments.FirstOrDefault(c => !c.IsDeleted);
+            if (firstComment is null)
+            {
+                continue;
+            }
+
+            var threadId = thread.Id.ToString(CultureInfo.InvariantCulture);
+            if (!ownership.OwnsThread(ToCommentRef(threadId, firstComment)))
+            {
+                continue;
+            }
+
+            var commentHistory = BuildCommentHistory(thread);
+            var nonReviewerReplyCount = thread.Comments.Count(c =>
+                !c.IsDeleted &&
+                !string.Equals(c.CommentType.ToString(), "system", StringComparison.OrdinalIgnoreCase) &&
+                !ownership.OwnsComment(ToCommentRef(threadId, c)));
+
+            var codeChange = await this.ResolveAnchorCodeChangeAsync(
+                gitClient,
+                projectId,
+                repositoryId,
+                pullRequestId,
+                thread,
+                iterationChanges,
+                ct);
+
+            results.Add(
+                new PrThreadStatusEntry(
+                    thread.Id.ToString(CultureInfo.InvariantCulture),
+                    thread.Status.ToString(),
+                    thread.ThreadContext?.FilePath,
+                    commentHistory,
+                    nonReviewerReplyCount,
+                    codeChange));
+        }
+
+
+        var byId = results.ToDictionary(thread => thread.ThreadId!, StringComparer.Ordinal);
+        var threads = rawThreads.Select(thread => new PrCommentThread(
+            thread.Id.ToString(CultureInfo.InvariantCulture),
+            thread.ThreadContext?.FilePath, thread.ThreadContext?.RightFileStart?.Line,
+            (thread.Comments ?? []).Select(comment => AdoPrFetcher.ToThreadComment(comment) with
+            {
+                IsDeleted = comment.IsDeleted,
+                LastUpdatedAt = comment.LastUpdatedDate != default ? new DateTimeOffset(comment.LastUpdatedDate, TimeSpan.Zero) : null,
+            }).ToArray(), thread.Status.ToString(), thread.IsDeleted,
+            JsonSerializer.Serialize(new { thread.ThreadContext, thread.PullRequestThreadContext }),
+            byId.TryGetValue(thread.Id.ToString(CultureInfo.InvariantCulture), out var status) ? status.CodeChangedSinceRaised : ThreadAnchorCodeChange.Unknown,
+            thread.LastUpdatedDate != default ? new DateTimeOffset(thread.LastUpdatedDate, TimeSpan.Zero) : null)).ToArray();
+        return new PullRequestThreadSnapshot(observedAt, threads, results.AsReadOnly()) { AuthenticatedIdentity = ownership.Identity };
+    }
+
     private async Task<(GitHttpClient GitClient, Guid? AuthorizedIdentityId)>
         ResolveGitClientAndAuthorizedIdentityAsync(
             string organizationUrl,
             Guid clientId,
-            CancellationToken ct)
+            CancellationToken ct, Guid? connectionId = null)
     {
         if (this.GitClientResolver is not null)
         {
@@ -157,11 +218,14 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
             return (await this.GitClientResolver(organizationUrl, ct), authorizedIdentityId);
         }
 
-        var credentials = await AdoProviderAdapterHelpers.ResolveCredentialsAsync(
-            connectionRepository,
-            clientId,
-            organizationUrl,
-            ct);
+        var credentials = connectionId.HasValue
+            ? AdoProviderAdapterHelpers.ToAdoCredentials(await connectionRepository.GetOperationalConnectionByIdAsync(clientId, connectionId.Value, ct))
+            : await AdoProviderAdapterHelpers.ResolveCredentialsAsync(connectionRepository, clientId, organizationUrl, ct);
+        if (connectionId.HasValue && credentials is null)
+        {
+            throw new InvalidOperationException("The captured Azure DevOps connection is unavailable.");
+        }
+
         var connection = await connectionFactory.GetConnectionAsync(organizationUrl, credentials, ct);
         await connection.ConnectAsync(ct);
         return (await connection.GetClientAsync<GitHttpClient>(ct), connection.AuthorizedIdentity?.Id);

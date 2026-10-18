@@ -38,3 +38,11 @@ public interface ICodeInsightCloseObserver
         string providerProjectKey,
         CancellationToken ct = default);
 }
+
+/// <summary>Requires positively retained final evidence before immutable measurement sealing.</summary>
+public interface ICodeInsightAcknowledgedCloseObserver : ICodeInsightCloseObserver
+{
+    Task<CodeInsightEvidenceAcknowledgment> ObserveAcknowledgedAsync(
+        CodeInsightPullRequestKey key,
+        string providerScopePath, string providerProjectKey, CancellationToken ct = default);
+}

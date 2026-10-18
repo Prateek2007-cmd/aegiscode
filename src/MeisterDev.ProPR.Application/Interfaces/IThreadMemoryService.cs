@@ -15,6 +15,18 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// </summary>
 public interface IThreadMemoryService
 {
+    async Task<bool> ObserveResolvedAsync(ThreadResolvedDomainEvent evt, CancellationToken ct = default)
+    {
+        await this.HandleThreadResolvedAsync(evt, ct);
+        return false;
+    }
+
+    async Task<bool> ObserveReopenedAsync(ThreadReopenedDomainEvent evt, CancellationToken ct = default)
+    {
+        await this.HandleThreadReopenedAsync(evt, ct);
+        return false;
+    }
+
     /// <summary>
     ///     Handles a <see cref="ThreadResolvedDomainEvent" /> raised by the crawl-side state machine.
     ///     Generates an embedding for the resolved thread and upserts it into the client's memory store.

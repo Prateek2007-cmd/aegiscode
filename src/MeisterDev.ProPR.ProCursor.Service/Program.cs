@@ -102,7 +102,7 @@ try
         builder.Configuration,
         "MeisterDev.ProPR.ProCursor.Service",
         ["MeisterProPR.Infrastructure"],
-        ["MeisterProPR"]);
+        ["MeisterDEV.ProPR"]);
 
     var app = builder.Build();
 

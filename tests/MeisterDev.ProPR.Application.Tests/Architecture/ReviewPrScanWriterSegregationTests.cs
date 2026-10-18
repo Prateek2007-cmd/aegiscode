@@ -21,6 +21,7 @@ public sealed class ReviewPrScanWriterSegregationTests
         AssertReachesExactly(
             typeof(IReviewPrScanThreadStatusStore),
             nameof(IReviewPrScanReader.GetAsync),
+            nameof(IReviewPrScanReader.FindByProviderCoordinatesAsync),
             nameof(IReviewPrScanThreadStatusWriter.SetLastSeenStatusesAsync));
     }
 
@@ -30,6 +31,7 @@ public sealed class ReviewPrScanWriterSegregationTests
         AssertReachesExactly(
             typeof(IReviewPrScanWatermarkStore),
             nameof(IReviewPrScanReader.GetAsync),
+            nameof(IReviewPrScanReader.FindByProviderCoordinatesAsync),
             nameof(IReviewPrScanWatermarkWriter.SetReviewWatermarkAsync));
     }
 
@@ -39,6 +41,7 @@ public sealed class ReviewPrScanWriterSegregationTests
         AssertReachesExactly(
             typeof(IReviewPrScanThreadPassStore),
             nameof(IReviewPrScanReader.GetAsync),
+            nameof(IReviewPrScanReader.FindByProviderCoordinatesAsync),
             nameof(IReviewPrScanThreadPassWatermarkWriter.SetThreadPassWatermarkAsync),
             nameof(IReviewPrScanThreadReplyCountWriter.SetLastSeenReplyCountsAsync),
             nameof(IReviewPrScanThreadRegistry.RetainOnlyThreadsAsync));

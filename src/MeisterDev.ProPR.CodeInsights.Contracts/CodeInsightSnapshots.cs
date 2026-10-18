@@ -310,4 +310,5 @@ public sealed record CodeInsightFindingView(
     int OutcomeJudgementAttempts = 0,
     string ProviderScope = "",
     string? OutcomeSourceFingerprint = null,
-    string? ProviderCommentId = null);
+    string? ProviderCommentId = null,
+    DateTimeOffset? CreatedAt = null);

@@ -27,7 +27,7 @@ internal sealed class FileByFileContextPrefetchStage(
     // T030 — observability counters for boundary-resolution outcomes (Principle V).
     // Incremented at the trace-emit site so operators can see tree-sitter vs each
     // FallbackReason distribution across reviews.
-    private static readonly Meter BoundaryMeter = new("MeisterProPR.Reviewing.Prefetch", "1.0.0");
+    private static readonly Meter BoundaryMeter = new("MeisterDEV.ProPR.Reviewing.Prefetch", "1.0.0");
 
     private static readonly Counter<int> BoundaryOutcomeCounter =
         BoundaryMeter.CreateCounter<int>(

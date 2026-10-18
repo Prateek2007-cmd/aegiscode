@@ -2,6 +2,8 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.Domain.Enums;
@@ -11,7 +13,9 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 /// <summary>Selects provider capabilities for ordinary close and strict historical feedback.</summary>
 internal sealed class CodeInsightProviderFeedbackReader(
     IEnumerable<IProviderPullRequestFetcher> threadFetchers,
-    IEnumerable<IProviderReviewerThreadStatusFetcher> statusFetchers) : ICodeInsightProviderFeedbackReader
+    IEnumerable<IProviderReviewerThreadStatusFetcher> statusFetchers,
+    IPullRequestThreadSnapshotReader? snapshotReader = null,
+    IClientScmConnectionRepository? connections = null) : ICodeInsightProviderFeedbackReader
 {
     public async Task<CodeInsightProviderFeedback> ReadAsync(
         CodeInsightProviderEvidenceTarget target,
@@ -21,6 +25,33 @@ internal sealed class CodeInsightProviderFeedbackReader(
         if (target.Provider == ScmProvider.Forgejo && mode == CodeInsightObservationMode.HistoricalBackfill)
         {
             throw new CodeInsightProviderIdentityException();
+        }
+
+        if (snapshotReader is not null)
+        {
+            var connectionId = target.ConnectionId;
+            if (connectionId == Guid.Empty && connections is not null)
+            {
+                connectionId = (await connections.GetOperationalConnectionAsync(
+                                   target.Key.ClientId,
+                                   new MeisterDev.ProPR.Domain.ValueObjects.ProviderHostRef(target.Provider, target.ProviderScopePath), ct))?.Id
+                               ?? throw new InvalidOperationException("The captured feedback connection is unavailable.");
+            }
+
+            var snapshot = await snapshotReader.ReadAsync(
+                new PullRequestThreadSnapshotTarget(
+                    target.Key.ClientId, connectionId,
+                    target.Provider, target.ProviderScopePath, target.ProviderProjectKey, target.Key.RepositoryId, checked((int)target.Key.PullRequestId)),
+                ownership, ct);
+            if (!snapshot.EnumerationComplete)
+            {
+                throw new CodeInsightIncompleteEnumerationException();
+            }
+
+            return new CodeInsightProviderFeedback(
+                snapshot.ReviewerThreads, snapshot.Threads.Where(thread => !thread.IsDeleted)
+                    .Select(thread => thread with { Comments = thread.Comments.Where(comment => !comment.IsDeleted).ToArray() }).ToArray(),
+                true, mode == CodeInsightObservationMode.Current && snapshot.CurrentConsumersRetained);
         }
 
         var statuses = statusFetchers.SingleOrDefault(adapter => adapter.Provider == target.Provider)

@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
@@ -24,6 +25,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit.Abstractions;
 using MeisterDev.ProPR.Application.Features.Providers.Identity;
@@ -56,6 +58,8 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
     private readonly List<string> _log = [];
     private readonly List<string> _keyDirectories = [];
     private readonly HashSet<Guid> _cancelledJobs = [];
+    private readonly HashSet<Guid> _falsePositiveFindings = [];
+    private static readonly Guid ReviewerAuthorId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
 
     /// <summary>What the most recent lifecycle synchronization decided, for the experiments that drive one.</summary>
     private PullRequestSynchronizationOutcome? LastLifecycleOutcome { get; set; }
@@ -648,16 +652,6 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
                 Arg.Any<CancellationToken>())
             .Returns(call => new PullRequestRef("feature", "main", this._providerStatus((int)call[3])));
 
-        this._provider
-            .FetchThreadsAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<int>(),
-                Arg.Any<Guid?>(),
-                Arg.Any<CancellationToken>())
-            .Returns(call => this.ThreadsOf((int)call[3]));
-
         this._jobs = Substitute.For<IJobRepository>();
         // Answers about the pull request the job belongs to. A fixed identity would let production code that
         // reads the job's pull request act on the wrong one while the experiment still passed.
@@ -693,55 +687,71 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
             });
         var jobs = this._jobs;
 
+        var connection = CreateConnection();
         var connections = Substitute.For<IClientScmConnectionRepository>();
-        connections.GetByClientIdAsync(ClientId, Arg.Any<CancellationToken>())
-            .Returns([CreateConnection()]);
+        connections.GetByClientIdAsync(ClientId, Arg.Any<CancellationToken>()).Returns([connection]);
+        connections.GetByIdAsync(ClientId, connection.Id, Arg.Any<CancellationToken>()).Returns(connection);
+        var credential = new ClientScmConnectionCredentialDto(
+            connection.Id, ClientId, connection.ProviderFamily, connection.HostBaseUrl,
+            connection.AuthenticationKind, connection.DisplayName, "simulation-token", true);
+        connections.GetOperationalConnectionByIdAsync(ClientId, connection.Id, Arg.Any<CancellationToken>()).Returns(credential);
+        connections.GetOperationalConnectionAsync(ClientId, Arg.Any<ProviderHostRef>(), Arg.Any<CancellationToken>()).Returns(credential);
 
         var origins = Substitute.For<IPostedCommentOriginStore>();
-        origins.GetJobIdsForPullRequestAsync(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<long>(), Arg.Any<CancellationToken>())
-            .Returns([]);
+        origins.GetOriginsForProviderSourceAsync(
+                ClientId, Repository, Arg.Any<long>(), ScmProvider.AzureDevOps, ProviderNamespace, Arg.Any<CancellationToken>())
+            .Returns(new PostedCommentOriginSourceSnapshot([], []));
 
+        var dispositionClassifier = Substitute.For<IDisregardedFindingClassifier>();
+        dispositionClassifier.ClassifierVersion.Returns("simulation");
+        dispositionClassifier.JudgeAsync(Arg.Any<DisregardedFindingJudgementRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => new DisregardedFindingJudgement(
+                this._falsePositiveFindings.Contains(call.Arg<DisregardedFindingJudgementRequest>().FindingId), .9, "simulated"));
         this._dispositions = new CodeInsightDispositionService(
             MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.CompatibilityCodec,
-            this._store,
-            this._store,
-            Substitute.For<IDisregardedFindingClassifier>(),
-            gate,
-            NullLogger<CodeInsightDispositionService>.Instance);
-
-        var reviewerThreads = Substitute.For<IReviewerThreadStatusFetcher>();
-        reviewerThreads
-            .GetReviewerThreadStatusesAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<int>(),
-                Arg.Any<ThreadOwnershipResolver>(),
-                Arg.Any<Guid>(),
-                Arg.Any<CancellationToken>())
-            .Returns(call => this.ReviewerThreadsOf((int)call[3]));
+            this._store, this._store, dispositionClassifier, gate, NullLogger<CodeInsightDispositionService>.Instance,
+            performanceEvidence: new CodeInsightPerformanceEvidenceStore(this._db));
 
         var projector = new ReviewerPerformanceCountProjector(this._db, gate, NullLogger<ReviewerPerformanceCountProjector>.Instance);
         var coverage = new CodeInsightHarvestCoverageRecorder(this._db, gate, projector, NullLogger<CodeInsightHarvestCoverageRecorder>.Instance);
+        var registry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
+        registry.GetReviewSourcePolicy(Arg.Any<ScmProvider>())
+            .Returns(call => MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.GetReviewSourcePolicy(call.Arg<ScmProvider>()));
+        var query = Substitute.For<ICodeReviewQueryService>();
+        registry.GetCodeReviewQueryService(ScmProvider.AzureDevOps).Returns(query);
+        query.GetReviewAsync(ClientId, Arg.Any<CodeReviewRef>(), Arg.Any<CancellationToken>(), Arg.Any<ReviewDiscoveryContext?>())
+            .Returns(call =>
+            {
+                var review = call.Arg<CodeReviewRef>();
+                return new ReviewDiscoveryItemDto(
+                    ScmProvider.AzureDevOps, review.Repository, review,
+                    this._providerStatus(review.Number) == PrStatus.Completed ? CodeReviewState.Merged : CodeReviewState.Open,
+                    new ReviewRevision($"head-{review.Number}", "base", null, "1", null), null, "Simulation", null, "feature", "main");
+            });
+        var snapshots = Substitute.For<IPullRequestThreadSnapshotReader>();
+        snapshots.ReadAsync(Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var target = call.Arg<PullRequestThreadSnapshotTarget>();
+                call.Arg<ThreadOwnershipResolver>().ContributeIdentity(new ThreadOwnerIdentity(ReviewerAuthorId));
+                return new PullRequestThreadSnapshot(DateTimeOffset.UtcNow, this.ThreadsOf(target.PullRequestId), this.ReviewerThreadsOf(target.PullRequestId));
+            });
+        var batches = Substitute.For<ICodeInsightDiscussionBatchFactory>();
+        batches.CreateAsync(Arg.Any<CodeInsightPullRequestKey>(), ProviderNamespace, Arg.Any<CancellationToken>())
+            .Returns(async call => (CodeInsightDiscussionBatch?)new CodeInsightDiscussionBatch(
+                call.Arg<CodeInsightPullRequestKey>(), ProviderNamespace,
+                await this._store.GetFindingsForPullRequestAsync(call.Arg<CodeInsightPullRequestKey>(), call.Arg<CancellationToken>()), "simulation"));
+        var discussions = new DiscussionSynchronizationService(
+            this.CreateDiscussionStore(), snapshots, connections, registry, NullLogger<DiscussionSynchronizationService>.Instance,
+            Options.Create(new DiscussionSynchronizationOptions()), origins: origins, batches: batches, dispositions: this._dispositions,
+            misses: this._harvester, coverage: coverage);
         this._closeObserver = new PullRequestCloseObserver(
-            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry,
-            NullLogger<PullRequestCloseObserver>.Instance,
-            this._provider,
-            this._harvester,
-            this._store,
-            gate,
-            connections,
-            origins,
-            reviewerThreads,
-            this._dispositions,
-            harvestCoverageRecorder: coverage);
+            registry, NullLogger<PullRequestCloseObserver>.Instance, this._harvester, this._store, gate, connections, origins,
+            this._dispositions, harvestCoverageRecorder: coverage, discussionSynchronization: discussions);
 
         this._synchronization = new PullRequestSynchronizationService(
-            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry,
-            jobs,
-            NullLogger<PullRequestSynchronizationService>.Instance,
-            codeInsightMetricSealer: this._sealer,
-            codeInsightCloseObserver: this._closeObserver);
+            registry, jobs, NullLogger<PullRequestSynchronizationService>.Instance,
+            codeInsightMetricSealer: this._sealer, codeInsightCloseObserver: this._closeObserver, discussions: discussions);
 
         this._sweeper = new CodeInsightSealSweeper(
             this._db,
@@ -753,6 +763,36 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
             this._closeObserver);
 
         this._reader = new CodeInsightMetricReader(this._db, new CodeInsightRollupReader(this._db));
+    }
+
+    private IDiscussionSynchronizationStore CreateDiscussionStore()
+    {
+        var states = new Dictionary<PullRequestThreadSnapshotTarget, DiscussionSynchronizationState>();
+        var store = Substitute.For<IDiscussionSynchronizationStore>();
+        store.ReadAsync(Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<CancellationToken>())
+            .Returns(call => states.GetValueOrDefault(call.Arg<PullRequestThreadSnapshotTarget>()));
+        store.IsCurrentObservationAsync(Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(call => states.TryGetValue(call.Arg<PullRequestThreadSnapshotTarget>(), out var state) &&
+                             state.LastObservedAt == call.Arg<DateTimeOffset>());
+        store.TryAcquireAsync(
+                Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var target = call.Arg<PullRequestThreadSnapshotTarget>();
+                if (!states.TryGetValue(target, out var state))
+                {
+                    state = new DiscussionSynchronizationState
+                    {
+                        ClientId = target.ClientId, ConnectionId = target.ConnectionId, Provider = target.Provider,
+                        ProviderScopePath = target.ProviderScopePath, ProviderProjectKey = target.ProviderProjectKey,
+                        RepositoryId = target.RepositoryId, PullRequestId = target.PullRequestId,
+                    };
+                    states.Add(target, state);
+                }
+
+                return (IDiscussionSynchronizationLease)new SimulatedDiscussionLease(state);
+            });
+        return store;
     }
 
     /// <summary>
@@ -791,7 +831,7 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
 
         var jobId = Guid.NewGuid();
         var key = this.Key(pullRequestId);
-        List<string> resolvedAtCloseThreads = [];
+        List<SimulatedFinding> ownFindings = [];
 
         if (findings > 0)
         {
@@ -809,46 +849,43 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
                     ReviewCommentScopeRelation.OnChangedLine,
                     null,
                     $"propr-thread-{pullRequestId}-{ordinal}",
-                    $"propr-comment-{pullRequestId}-{ordinal}",
+                    "1",
                     ProviderScope: ProviderNamespace))
                 .ToList();
 
             await this._store.MaterialiseFindingsAsync(key, jobId, $"rev-{pullRequestId}", DateTimeOffset.UtcNow, snapshots);
 
             var stored = await this._store.GetFindingsForPullRequestAsync(key);
-            var index = 0;
-            foreach (var finding in stored)
+            foreach (var finding in stored.OrderBy(finding => finding.Ordinal))
             {
-                if (index >= findings - findingsResolvedAtClose)
-                {
-                    // This finding's own thread resolves as part of the close, so no active pass ever recorded
-                    // an outcome for it. Whether the seal counts it is what the close observation decides.
-                    resolvedAtCloseThreads.Add(finding.ProviderThreadId!);
-                    index++;
-                    continue;
-                }
-
-                var disposition = index < addressed
+                var disposition = finding.Ordinal < addressed
                     ? CodeInsightDisposition.Addressed
-                    : index < addressed + falsePositive
+                    : finding.Ordinal < addressed + falsePositive
                         ? CodeInsightDisposition.FalsePositive
                         : CodeInsightDisposition.Acknowledged;
+                var simulated = new SimulatedFinding(finding, disposition, finding.Ordinal >= findings - findingsResolvedAtClose);
+                ownFindings.Add(simulated);
+                if (disposition == CodeInsightDisposition.FalsePositive)
+                {
+                    this._falsePositiveFindings.Add(finding.Id);
+                }
 
-                await this._store.RecordDispositionAsync(
-                    finding.Id,
-                    new CodeInsightDispositionRecord(
-                        disposition,
-                        ThreadResolutionIntent.ClaimsFix,
-                        ThreadAnchorCodeChange.Changed,
-                        "simulation",
-                        0.9));
-                index++;
+                if (!simulated.ResolvesAtClose)
+                {
+                    var status = FindingStatus(simulated, closed: false);
+                    var retained = await this._dispositions.ObserveCurrentAsync(
+                        new ThreadResolvedDomainEvent(
+                            ClientId, ProviderSourcePath, "project", Repository, checked((int)pullRequestId), status.ThreadId!, status.FilePath,
+                            null, status.CommentHistory, DateTimeOffset.UtcNow,
+                            CodeInsightNativeResolution.InterpretKnown(status.Status)!.Value, status.CodeChangedSinceRaised, status.Status, ProviderNamespace));
+                    Assert.True(retained.Retained);
+                }
             }
         }
 
         this._prs[pullRequestId] = new SimulatedPullRequest(pullRequestId, moment, reviewJobStillActiveAtClose)
         {
-            FindingThreadsResolvedAtClose = resolvedAtCloseThreads,
+            Findings = ownFindings,
             Threads = Enumerable.Range(0, humanThreads)
                 .Select(i => new SimulatedThread($"human-thread-{pullRequestId}-{i}", i))
                 .ToList(),
@@ -884,29 +921,30 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
             ], ProviderScope: ProviderNamespace);
     }
 
-    /// <summary>
-    ///     The threads ProPR itself raised, as the status read would report them at the close. A finding seeded
-    ///     as resolving at the close has no outcome recorded by any active pass.
-    /// </summary>
-    private IReadOnlyList<PrThreadStatusEntry> ReviewerThreadsOf(long pullRequestId)
-    {
-        if (!this._prs.TryGetValue(pullRequestId, out var pr) || pr.ClosedOnCycle is null)
-        {
-            return [];
-        }
+    /// <summary>Returns every own finding, including outcomes already observed while the pull request was open.</summary>
+    private IReadOnlyList<PrThreadStatusEntry> ReviewerThreadsOf(long pullRequestId) => this._prs.TryGetValue(pullRequestId, out var pr)
+        ? pr.Findings.Select(finding => FindingStatus(finding, pr.ClosedOnCycle is not null)).ToArray()
+        : [];
 
-        return pr.FindingThreadsResolvedAtClose
-            .Select(threadId => new PrThreadStatusEntry(
-                threadId,
-                "Fixed",
-                "src/File.cs",
-                "propr: A finding ProPR raised.",
-                0,
-                ThreadAnchorCodeChange.Changed))
-            .ToList();
+    private static PrThreadStatusEntry FindingStatus(SimulatedFinding finding, bool closed)
+    {
+        var resolved = !finding.ResolvesAtClose || closed;
+        var status = !resolved ? "Active" : finding.Disposition == CodeInsightDisposition.Acknowledged ? "ByDesign" : "Fixed";
+        var changed = resolved && finding.Disposition == CodeInsightDisposition.Addressed
+            ? ThreadAnchorCodeChange.Changed
+            : ThreadAnchorCodeChange.Unchanged;
+        var history = resolved
+            ? finding.Disposition switch
+            {
+                CodeInsightDisposition.FalsePositive => "Human: This concern is incorrect.",
+                CodeInsightDisposition.Acknowledged => "Human: This is intentional.",
+                _ => "Human: Fixed.",
+            }
+            : "ProPR: Please address this concern.";
+        return new(finding.Finding.ProviderThreadId, status, finding.Finding.FilePath, history, CodeChangedSinceRaised: changed);
     }
 
-    /// <summary>The threads the provider would return for one pull request, in their current state.</summary>
+    /// <summary>Returns one complete provider snapshot with human discussions and all published finding identities.</summary>
     private IReadOnlyList<PrCommentThread> ThreadsOf(long pullRequestId)
     {
         if (!this._prs.TryGetValue(pullRequestId, out var pr))
@@ -914,27 +952,23 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
             return [];
         }
 
-        return pr.Threads
-            .Select(thread => new PrCommentThread(
-                thread.Id,
-                $"src/Human{thread.Ordinal}.cs",
-                200 + thread.Ordinal,
-                [
-                    new PrThreadComment(
-                        "Jane Dev",
-                        $"This retry loop swallows the cancellation token on path {thread.Ordinal}, so a shutdown hangs.",
-                        HumanAuthorId,
-                        100 + thread.Ordinal,
-                        DateTimeOffset.UtcNow.AddMinutes(-10)),
-                    new PrThreadComment(
-                        "Sam Reviewer",
-                        "Good catch, fixed.",
-                        HumanAuthorId,
-                        200 + thread.Ordinal,
-                        DateTimeOffset.UtcNow.AddMinutes(-5)),
-                ],
-                thread.Resolved ? "Fixed" : "Active"))
-            .ToList();
+        var human = pr.Threads.Select(thread => new PrCommentThread(
+            thread.Id, $"src/Human{thread.Ordinal}.cs", 200 + thread.Ordinal,
+            [
+                new PrThreadComment(
+                    "Jane Dev", $"This retry loop swallows the cancellation token on path {thread.Ordinal}, so a shutdown hangs.",
+                    HumanAuthorId, 100 + thread.Ordinal, DateTimeOffset.UtcNow.AddMinutes(-10)),
+                new PrThreadComment("Sam Reviewer", "Good catch, fixed.", HumanAuthorId, 200 + thread.Ordinal, DateTimeOffset.UtcNow.AddMinutes(-5)),
+            ], thread.Resolved ? "Fixed" : "Active"));
+        var own = pr.Findings.Select(finding =>
+        {
+            var status = FindingStatus(finding, pr.ClosedOnCycle is not null);
+            return new PrCommentThread(
+                status.ThreadId, finding.Finding.FilePath, finding.Finding.LineNumber,
+                [new PrThreadComment("ProPR", finding.Finding.Message, ReviewerAuthorId, 1, finding.Finding.ObservedAt)], status.Status,
+                CodeChangedSinceRaised: status.CodeChangedSinceRaised);
+        });
+        return human.Concat(own).ToArray();
     }
 
     private PullRequestSynchronizationRequest LifecycleRequest(SimulatedPullRequest pr)
@@ -1072,8 +1106,52 @@ public sealed class F1RecoverySimulation(ITestOutputHelper output) : IDisposable
 
         public List<SimulatedThread> Threads { get; init; } = [];
 
-        /// <summary>Provider thread ids of ProPR's own findings whose threads the close resolves.</summary>
-        public List<string> FindingThreadsResolvedAtClose { get; init; } = [];
+        public List<SimulatedFinding> Findings { get; init; } = [];
+    }
+
+    private sealed record SimulatedFinding(CodeInsightFindingView Finding, CodeInsightDisposition Disposition, bool ResolvesAtClose);
+
+    private sealed class SimulatedDiscussionLease(DiscussionSynchronizationState state) : IDiscussionSynchronizationLease
+    {
+        private readonly long _generation = state.RequestedGeneration;
+        public DiscussionSynchronizationState State => state;
+        public DateTimeOffset ObservedAt { get; } = new(DateTimeOffset.UtcNow.UtcTicks / 10 * 10, TimeSpan.Zero);
+        public bool CompletionIsCurrent { get; private set; }
+
+        public Task EnsureCurrentAsync(CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+
+        public Task CompleteAsync(
+            string progressJson, string reviewerSummariesJson, DateTimeOffset observedAt, bool completeEnumeration,
+            bool allConsumersCurrent, bool closed, string? revision, TimeSpan reconciliationInterval, CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            this.CompletionIsCurrent = state.RequestedGeneration == this._generation;
+            state.ThreadProgressJson = progressJson;
+            state.ReviewerSummariesJson = reviewerSummariesJson;
+            state.LastObservedAt = observedAt;
+            state.LastReviewRevision = revision;
+            state.IsClosed = closed && allConsumersCurrent;
+            state.FullRefreshRequested = !allConsumersCurrent;
+            state.NextAttemptAt = observedAt + (allConsumersCurrent ? reconciliationInterval : TimeSpan.FromSeconds(15));
+            if (completeEnumeration)
+            {
+                state.LastFullReconciledAt = observedAt;
+            }
+
+            if (allConsumersCurrent)
+            {
+                state.CompletedGeneration = this._generation;
+                state.PendingThreadIdsJson = "[]";
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class SimulatedThread(string id, int ordinal)

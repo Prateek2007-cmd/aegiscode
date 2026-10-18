@@ -93,6 +93,10 @@ public sealed class ReviewingDiagnosticsServiceCollectionExtensionsTests
 
     private sealed class FakeJobRepository : IJobRepository
     {
+        public Task<IReadOnlyList<ReviewJob>> FindActiveByProviderCoordinatesAsync(
+            Guid clientId, ScmProvider provider, string scope, string project,
+            string repository, int pullRequestId, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<ReviewJob>>([]);
+
         public Task AddAsync(ReviewJob job, CancellationToken ct = default)
         {
             return Task.CompletedTask;

@@ -29,7 +29,8 @@ public sealed class HistoricalProviderEvidenceRegistrationTests
         services.AddLogging();
         services.AddSingleton(LocalScmPolicies.Registry);
         services.AddHttpClient();
-        services.AddDbContext<MeisterProPRDbContext>(options => options.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+        var databaseName = Guid.NewGuid().ToString();
+        services.AddDbContextFactory<MeisterProPRDbContext>(options => options.UseInMemoryDatabase(databaseName));
         services.AddSingleton(Substitute.For<ISecretProtectionCodec>());
         services.AddSingleton(Substitute.For<IAiRuntimeResolver>());
         services.AddSingleton(Substitute.For<IModelUsageRecorder>());

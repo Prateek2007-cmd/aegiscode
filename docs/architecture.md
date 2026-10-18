@@ -73,6 +73,18 @@ additional provider families. Runner symbol requests use its existing proxy boun
 
 ## Crawl synchronization and locks
 
+Discussion synchronization shares one authoritative provider thread snapshot between status, memory,
+archive and Code Insights consumers. PostgreSQL stores scoped thread fingerprints and independent
+consumer acknowledgments. Durable notification generations and fenced target leases survive retries
+and restarts. Historical feedback uses the same target lock and invalidates current acknowledgments.
+Full reconciliation defaults to 300 seconds independently of review discovery.
+
+A shared fair scheduler bounds global, provider-host and client-provider-host concurrency at 8/4/1 by
+default. Separate operation scopes preserve EF context isolation. Target locks cover consumer writes;
+existing review admission locks continue to protect queue mutation.
+[Discussion synchronization](operate/discussion-synchronization.md) documents cadence and diagnostics.
+
+
 Manual pull request overview refreshes consume the optional paged capability on the existing review
 discovery adapters. One fenced source refresh owns the entire native page sequence and its shared
 60-second cooldown. Native pagination headers and continuations remain inside provider adapters.

@@ -12,6 +12,10 @@ namespace MeisterDev.ProPR.Infrastructure.Data;
 public sealed class MeisterProPRDbContext(DbContextOptions<MeisterProPRDbContext> options) : DbContext(options)
 {
     /// <summary>Registered clients table.</summary>
+    public DbSet<DiscussionObservationFenceState> DiscussionObservationFences => this.Set<DiscussionObservationFenceState>();
+
+    public DbSet<DiscussionSynchronizationState> DiscussionSynchronizationStates => this.Set<DiscussionSynchronizationState>();
+
     public DbSet<ClientRecord> Clients => this.Set<ClientRecord>();
 
     /// <summary>Bounded discovery observations and client-scoped page generations.</summary>

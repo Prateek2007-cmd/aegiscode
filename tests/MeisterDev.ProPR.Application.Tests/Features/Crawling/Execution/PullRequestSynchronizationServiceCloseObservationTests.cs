@@ -106,10 +106,9 @@ public sealed class PullRequestSynchronizationServiceCloseObservationTests
     }
 
     [Fact]
-    public async Task AFailingObservationLeavesTheSealAndTheJobCancellationIntact()
+    public async Task AFailingObservationDefersSealingAndStillCancelsJobs()
     {
-        // Cancelling the superseded jobs of a closed pull request is real work with real cost attached, and the
-        // measurement is the reason this pass exists. Neither may be lost to a failed observation.
+        // A failed final observation defers sealing while closed pull request jobs are cancelled.
         var harness = new Harness();
         harness.Observer
             .ObserveAsync(
@@ -127,7 +126,7 @@ public sealed class PullRequestSynchronizationServiceCloseObservationTests
             Arg.Any<string>(),
             Arg.Any<string>(),
             Arg.Any<CancellationToken>());
-        await harness.Sealer.Received(1).SealAsync(
+        await harness.Sealer.DidNotReceive().SealAsync(
             Arg.Any<CodeInsightPullRequestKey>(),
             "Abandoned",
             Arg.Any<CancellationToken>());

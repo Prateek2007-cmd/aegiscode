@@ -35,6 +35,28 @@ public sealed class EfThreadPassJobRepository(MeisterProPRDbContext dbContext) :
     ];
 
     /// <inheritdoc />
+    public async Task<int> CancelActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default)
+    {
+        if (provider != ScmProvider.AzureDevOps)
+        {
+            return 0;
+        }
+
+        var canonicalScope = scope.TrimEnd('/').ToLowerInvariant();
+        var canonicalProject = project.ToLowerInvariant();
+        var canonicalRepository = repository.ToLowerInvariant();
+        return await dbContext.ThreadPassJobs.Where(job => job.ClientId == clientId && job.Provider == provider &&
+                                                           job.PullRequestId == pullRequestId && job.OrganizationUrl.TrimEnd('/').ToLower() == canonicalScope &&
+                                                           job.ProjectId.ToLower() == canonicalProject && job.RepositoryId.ToLower() == canonicalRepository &&
+                                                           InFlightStatuses.Contains(job.Status))
+            .ExecuteUpdateAsync(
+                set => set.SetProperty(job => job.Status, ThreadPassJobStatus.Cancelled)
+                    .SetProperty(job => job.CompletedAt, (DateTimeOffset?)DateTimeOffset.UtcNow), ct);
+    }
+
+    /// <inheritdoc />
     public async Task<TryClaimThreadPassResult> TryClaimAsync(ThreadPassJob job, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(job);

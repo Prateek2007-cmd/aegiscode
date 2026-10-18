@@ -2,6 +2,10 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Globalization;
+using MeisterDev.ProPR.Application.Interfaces;
+using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -10,7 +14,6 @@ using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.Support;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.Security;
 
@@ -31,11 +34,26 @@ internal sealed class ForgejoReviewThreadStatusProvider(
         Guid clientId,
         CancellationToken ct = default)
     {
+        return (await this.ReadSnapshotAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct)).ReviewerThreads;
+    }
+
+    public async Task<PullRequestThreadSnapshot> ReadSnapshotAsync(
+        string organizationUrl,
+        string projectId,
+        string repositoryId,
+        int pullRequestId,
+        ThreadOwnershipResolver ownership,
+        Guid clientId,
+        CancellationToken ct = default, Guid? connectionId = null)
+    {
         ArgumentNullException.ThrowIfNull(ownership);
 
         var host = new ProviderHostRef(ScmProvider.Forgejo, organizationUrl);
-        var context = await connectionVerifier.VerifyAsync(clientId, host, ct);
+        var context = connectionId.HasValue
+            ? await connectionVerifier.VerifyAsync(new ConnectionDiscoveryContext(clientId, connectionId.Value, host), ct)
+            : await connectionVerifier.VerifyAsync(clientId, host, ct);
         var repositoryPath = await this.ResolveRepositoryPathAsync(context, host, repositoryId, ct);
+        var observedAt = DateTimeOffset.UtcNow;
         var reviews = await this.GetReviewsAsync(context, host, repositoryPath, pullRequestId, ct);
 
         // Forgejo names an author by login, and the connection verification above is the only place the
@@ -57,7 +75,7 @@ internal sealed class ForgejoReviewThreadStatusProvider(
             flattenedComments.AddRange(comments.Select(comment => new ForgejoReviewCommentEnvelope(review.State, comment)));
         }
 
-        return flattenedComments
+        var statuses = flattenedComments
             .GroupBy(comment => BuildThreadKey(comment.Comment))
             .Select(group => group.OrderBy(comment => comment.Comment.CreatedAt)
                 .ThenBy(comment => comment.Comment.Id)
@@ -75,6 +93,20 @@ internal sealed class ForgejoReviewThreadStatusProvider(
                 DetermineCodeChange(group)))
             .ToList()
             .AsReadOnly();
+        var raw = flattenedComments.GroupBy(comment => BuildThreadKey(comment.Comment)).Select(group =>
+        {
+            var comments = group.OrderBy(item => item.Comment.CreatedAt).ThenBy(item => item.Comment.Id).ToList();
+            return new PrCommentThread(
+                null, comments[0].Comment.Path, comments[0].Comment.Position,
+                comments.Select(item => new PrThreadComment(
+                    item.Comment.User?.Login ?? "Unknown", item.Comment.Body ?? "",
+                    ProviderSnapshotCommentIdentity.FromLogin(item.Comment.User?.Login), item.Comment.Id, item.Comment.CreatedAt,
+                    AuthorNativeId: item.Comment.User?.Id.ToString(CultureInfo.InvariantCulture))).ToArray(),
+                DetermineStatus(comments, ownership),
+                SourceAnchor: JsonSerializer.Serialize(new { comments[0].Comment.Position, comments[0].Comment.OriginalPosition }),
+                CodeChangedSinceRaised: DetermineCodeChange(comments));
+        }).ToArray();
+        return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
     }
 
     // An invalidated review comment is one whose diff line no longer exists in the current diff, i.e.
@@ -181,7 +213,7 @@ internal sealed class ForgejoReviewThreadStatusProvider(
         }
 
         var reviews = await response.Content.ReadFromJsonAsync<IReadOnlyList<ForgejoPullReviewResponse>>(ct)
-                      ?? [];
+                      ?? throw new InvalidOperationException("Forgejo thread lookup returned no payload.");
 
         return new ProviderRestPager.RestPage<ForgejoPullReviewResponse>(
             reviews,
@@ -209,7 +241,7 @@ internal sealed class ForgejoReviewThreadStatusProvider(
         }
 
         return await response.Content.ReadFromJsonAsync<IReadOnlyList<ForgejoPullReviewCommentResponse>>(ct)
-               ?? [];
+               ?? throw new InvalidOperationException("Forgejo thread lookup returned no payload.");
     }
 
     // Forgejo clamps a requested page size to the host's configured maximum response length, which is why the

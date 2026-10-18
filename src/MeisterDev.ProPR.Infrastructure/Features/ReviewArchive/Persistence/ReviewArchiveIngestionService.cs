@@ -13,6 +13,13 @@ namespace MeisterDev.ProPR.Infrastructure.Features.ReviewArchive.Persistence;
 /// </summary>
 public sealed class ReviewArchiveIngestionService(IReviewArchiveStore store) : IReviewArchiveIngestionService
 {
+    public async Task HandleThreadsUpdatedAsync(
+        PullRequestRetentionKey key, string state, DateTimeOffset observedAt,
+        IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+    {
+        await store.ApplyThreadObservationAsync(key, state, observedAt, threads, ct);
+    }
+
     public async Task HandleThreadUpdatedAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(evt);

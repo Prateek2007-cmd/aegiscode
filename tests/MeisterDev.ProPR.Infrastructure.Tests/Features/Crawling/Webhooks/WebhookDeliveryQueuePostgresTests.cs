@@ -2,6 +2,10 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Infrastructure.Features.Crawling.Persistence;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Npgsql;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Data.Models;
@@ -213,6 +217,67 @@ public sealed class WebhookDeliveryQueuePostgresTests(PostgresContainerFixture f
             """,
             this._configurationId,
             elapsed.TotalSeconds);
+    }
+
+    [Fact]
+    public async Task AcceptedDeliveryAndDiscussionGenerationCommitOnceAcrossDuplicatesAndRestart()
+    {
+        var target = new PullRequestThreadSnapshotTarget(
+            this._clientId, Guid.NewGuid(), ScmProvider.Forgejo,
+            "https://forge.example", "", "repo", 42);
+        var submission = this.Submission("reliable-delivery") with { DiscussionTarget = target, DiscussionThreadId = "7" };
+        var options = new DbContextOptionsBuilder<MeisterProPRDbContext>().UseNpgsql(fixture.ConnectionString, o => o.UseVector()).Options;
+
+        async Task<bool> AcceptAsync()
+        {
+            await using var connection = new MeisterProPRDbContext(options);
+            return await new WebhookDeliveryQueue(connection).EnqueueAsync(submission);
+        }
+
+        var accepted = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => AcceptAsync()));
+        Assert.Single(accepted.Where(value => value));
+        var store = new DiscussionSynchronizationStore(new PooledDbContextFactory<MeisterProPRDbContext>(options), LocalScmPolicies.Registry);
+        var initial = (await store.ReadAsync(target))!;
+        Assert.Equal(2, initial.RequestedGeneration);
+        await using (var lease = await store.TryAcquireAsync(target, null, true, TimeSpan.FromSeconds(300)))
+        {
+            Assert.NotNull(lease);
+            await lease.CompleteAsync("{}", "[]", lease.ObservedAt, true, true, false, null, TimeSpan.FromSeconds(300));
+        }
+
+        var row = await this._dbContext.WebhookDeliveryQueue.AsNoTracking().SingleAsync(entry => entry.WebhookConfigurationId == this._configurationId);
+        Assert.True(row.DiscussionRefreshRequested);
+        await this.CreateQueue().CompleteAsync(row.Id);
+        Assert.False(await AcceptAsync());
+        Assert.Equal(initial.RequestedGeneration, (await store.ReadAsync(target))!.RequestedGeneration);
+        Assert.True(await this.CreateQueue().EnqueueAsync(submission with { DeliveryKey = "distinct-delivery" }));
+        Assert.Equal(initial.RequestedGeneration + 1, (await store.ReadAsync(target))!.RequestedGeneration);
+        await store.RequestFromDeliveryAsync(target, "7", row.Id);
+        Assert.Equal(initial.RequestedGeneration + 1, (await store.ReadAsync(target))!.RequestedGeneration);
+    }
+
+    [Fact]
+    public async Task AcceptanceFailureRollsBackBothQueueAndSignalAndLegacyRetriesUseOneSignal()
+    {
+        var target = new PullRequestThreadSnapshotTarget(
+            this._clientId, Guid.NewGuid(), ScmProvider.Forgejo,
+            "https://forge.example", "", "repo", 42);
+        var invalid = target with { RepositoryId = new string('x', 513) };
+        var queue = this.CreateQueue();
+        await Assert.ThrowsAsync<PostgresException>(() => queue.EnqueueAsync(this.Submission("failed-delivery") with { DiscussionTarget = invalid }));
+        Assert.False(await this._dbContext.WebhookDeliveryQueue.AnyAsync(entry => entry.WebhookConfigurationId == this._configurationId));
+        Assert.False(await this._dbContext.DiscussionSynchronizationStates.AnyAsync(state => state.ClientId == this._clientId));
+        Assert.True(await queue.EnqueueAsync(this.Submission("legacy-delivery")));
+        var legacy = await this._dbContext.WebhookDeliveryQueue.AsNoTracking().SingleAsync(entry => entry.WebhookConfigurationId == this._configurationId);
+        var options = new DbContextOptionsBuilder<MeisterProPRDbContext>().UseNpgsql(fixture.ConnectionString, o => o.UseVector()).Options;
+        var store = new DiscussionSynchronizationStore(new PooledDbContextFactory<MeisterProPRDbContext>(options), LocalScmPolicies.Registry);
+        await Assert.ThrowsAsync<PostgresException>(() => store.RequestFromDeliveryAsync(invalid, "7", legacy.Id));
+        Assert.False((await this._dbContext.WebhookDeliveryQueue.AsNoTracking().SingleAsync(entry => entry.Id == legacy.Id)).DiscussionRefreshRequested);
+        await store.RequestFromDeliveryAsync(target, "7", legacy.Id);
+        var generation = (await store.ReadAsync(target))!.RequestedGeneration;
+        await store.RequestFromDeliveryAsync(target, "7", legacy.Id);
+        Assert.Equal(generation, (await store.ReadAsync(target))!.RequestedGeneration);
+        Assert.True((await this._dbContext.WebhookDeliveryQueue.AsNoTracking().SingleAsync(entry => entry.Id == legacy.Id)).DiscussionRefreshRequested);
     }
 
     private WebhookDeliveryQueue CreateQueue()

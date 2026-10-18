@@ -3,6 +3,7 @@
 
 using System.Net;
 using System.Text.Json;
+using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
@@ -592,6 +593,51 @@ public sealed class GitHubReviewThreadStatusProviderTests
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() => sut.GetFeedbackStatusesAsync(
             "https://github.com", "acme", "acme/propr",
             42, ThreadOwnershipResolver.None, clientId));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    public async Task AuthoritativeSnapshotRejectsMissingOrInvalidNativeCommentIdentity(long? commentId)
+    {
+        var client = Guid.NewGuid();
+        var host = new ProviderHostRef(ScmProvider.GitHub, "https://github.com");
+        var factory = CreateHttpClientFactory(request => request.RequestUri!.AbsoluteUri == "https://api.github.com/user"
+            ? CreateJsonResponse(new { login = "bot" })
+            : CreateJsonResponse(
+                new
+                {
+                    data = new
+                    {
+                        repository = new
+                        {
+                            pullRequest = new
+                            {
+                                reviewThreads = new
+                                {
+                                    pageInfo = new { hasNextPage = false }, nodes = new[]
+                                    {
+                                        new
+                                        {
+                                            id = "thread", isResolved = false, isOutdated = false, path = "file.cs", line = 1,
+                                            comments = new
+                                            {
+                                                pageInfo = new { hasNextPage = false }, nodes = new[]
+                                                {
+                                                    new { databaseId = commentId, body = "Concern", author = new { login = "human" } },
+                                                }
+                                            },
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }));
+        var sut = new GitHubReviewThreadStatusProvider(new GitHubConnectionVerifier(CreateConnectionRepository(client, host), factory), factory);
+        await Assert.ThrowsAsync<CodeInsightIncompleteEnumerationException>(() => sut.ReadSnapshotAsync(
+            "https://github.com", "acme", "acme/propr", 42, ThreadOwnershipResolver.None, client));
     }
 
     [Fact]

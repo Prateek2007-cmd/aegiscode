@@ -1471,6 +1471,25 @@ public sealed partial class JobRepository(
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ReviewJob>> FindActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope,
+        string project, string repository, int pullRequestId, CancellationToken ct = default)
+    {
+        if (provider != ScmProvider.AzureDevOps)
+        {
+            return [];
+        }
+
+        var candidates = await dbContext.ReviewJobs.AsNoTracking().Where(job => job.ClientId == clientId && job.Provider == provider &&
+                                                                                job.PullRequestId == pullRequestId && ActiveJobStatuses.Contains(job.Status))
+            .ToListAsync(ct);
+        var matches = candidates.Where(job => string.Equals(job.OrganizationUrl.TrimEnd('/'), scope.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
+                                              string.Equals(job.ProjectId, project, StringComparison.OrdinalIgnoreCase) &&
+                                              string.Equals(job.RepositoryId, repository, StringComparison.OrdinalIgnoreCase)).ToList();
+        await this.HydrateSourceScopesAsync(matches, ct);
+        return matches;
+    }
+
     public async Task<IReadOnlyList<ReviewJob>> GetActiveJobsForConfigAsync(
         Guid clientId,
         string organizationUrl,

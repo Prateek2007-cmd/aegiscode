@@ -31,6 +31,14 @@ public sealed class CodeInsightFindingStore(
         ICodeInsightMissStore,
         ICodeInsightRetentionStore
 {
+    public Task<IReadOnlyDictionary<string, CodeInsightMissObservation>> GetObservationsAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+        => this._missStore.GetObservationsAsync(key, providerScope, ct);
+
+    public Task<IReadOnlyDictionary<string, CodeInsightThreadEligibilityObservation>> GetEligibilitiesAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+        => this._missStore.GetEligibilitiesAsync(key, providerScope, ct);
+
     private const string FindingMessagePurpose = "code-insight-finding-message";
 
     private readonly CodeInsightMissStore _missStore = new(dbContext, secretProtectionCodec, contextFactory);
@@ -314,6 +322,21 @@ public sealed class CodeInsightFindingStore(
                 return true;
             },
             ct);
+    }
+
+    public Task<IReadOnlyDictionary<Guid, CodeInsightDispositionRecord?>> GetDispositionsAsync(IReadOnlyList<Guid> findingIds, CancellationToken ct = default)
+    {
+        return this.WithDbAsync<IReadOnlyDictionary<Guid, CodeInsightDispositionRecord?>>(
+            async db =>
+            {
+                var records = await db.CodeInsightFindingDispositions.AsNoTracking().Where(row => findingIds.Contains(row.CodeInsightFindingId))
+                    .ToListAsync(ct);
+                return records.ToDictionary(
+                    row => row.CodeInsightFindingId,
+                    row => (CodeInsightDispositionRecord?)new CodeInsightDispositionRecord(
+                        row.Disposition, row.SourceIntent, row.SourceCodeChange, row.ClassifierVersion, row.ClassifierConfidence, row.RejectionReason,
+                        row.NativeStatus));
+            }, ct);
     }
 
     public Task<CodeInsightDispositionRecord?> GetDispositionAsync(
@@ -844,7 +867,7 @@ public sealed class CodeInsightFindingStore(
             record.ProviderThreadId,
             record.ObservedAt,
             record.NativeStatus, record.CurrentCodeChange, record.CurrentClassifierVersion, record.CurrentClassifierConfidence, record.OutcomeJudgementAttempts,
-            record.ProviderScope, record.OutcomeSourceFingerprint, record.ProviderCommentId);
+            record.ProviderScope, record.OutcomeSourceFingerprint, record.ProviderCommentId, record.CreatedAt);
     }
 
     private async Task WithDbAsync(Func<MeisterProPRDbContext, Task> operation, CancellationToken ct)

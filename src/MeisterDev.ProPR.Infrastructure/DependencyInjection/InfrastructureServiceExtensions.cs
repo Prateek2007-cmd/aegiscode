@@ -20,6 +20,7 @@ using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Infrastructure.AI;
 using MeisterDev.Ai.Providers.Transport;
 using MeisterDev.ProPR.Infrastructure.Data;
+using MeisterDev.ProPR.Infrastructure.Features.Crawling.Persistence;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Hosting;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.AzureDevOps.DependencyInjection;
@@ -84,6 +85,7 @@ public static class InfrastructureServiceExtensions
                 options =>
                     options
                         .UseNpgsql(dbConnectionString, o => o.UseVector())
+                        .AddInterceptors(new DiscussionDatabaseMetricsInterceptor(), new DiscussionWriteFenceInterceptor())
                         // NOSONAR — EF tools 9.x generate snapshots that EF runtime 10.x flags as pending.
                         // The schema is correct, so the spurious warning is suppressed.
                         .ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning)),

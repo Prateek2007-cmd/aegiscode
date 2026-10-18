@@ -33,7 +33,8 @@ public sealed record ThreadUpdatedEvent(
     DateTimeOffset LastActivityAt,
     IReadOnlyList<ThreadUpdatedComment> Comments,
     DateTimeOffset? ObservedAt = null,
-    string? ProviderScope = null);
+    string? ProviderScope = null,
+    bool IsDeleted = false);
 
 /// <summary>
 ///     A single comment within a <see cref="ThreadUpdatedEvent" />. Authorship is decided once by the

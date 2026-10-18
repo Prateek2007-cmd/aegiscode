@@ -12,6 +12,14 @@ public interface ICodeInsightHarvestCoverageRecorder
         return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
     }
 
+    async Task<CodeInsightEvidenceAcknowledgment> RecordCurrentAcknowledgedAsync(
+        CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt,
+        CancellationToken ct = default, bool enumerationComplete = true)
+    {
+        await this.RecordAsync(key, providerScope, allHumanThreadsResolved, observedAt, ct, enumerationComplete);
+        return new CodeInsightEvidenceAcknowledgment(false);
+    }
+
     Task RecordAsync(
         CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt, CancellationToken ct = default,
         bool enumerationComplete = true);

@@ -137,6 +137,7 @@ public sealed class ClientAdminService(
             return null;
         }
 
+        var collectionChanged = codeInsightsCollectionEnabled.HasValue && codeInsightsCollectionEnabled.Value != client.CodeInsightsCollectionEnabled;
         ApplyScalarPatches(
             client,
             isActive,
@@ -157,6 +158,17 @@ public sealed class ClientAdminService(
         ReplaceBudgetCapsIfProvided(client, budgetConfig);
         ReplaceAutoResolveSeveritiesIfProvided(client, autoResolveSeverities);
         ReplaceAdmissionPolicyIfProvided(client, admissionPolicy);
+
+        if (collectionChanged)
+        {
+            foreach (var state in await dbContext.DiscussionSynchronizationStates.Where(state => state.ClientId == clientId).ToListAsync(ct))
+            {
+                state.CollectionGeneration++;
+                state.FullRefreshRequested = true;
+                state.IsClosed = false;
+                state.NextAttemptAt = DateTimeOffset.UtcNow;
+            }
+        }
 
         await dbContext.SaveChangesAsync(ct);
         return await this.GetByIdAsync(clientId, ct);

@@ -46,65 +46,102 @@ public sealed class ReviewArchiveStore(
             ct);
     }
 
-    public Task UpsertThreadAsync(
-        PullRequestRetentionKey key,
-        RetainedThreadSnapshot thread,
-        CancellationToken ct = default)
+    public Task UpsertThreadAsync(PullRequestRetentionKey key, RetainedThreadSnapshot thread, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(thread);
+        return this.UpsertThreadsAsync(key, [thread], ct);
+    }
+
+    public Task UpsertThreadsAsync(PullRequestRetentionKey key, IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+        => this.ApplyThreadsAsync(key, threads, null, null, ct);
+
+    public Task ApplyThreadObservationAsync(
+        PullRequestRetentionKey key, string state, DateTimeOffset observedAt,
+        IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+        => this.ApplyThreadsAsync(key, threads, state, observedAt, ct);
+
+    private Task ApplyThreadsAsync(
+        PullRequestRetentionKey key, IReadOnlyList<RetainedThreadSnapshot> threads,
+        string? state, DateTimeOffset? observedAt, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(thread);
-
         return this.WithDbAsync(
             async db =>
             {
-                var pullRequest = await GetOrCreatePullRequestAsync(db, key, null, null, ct);
-
-                var existingThread = await db.RetainedThreads
-                    .Include(candidate => candidate.Comments)
-                    .FirstOrDefaultAsync(
-                        candidate => candidate.RetainedPullRequestId == pullRequest.Id && candidate.ThreadId == thread.ThreadId,
-                        ct);
-
-                if (existingThread is null)
+                if (threads.Count == 0 && !await db.RetainedPullRequests.AnyAsync(
+                        pr => pr.ClientId == key.ClientId &&
+                              pr.ConnectionId == key.ConnectionId && pr.RepositoryId == key.RepositoryId && pr.PullRequestId == key.PullRequestId, ct))
                 {
-                    existingThread = new RetainedThread
+                    return;
+                }
+
+                var sourceActivity = state is null || threads.Count == 0 ? (DateTimeOffset?)null : threads.Max(thread => thread.UpdatedAt);
+                var pullRequest = await GetOrCreatePullRequestAsync(db, key, state, sourceActivity, ct);
+                var threadIds = threads.Select(thread => thread.ThreadId).ToArray();
+                var existing = await db.RetainedThreads.Include(thread => thread.Comments)
+                    .Where(thread => thread.RetainedPullRequestId == pullRequest.Id && threadIds.Contains(thread.ThreadId))
+                    .ToDictionaryAsync(thread => thread.ThreadId, ct);
+                foreach (var thread in threads)
+                {
+                    existing.TryGetValue(thread.ThreadId, out var stored);
+                    if (thread.IsDeleted)
                     {
-                        Id = Guid.NewGuid(),
-                        RetainedPullRequestId = pullRequest.Id,
-                        ThreadId = thread.ThreadId,
-                    };
-                    db.RetainedThreads.Add(existingThread);
-                }
-                else
-                {
-                    // Replace the comment set so the persisted thread mirrors the snapshot exactly.
-                    db.RetainedThreadComments.RemoveRange(existingThread.Comments);
-                }
-
-                existingThread.FilePath = thread.FilePath;
-                existingThread.Line = thread.Line;
-                existingThread.Status = thread.Status;
-                existingThread.UpdatedAt = thread.UpdatedAt;
-
-                foreach (var comment in thread.Comments)
-                {
-                    db.RetainedThreadComments.Add(
-                        new RetainedThreadComment
+                        if (stored is not null)
                         {
-                            Id = Guid.NewGuid(),
-                            RetainedThreadId = existingThread.Id,
-                            CommentId = comment.CommentId,
-                            AuthorIdentity = comment.AuthorIdentity,
-                            IsAiAuthored = comment.IsAiAuthored,
-                            PublishedAt = comment.PublishedAt,
-                            EncryptedText = secretProtectionCodec.Protect(comment.Text, ThreadCommentPurpose),
-                            OriginatingJobId = comment.OriginatingJobId,
-                        });
+                            db.RetainedThreadComments.RemoveRange(stored.Comments);
+                            db.RetainedThreads.Remove(stored);
+                        }
+
+                        continue;
+                    }
+
+                    if (stored is null)
+                    {
+                        stored = new RetainedThread { Id = Guid.NewGuid(), RetainedPullRequestId = pullRequest.Id, ThreadId = thread.ThreadId };
+                        db.RetainedThreads.Add(stored);
+                    }
+
+                    stored.FilePath = thread.FilePath;
+                    stored.Line = thread.Line;
+                    stored.Status = thread.Status;
+                    stored.UpdatedAt = thread.UpdatedAt;
+                    var groups = stored.Comments.GroupBy(comment => comment.CommentId, StringComparer.Ordinal).ToArray();
+                    var byId = groups.ToDictionary(
+                        group => group.Key,
+                        group => group.OrderBy(comment => comment.PublishedAt).ThenBy(comment => comment.Id).Last(), StringComparer.Ordinal);
+                    var duplicates = groups.SelectMany(group => group.Where(comment => comment.Id != byId[group.Key].Id)).ToArray();
+                    db.RetainedThreadComments.RemoveRange(duplicates);
+                    foreach (var duplicate in duplicates)
+                    {
+                        stored.Comments.Remove(duplicate);
+                    }
+
+                    var present = thread.Comments.Select(comment => comment.CommentId).ToHashSet(StringComparer.Ordinal);
+                    db.RetainedThreadComments.RemoveRange(stored.Comments.Where(comment => !present.Contains(comment.CommentId)));
+                    foreach (var comment in thread.Comments.GroupBy(comment => comment.CommentId, StringComparer.Ordinal).Select(group => group.Last()))
+                    {
+                        if (!byId.TryGetValue(comment.CommentId, out var retained))
+                        {
+                            retained = new RetainedThreadComment { Id = Guid.NewGuid(), RetainedThreadId = stored.Id, CommentId = comment.CommentId };
+                            db.RetainedThreadComments.Add(retained);
+                            byId[comment.CommentId] = retained;
+                        }
+
+                        if (!secretProtectionCodec.IsProtected(retained.EncryptedText) ||
+                            secretProtectionCodec.Unprotect(retained.EncryptedText, ThreadCommentPurpose) != comment.Text)
+                        {
+                            retained.EncryptedText = secretProtectionCodec.Protect(comment.Text, ThreadCommentPurpose);
+                        }
+
+                        retained.AuthorIdentity = comment.AuthorIdentity;
+                        retained.IsAiAuthored = comment.IsAiAuthored;
+                        retained.PublishedAt = comment.PublishedAt;
+                        retained.OriginatingJobId = comment.OriginatingJobId;
+                    }
                 }
 
                 await db.SaveChangesAsync(ct);
-            },
-            ct);
+            }, ct);
     }
 
     public Task SaveFileDiffsAsync(
@@ -479,7 +516,7 @@ public sealed class ReviewArchiveStore(
             pullRequest.PrState = prState;
         }
 
-        if (lastActivityAt is not null)
+        if (lastActivityAt is not null && lastActivityAt.Value > pullRequest.LastActivityAt)
         {
             pullRequest.LastActivityAt = lastActivityAt.Value;
         }

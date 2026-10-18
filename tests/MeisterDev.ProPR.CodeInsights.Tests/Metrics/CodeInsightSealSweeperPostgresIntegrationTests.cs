@@ -2,6 +2,10 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Application.DTOs;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -164,6 +168,32 @@ public sealed class CodeInsightSealSweeperPostgresIntegrationTests(PostgresConta
 
         this._jobs.Received(1).GetById(EarlierJobId);
         this._jobs.DidNotReceive().GetById(LaterJobId);
+    }
+
+    [Fact]
+    public async Task StaleClosedReferenceCannotSealAfterTheAuthoritativeObservationIsActive()
+    {
+        await this.SeedQuietPullRequestAsync("repo-1", 7, 30, [EarlierJobId]);
+        var gate = Substitute.For<ICodeInsightsCollectionGate>();
+        gate.IsCollectionEnabledAsync(this._clientId, Arg.Any<CancellationToken>()).Returns(true);
+        var connections = Substitute.For<IClientScmConnectionRepository>();
+        connections.GetByClientIdAsync(this._clientId, Arg.Any<CancellationToken>()).Returns(
+        [
+            new ClientScmConnectionDto(
+                Guid.NewGuid(), this._clientId, ScmProvider.AzureDevOps, "https://dev.azure.com/org",
+                ScmAuthenticationKind.PersonalAccessToken, "Test", true, "verified", null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+        ]);
+        var discussions = Substitute.For<IDiscussionSynchronizationService>();
+        discussions.ObserveAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>()).Returns(
+            new PullRequestThreadSnapshot(DateTimeOffset.UtcNow, [], []) { CurrentConsumersRetained = true, ObservedPullRequestStatus = PrStatus.Active });
+        var observer = new PullRequestCloseObserver(
+            LocalScmPolicies.Registry, NullLogger<PullRequestCloseObserver>.Instance,
+            scmConnectionRepository: connections, discussionSynchronization: discussions);
+        var sweeper = new CodeInsightSealSweeper(
+            this._dbContext, this._sealer, gate, this._jobs,
+            NullLogger<CodeInsightSealSweeper>.Instance, this._pullRequests, observer);
+        Assert.Equal(0, await sweeper.SweepAsync(10, TimeSpan.FromDays(7)));
+        await this._sealer.DidNotReceive().SealAsync(Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     /// <summary>

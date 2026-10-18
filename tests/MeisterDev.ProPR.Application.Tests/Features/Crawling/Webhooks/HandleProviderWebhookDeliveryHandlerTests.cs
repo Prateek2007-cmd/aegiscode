@@ -4,6 +4,7 @@
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Commands.HandleProviderWebhookDelivery;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Dtos;
@@ -190,6 +191,11 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
         var secretProtectionCodec = Substitute.For<ISecretProtectionCodec>();
         var synchronizationService = Substitute.For<IPullRequestSynchronizationService>();
         var queue = Substitute.For<IWebhookDeliveryQueue>();
+        var discussions = Substitute.For<IDiscussionSynchronizationService>();
+        var discussionTarget = new PullRequestThreadSnapshotTarget(
+            configuration.ClientId, Guid.NewGuid(), host.Provider,
+            configuration.OrganizationUrl, configuration.ProjectId, "repo-1", 42);
+        discussions.ResolveTargetAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>()).Returns(discussionTarget);
 
         // Already queued: this is the provider's retry of a delivery it was already told was accepted.
         queue.EnqueueAsync(Arg.Any<WebhookDeliveryQueueSubmission>(), Arg.Any<CancellationToken>()).Returns(false);
@@ -292,7 +298,7 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
             secretProtectionCodec,
             NullLogger<HandleProviderWebhookDeliveryHandler>.Instance,
             synchronizationService,
-            queue);
+            queue, discussions: discussions);
         var payload = "{\"eventType\":\"ms.vss-code.git-pullrequest-comment-event\"}";
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -305,9 +311,20 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
                 WebhookDeliveryProcessingMode.AcceptAndQueue),
             CancellationToken.None);
 
+        await discussions.DidNotReceive().RequestAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
         Assert.Equal(WebhookDeliveryOutcome.Accepted, result.DeliveryOutcome);
         Assert.Equal(200, result.HttpStatusCode);
         Assert.Contains(result.ActionSummaries, summary => summary.Contains("already queued", StringComparison.Ordinal));
+        await queue.Received(1).EnqueueAsync(
+            Arg.Is<WebhookDeliveryQueueSubmission>(submission => submission.DiscussionTarget == discussionTarget), Arg.Any<CancellationToken>());
+        await sut.HandleAsync(
+            new(
+                ScmProvider.AzureDevOps, "path-key", headers, payload, WebhookDeliveryProcessingMode.Process,
+                Guid.NewGuid(), DiscussionRefreshRequested: true));
+        await discussions.DidNotReceive().RequestAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<string?>(), Arg.Any<CancellationToken>());
+        await discussions.DidNotReceive().RequestFromDeliveryAsync(
+            Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<string?>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+        await synchronizationService.Received(1).SynchronizeAsync(Arg.Any<PullRequestSynchronizationRequest>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

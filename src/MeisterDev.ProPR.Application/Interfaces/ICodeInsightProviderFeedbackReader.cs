@@ -19,7 +19,8 @@ public interface ICodeInsightProviderFeedbackReader
 public sealed record CodeInsightProviderFeedback(
     IReadOnlyList<PrThreadStatusEntry> ReviewerThreads,
     IReadOnlyList<PrCommentThread> Threads,
-    bool ReviewerEnumerationComplete = true);
+    bool ReviewerEnumerationComplete = true,
+    bool CurrentConsumersRetained = false);
 
 /// <summary>The provider read could not establish a complete code-thread enumeration.</summary>
 public sealed class CodeInsightIncompleteEnumerationException() : InvalidOperationException("Provider feedback enumeration is incomplete.");

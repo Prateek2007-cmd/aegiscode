@@ -8,6 +8,7 @@ using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MeisterDev.ProPR.Application.Services;
 
@@ -22,7 +23,10 @@ public sealed partial class PrCrawlService(
     IProviderActivationService? providerActivationService = null,
     IClientRegistry? clientRegistry = null,
     IScmProviderRegistry? providerRegistry = null,
-    IScheduledReviewAuthorityService? scheduledAuthority = null) : IPrCrawlService
+    IScheduledReviewAuthorityService? scheduledAuthority = null,
+    ICrawlTargetRunner? targetRunner = null,
+    ICrawlWorkScheduler? scheduler = null,
+    IOptions<DiscussionSynchronizationOptions>? discussionOptions = null) : IPrCrawlService
 {
     /// <summary>
     ///     Runs one crawl cycle across all active configurations, creating review jobs for newly discovered pull requests.
@@ -33,48 +37,74 @@ public sealed partial class PrCrawlService(
         var configs = await crawlConfigs.GetAllActiveAsync(cancellationToken);
         LogCrawlStarted(logger, configs.Count);
 
+        if (targetRunner is not null && scheduler is not null)
+        {
+            await scheduler.RunAsync(
+                configs, config => new CrawlWorkScope(config.ClientId, config.Provider, config.ProviderScopePath),
+                (config, token) => targetRunner.RunAsync(config, token), cancellationToken);
+            return;
+        }
+
         foreach (var config in configs)
         {
-            if (providerActivationService is not null &&
-                !await providerActivationService.IsEnabledAsync(config.Provider, cancellationToken))
-            {
-                continue;
-            }
+            await this.ProcessConfigurationAsync(config, cancellationToken);
+        }
+    }
 
-            IReadOnlyList<AssignedCodeReviewRef> assignedPrs;
-            ResolvedReviewer reviewerContext;
-            try
-            {
-                assignedPrs = await prFetcher.ListAssignedOpenReviewsAsync(config, cancellationToken);
-                reviewerContext = scheduledAuthority is null
-                    ? await this.ResolveReviewerContextAsync(config, cancellationToken)
-                    : new ResolvedReviewer(null);
-                LogPrsDiscovered(logger, assignedPrs.Count, config.ProviderScopePath, config.ProviderProjectKey);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                LogConfigFetchError(logger, config.ProviderScopePath, config.ProviderProjectKey, ex);
-                continue;
-            }
+    /// <summary>Processes one target using the repositories owned by its operation scope.</summary>
+    public async Task ProcessConfigurationAsync(CrawlConfigurationDto config, CancellationToken cancellationToken = default)
+    {
+        if (providerActivationService is not null &&
+            !await providerActivationService.IsEnabledAsync(config.Provider, cancellationToken))
+        {
+            return;
+        }
 
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await this.ProcessDiscoveredPullRequestsAsync(config, assignedPrs, reviewerContext, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                LogTargetAdmissionError(logger, config.Id, ex);
-            }
+        IReadOnlyList<AssignedCodeReviewRef> assignedPrs;
+        ResolvedReviewer reviewerContext;
+        using var discoveryDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (discussionOptions is not null)
+        {
+            discoveryDeadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(10, discussionOptions.Value.OperationTimeoutSeconds)));
+        }
 
-            try
-            {
-                await this.DetectAbandonedJobsAsync(config, assignedPrs, cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                LogTargetAdmissionError(logger, config.Id, ex);
-            }
+        var discoveryToken = discussionOptions is null ? cancellationToken : discoveryDeadline.Token;
+        try
+        {
+            assignedPrs = await prFetcher.ListAssignedOpenReviewsAsync(config, discoveryToken);
+            reviewerContext = scheduledAuthority is null
+                ? await this.ResolveReviewerContextAsync(config, discoveryToken)
+                : new ResolvedReviewer(null);
+            LogPrsDiscovered(logger, assignedPrs.Count, config.ProviderScopePath, config.ProviderProjectKey);
+        }
+        catch (OperationCanceledException) when (discoveryDeadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Pull-request discovery timed out for crawl configuration {ConfigurationId}.", config.Id);
+            return;
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogConfigFetchError(logger, config.ProviderScopePath, config.ProviderProjectKey, ex);
+            return;
+        }
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await this.ProcessDiscoveredPullRequestsAsync(config, assignedPrs, reviewerContext, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogTargetAdmissionError(logger, config.Id, ex);
+        }
+
+        try
+        {
+            await this.DetectAbandonedJobsAsync(config, assignedPrs, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogTargetAdmissionError(logger, config.Id, ex);
         }
     }
 
@@ -86,6 +116,13 @@ public sealed partial class PrCrawlService(
     {
         foreach (var pr in assignedPrs)
         {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (discussionOptions is not null)
+            {
+                deadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(10, discussionOptions.Value.OperationTimeoutSeconds)));
+            }
+
+            var operationToken = discussionOptions is null ? cancellationToken : deadline.Token;
             try
             {
                 var canonical = config.RepoFilters.Count == 1 && config.RepoFilters[0].CanonicalSourceRef is not null;
@@ -123,25 +160,25 @@ public sealed partial class PrCrawlService(
                     }
 
                     await using (var initialAdmission =
-                                 await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, cancellationToken).ConfigureAwait(false))
+                                 await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, operationToken).ConfigureAwait(false))
                     {
-                        var before = await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false);
-                        if (before is null || !await scheduledAuthority.IsCurrentAsync(pr.Authority, cancellationToken).ConfigureAwait(false))
+                        var before = await this.GetCurrentAdmissionConfigurationAsync(config, pr, operationToken).ConfigureAwait(false);
+                        if (before is null || !await scheduledAuthority.IsCurrentAsync(pr.Authority, operationToken).ConfigureAwait(false))
                         {
                             continue;
                         }
                     }
 
-                    var selectedPrepared = await pullRequestSynchronizationService.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
+                    var selectedPrepared = await pullRequestSynchronizationService.PrepareAsync(request, operationToken).ConfigureAwait(false);
                     await using var selectedAdmission =
-                        await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, cancellationToken).ConfigureAwait(false);
-                    var after = await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false);
-                    if (after is not null && await scheduledAuthority.IsCurrentAsync(pr.Authority, cancellationToken).ConfigureAwait(false))
+                        await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, operationToken).ConfigureAwait(false);
+                    var after = await this.GetCurrentAdmissionConfigurationAsync(config, pr, operationToken).ConfigureAwait(false);
+                    if (after is not null && await scheduledAuthority.IsCurrentAsync(pr.Authority, operationToken).ConfigureAwait(false))
                     {
                         await selectedPrepared.CompleteAsync(
                                 new PullRequestReviewSettings(
                                     after.ProCursorSourceScopeMode,
-                                    after.ProCursorSourceIds ?? [], after.InvalidProCursorSourceIds ?? [], after.ReviewTemperature), cancellationToken)
+                                    after.ProCursorSourceIds ?? [], after.InvalidProCursorSourceIds ?? [], after.ReviewTemperature), operationToken)
                             .ConfigureAwait(false);
                     }
 
@@ -150,24 +187,28 @@ public sealed partial class PrCrawlService(
 
                 if (!canonical)
                 {
-                    if (await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false) is not null)
+                    if (await this.GetCurrentAdmissionConfigurationAsync(config, pr, operationToken).ConfigureAwait(false) is not null)
                     {
-                        await this.TrySynchronizeAsync(request, cancellationToken).ConfigureAwait(false);
+                        await this.TrySynchronizeAsync(request, operationToken).ConfigureAwait(false);
                     }
 
                     continue;
                 }
 
-                var prepared = await pullRequestSynchronizationService.PrepareAsync(request, cancellationToken).ConfigureAwait(false);
-                await using var admission = await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, cancellationToken).ConfigureAwait(false);
-                var current = await this.GetCurrentAdmissionConfigurationAsync(config, pr, cancellationToken).ConfigureAwait(false);
+                var prepared = await pullRequestSynchronizationService.PrepareAsync(request, operationToken).ConfigureAwait(false);
+                await using var admission = await crawlConfigs.AcquireReviewTargetAdmissionAsync(config.ClientId, operationToken).ConfigureAwait(false);
+                var current = await this.GetCurrentAdmissionConfigurationAsync(config, pr, operationToken).ConfigureAwait(false);
                 if (current is not null)
                 {
                     await prepared.CompleteAsync(
                         new PullRequestReviewSettings(
                             current.ProCursorSourceScopeMode,
-                            current.ProCursorSourceIds ?? [], current.InvalidProCursorSourceIds ?? [], current.ReviewTemperature), cancellationToken);
+                            current.ProCursorSourceIds ?? [], current.InvalidProCursorSourceIds ?? [], current.ReviewTemperature), operationToken);
                 }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning("Crawl pull-request operation timed out for configuration {ConfigurationId}.", config.Id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -311,80 +352,94 @@ public sealed partial class PrCrawlService(
                 continue;
             }
 
-            LogAbandonmentCheckStarted(logger, activeJob.Id, activeJob.PullRequestId);
-
-            PrStatus status;
-            if (scheduledAuthority is not null && providerRegistry is not null)
+            using var operationDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (discussionOptions is not null)
             {
-                try
-                {
-                    var authority = await scheduledAuthority.ResolveAsync(config, ct: cancellationToken).ConfigureAwait(false);
-                    var repository = providerRegistry.GetReviewSourcePolicy(config.Provider).CreateCapturedRepository(
-                        config.ProviderScopePath, activeJob.RepositoryId, config.ProviderProjectKey, activeJob.PrRepositoryName ?? activeJob.RepositoryId);
-                    if (activeJob.Provider == config.Provider && activeJob.RepositoryProjectPath is not null)
-                    {
-                        repository = activeJob.RepositoryReference;
-                    }
-
-                    if (!authority.Grants.Any(grant =>
-                            providerRegistry.GetReviewSourcePolicy(config.Provider).MatchesScheduledRepositoryGrant(config, repository, grant)))
-                    {
-                        continue;
-                    }
-
-                    var review = new CodeReviewRef(
-                        repository, CodeReviewPlatformKind.PullRequest, activeJob.PullRequestId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        activeJob.PullRequestId);
-                    var observed = await providerRegistry.GetCodeReviewQueryService(config.Provider).GetReviewAsync(
-                        config.ClientId, review, cancellationToken, authority.DiscoveryContext).ConfigureAwait(false);
-                    if (observed is null ||
-                        observed.ReviewState is not (CodeReviewState.Open or CodeReviewState.Draft or CodeReviewState.Closed or CodeReviewState.Merged) ||
-                        !await scheduledAuthority.IsCurrentAsync(authority, cancellationToken).ConfigureAwait(false))
-                    {
-                        continue;
-                    }
-
-                    status = observed.ReviewState switch
-                    {
-                        CodeReviewState.Merged => PrStatus.Completed,
-                        CodeReviewState.Closed => PrStatus.Abandoned,
-                        _ => PrStatus.Active,
-                    };
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    LogTargetAdmissionError(logger, config.Id, ex);
-                    continue;
-                }
-            }
-            else
-            {
-                status = await prStatusFetcher.GetStatusAsync(
-                    config.ProviderScopePath,
-                    config.ProviderProjectKey,
-                    activeJob.RepositoryId,
-                    activeJob.PullRequestId,
-                    config.ClientId,
-                    cancellationToken);
+                operationDeadline.CancelAfter(TimeSpan.FromSeconds(Math.Max(10, discussionOptions.Value.OperationTimeoutSeconds)));
             }
 
-            await this.TrySynchronizeAsync(
-                new PullRequestSynchronizationRequest
-                {
-                    ActivationSource = PullRequestActivationSource.Crawl,
-                    SummaryLabel = "crawl disappearance",
-                    ClientId = config.ClientId,
-                    ProviderScopePath = config.ProviderScopePath,
-                    ProviderProjectKey = config.ProviderProjectKey,
-                    RepositoryId = activeJob.RepositoryId,
-                    PullRequestId = activeJob.PullRequestId,
-                    PullRequestStatus = status,
+            var operationToken = operationDeadline.Token;
+            try
+            {
+                LogAbandonmentCheckStarted(logger, activeJob.Id, activeJob.PullRequestId);
 
-                    // Synchronization uses the captured family to select the client's provider connection.
-                    Provider = config.Provider,
-                    AllowReviewSubmission = false,
-                },
-                cancellationToken);
+                PrStatus status;
+                if (scheduledAuthority is not null && providerRegistry is not null)
+                {
+                    try
+                    {
+                        var authority = await scheduledAuthority.ResolveAsync(config, ct: operationToken).ConfigureAwait(false);
+                        var repository = providerRegistry.GetReviewSourcePolicy(config.Provider).CreateCapturedRepository(
+                            config.ProviderScopePath, activeJob.RepositoryId, config.ProviderProjectKey, activeJob.PrRepositoryName ?? activeJob.RepositoryId);
+                        if (activeJob.Provider == config.Provider && activeJob.RepositoryProjectPath is not null)
+                        {
+                            repository = activeJob.RepositoryReference;
+                        }
+
+                        if (!authority.Grants.Any(grant =>
+                                providerRegistry.GetReviewSourcePolicy(config.Provider).MatchesScheduledRepositoryGrant(config, repository, grant)))
+                        {
+                            continue;
+                        }
+
+                        var review = new CodeReviewRef(
+                            repository, CodeReviewPlatformKind.PullRequest, activeJob.PullRequestId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                            activeJob.PullRequestId);
+                        var observed = await providerRegistry.GetCodeReviewQueryService(config.Provider).GetReviewAsync(
+                            config.ClientId, review, operationToken, authority.DiscoveryContext).ConfigureAwait(false);
+                        if (observed is null ||
+                            observed.ReviewState is not (CodeReviewState.Open or CodeReviewState.Draft or CodeReviewState.Closed or CodeReviewState.Merged) ||
+                            !await scheduledAuthority.IsCurrentAsync(authority, operationToken).ConfigureAwait(false))
+                        {
+                            continue;
+                        }
+
+                        status = observed.ReviewState switch
+                        {
+                            CodeReviewState.Merged => PrStatus.Completed,
+                            CodeReviewState.Closed => PrStatus.Abandoned,
+                            _ => PrStatus.Active,
+                        };
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        LogTargetAdmissionError(logger, config.Id, ex);
+                        continue;
+                    }
+                }
+                else
+                {
+                    status = await prStatusFetcher.GetStatusAsync(
+                        config.ProviderScopePath,
+                        config.ProviderProjectKey,
+                        activeJob.RepositoryId,
+                        activeJob.PullRequestId,
+                        config.ClientId,
+                        operationToken);
+                }
+
+                await this.TrySynchronizeAsync(
+                    new PullRequestSynchronizationRequest
+                    {
+                        ActivationSource = PullRequestActivationSource.Crawl,
+                        SummaryLabel = "crawl disappearance",
+                        ClientId = config.ClientId,
+                        ProviderScopePath = config.ProviderScopePath,
+                        ProviderProjectKey = config.ProviderProjectKey,
+                        RepositoryId = activeJob.RepositoryId,
+                        PullRequestId = activeJob.PullRequestId,
+                        PullRequestStatus = status,
+
+                        // Synchronization uses the captured family to select the client's provider connection.
+                        Provider = config.Provider,
+                        AllowReviewSubmission = false,
+                    },
+                    operationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning("Pull-request lifecycle synchronization timed out for PR {PullRequestId}.", activeJob.PullRequestId);
+            }
         }
     }
 

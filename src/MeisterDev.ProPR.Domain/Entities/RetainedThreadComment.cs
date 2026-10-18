@@ -20,13 +20,13 @@ public sealed class RetainedThreadComment
     public string CommentId { get; init; } = string.Empty;
 
     /// <summary>Provider-neutral author identity for the comment.</summary>
-    public string AuthorIdentity { get; init; } = string.Empty;
+    public string AuthorIdentity { get; set; } = string.Empty;
 
     /// <summary>Whether the comment was authored by the AI reviewer.</summary>
-    public bool IsAiAuthored { get; init; }
+    public bool IsAiAuthored { get; set; }
 
     /// <summary>UTC timestamp when the comment was published on the provider.</summary>
-    public DateTimeOffset PublishedAt { get; init; }
+    public DateTimeOffset PublishedAt { get; set; }
 
     /// <summary>The comment body, stored encrypted at rest.</summary>
     public string EncryptedText { get; set; } = string.Empty;

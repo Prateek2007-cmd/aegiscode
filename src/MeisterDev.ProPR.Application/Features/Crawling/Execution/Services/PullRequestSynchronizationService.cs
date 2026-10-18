@@ -46,11 +46,12 @@ public sealed class PullRequestSynchronizationService(
     ICodeInsightCloseObserver? codeInsightCloseObserver = null,
     ICodeInsightHarvestCoverageRecorder? harvestCoverageRecorder = null,
     IThreadPassJobRepository? threadPassJobs = null,
-    IReviewPrScanPendingReviewWriter? prScanPendingReviewWriter = null) : IPullRequestSynchronizationService
+    IReviewPrScanPendingReviewWriter? prScanPendingReviewWriter = null,
+    IDiscussionSynchronizationService? discussions = null) : IPullRequestSynchronizationService
 {
     private const string ActivationSourceTagName = "pull_request.activation_source";
     private static readonly ActivitySource CrawlingActivitySource = new("MeisterProPR.Crawling", "1.0.0");
-    private static readonly Meter CrawlingMeter = new("MeisterProPR", "1.0.0");
+    private static readonly Meter CrawlingMeter = new("MeisterDEV.ProPR", "1.0.0");
 
     private static readonly Counter<long> PullRequestSynchronizationCounter = CrawlingMeter.CreateCounter<long>(
         "meisterpropr_pull_request_synchronizations_total",
@@ -87,6 +88,61 @@ public sealed class PullRequestSynchronizationService(
                 return CompleteOutcome(activity, startedAt, request, outcome);
             }
 
+            if (request.DiscussionOnly && discussions is not null)
+            {
+                var observed = await this.TryObserveDiscussionsAsync(request, ct);
+                var liveRequest = ApplyObservation(request, observed);
+                var existingScan = await this.TryGetScanAsync(liveRequest, ct);
+                if (existingScan is not null)
+                {
+                    liveRequest = liveRequest with
+                    {
+                        ProviderScopePath = existingScan.OrganizationUrl,
+                        ProviderProjectKey = existingScan.ProjectId, RepositoryId = existingScan.RepositoryId
+                    };
+                }
+
+                if (liveRequest.PullRequestStatus != PrStatus.Active)
+                {
+                    return CompleteOutcome(activity, startedAt, liveRequest, await this.SynchronizeLifecycleAsync(liveRequest, ct, observed));
+                }
+
+                if (observed.ObservedPullRequestStatus != PrStatus.Active || observed.ReadFailure is not null ||
+                    ReviewRevisionKeys.TryGetStoredKey(observed.ObservedReviewRevision) is null)
+                {
+                    return CompleteOutcome(
+                        activity, startedAt, liveRequest, new(
+                            PullRequestSynchronizationReviewDecision.None,
+                            PullRequestSynchronizationLifecycleDecision.None,
+                            ["Discussion evidence or the current review revision is unavailable; review admission remains pending."]));
+                }
+
+                if (blockedPullRequestStore is not null && (await blockedPullRequestStore.IsBlockedAsync(
+                                                                liveRequest.ClientId,
+                                                                liveRequest.ProviderScopePath, liveRequest.ProviderProjectKey, liveRequest.RepositoryId,
+                                                                liveRequest.PullRequestId, ct) ||
+                                                            await blockedPullRequestStore.IsBlockedByProviderCoordinatesAsync(
+                                                                liveRequest.ClientId, liveRequest.Provider,
+                                                                liveRequest.ProviderScopePath, liveRequest.ProviderProjectKey, liveRequest.RepositoryId,
+                                                                liveRequest.PullRequestId, ct)))
+                {
+                    return CompleteOutcome(
+                        activity, startedAt, liveRequest, new(
+                            PullRequestSynchronizationReviewDecision.None,
+                            PullRequestSynchronizationLifecycleDecision.None,
+                            ["Discussion evidence was refreshed; the pull request remains blocked from review processing."]));
+                }
+
+                var onlyStatuses = new ReviewerThreadStatusSnapshot(liveRequest, new ThreadOwnershipSnapshot(this, liveRequest), observed);
+                var onlyIteration = await this.ResolveIterationIdAsync(liveRequest, ct);
+                var onlyThreadPass = await this.EvaluateThreadPassAsync(liveRequest, onlyIteration, onlyStatuses, ct);
+                return CompleteOutcome(
+                    activity, startedAt, liveRequest,
+                    onlyThreadPass.ApplyTo(
+                        new PullRequestSynchronizationOutcome(
+                            PullRequestSynchronizationReviewDecision.None, PullRequestSynchronizationLifecycleDecision.None, [])));
+            }
+
             if (!request.AllowReviewSubmission)
             {
                 outcome = new PullRequestSynchronizationOutcome(
@@ -119,18 +175,20 @@ public sealed class PullRequestSynchronizationService(
                 return CompleteOutcome(activity, startedAt, request, outcome);
             }
 
-            // Whether a thread is ProPR's is one question with one answer for the whole pass, and every
-            // consumer below asks this. It resolves on first use so a pass with no thread consumers issues
-            // no provenance query at all.
+            var observation = discussions is null ? null : await this.TryObserveDiscussionsAsync(request, ct);
+            request = ApplyObservation(request, observation);
+            if (request.PullRequestStatus != PrStatus.Active)
+            {
+                return CompleteOutcome(activity, startedAt, request, await this.SynchronizeLifecycleAsync(request, ct, observation));
+            }
+
             var ownership = new ThreadOwnershipSnapshot(this, request);
-
-            // Thread memory reconciliation and the review decision both need ProPR's threads for this pass.
-            // Fetching once means one provider round trip per pull request per cycle instead of two, and
-            // both consumers now reason about the same point-in-time snapshot.
-            var threadStatuses = new ReviewerThreadStatusSnapshot(request, ownership);
-
-            await this.RunThreadMemoryStateMachineAsync(request, threadStatuses, ct);
-            await this.IngestRetainedThreadsAsync(request, ownership, ct);
+            var threadStatuses = new ReviewerThreadStatusSnapshot(request, ownership, observation);
+            if (discussions is null)
+            {
+                await this.RunThreadMemoryStateMachineAsync(request, threadStatuses, ct);
+                await this.IngestRetainedThreadsAsync(request, ownership, ct);
+            }
 
             var iterationId = await this.ResolveIterationIdAsync(request, ct);
             activity?.SetTag("pull_request.iteration_id", iterationId);
@@ -178,10 +236,22 @@ public sealed class PullRequestSynchronizationService(
             return new PreparedPullRequestSynchronization(request, (_, _) => Task.FromResult(outcome));
         }
 
+        var observation = discussions is null ? null : await this.TryObserveDiscussionsAsync(request, ct);
+        request = ApplyObservation(request, observation);
+        if (request.PullRequestStatus != PrStatus.Active)
+        {
+            var lifecycle = await this.SynchronizeLifecycleAsync(request, ct, observation);
+            return new PreparedPullRequestSynchronization(request, (_, _) => Task.FromResult(lifecycle));
+        }
+
         var ownership = new ThreadOwnershipSnapshot(this, request);
-        var threadStatuses = new ReviewerThreadStatusSnapshot(request, ownership);
-        await this.RunThreadMemoryStateMachineAsync(request, threadStatuses, ct);
-        await this.IngestRetainedThreadsAsync(request, ownership, ct);
+        var threadStatuses = new ReviewerThreadStatusSnapshot(request, ownership, observation);
+        if (discussions is null)
+        {
+            await this.RunThreadMemoryStateMachineAsync(request, threadStatuses, ct);
+            await this.IngestRetainedThreadsAsync(request, ownership, ct);
+        }
+
         var iterationId = await this.ResolveIterationIdAsync(request, ct);
         var threadPass = await this.EvaluateThreadPassAsync(request, iterationId, threadStatuses, ct);
 
@@ -218,6 +288,40 @@ public sealed class PullRequestSynchronizationService(
                     throw;
                 }
             });
+    }
+
+    private static PullRequestSynchronizationRequest ApplyObservation(PullRequestSynchronizationRequest request, PullRequestThreadSnapshot? observation) =>
+        observation is null
+            ? request
+            : request with
+            {
+                ReviewRevision = observation.ObservedReviewRevision ?? request.ReviewRevision,
+                PullRequestStatus = observation.ObservedPullRequestStatus ?? request.PullRequestStatus,
+                CandidateIterationId = observation.ObservedReviewRevision is null
+                    ? request.CandidateIterationId
+                    : ReviewRevisionObservationSequence.FromRevision(observation.ObservedReviewRevision),
+            };
+
+    private async Task<PullRequestThreadSnapshot> TryObserveDiscussionsAsync(PullRequestSynchronizationRequest request, CancellationToken ct)
+    {
+        try
+        {
+            return await discussions!.ObserveAsync(request, ct);
+        }
+        catch (DiscussionObservationUnavailableException exception) when (!ct.IsCancellationRequested)
+        {
+            return new PullRequestThreadSnapshot(DateTimeOffset.UtcNow, [], [], false)
+            {
+                ReadFailure = exception, ObservedPullRequestStatus = exception.PullRequestStatus, ObservedReviewRevision = exception.ReviewRevision,
+            };
+        }
+        catch (Exception exception) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning(
+                "Discussion observation failed for PR {PullRequestId}; file review intake continues. {ExceptionType}, code {ErrorCode}.", request.PullRequestId,
+                exception.GetType().Name, exception.HResult);
+            return new PullRequestThreadSnapshot(DateTimeOffset.UtcNow, [], [], false) { ReadFailure = exception };
+        }
     }
 
     private async Task<PullRequestSynchronizationOutcome> CompleteReviewIntakeAsync(
@@ -535,7 +639,7 @@ public sealed class PullRequestSynchronizationService(
 
     private async Task<PullRequestSynchronizationOutcome> SynchronizeLifecycleAsync(
         PullRequestSynchronizationRequest request,
-        CancellationToken ct)
+        CancellationToken ct, PullRequestThreadSnapshot? authoritativeObservation = null)
     {
         // The pull request has stopped being active: merged, abandoned, or closed. This is the moment the
         // correctness measurement is taken, and it runs before the job reconciliation below because the common
@@ -547,14 +651,56 @@ public sealed class PullRequestSynchronizationService(
         // and there will be no later one. Its harvested judgement was taken while the thread was still open,
         // before the acted-on question could have an answer, and the seal counts only judgements already
         // recorded.
-        await this.ObserveThreadsOnCloseAsync(request, ct);
-        await this.SealCodeInsightMetricAsync(request, ct);
+        var finalObservationRetained = discussions is null;
+        if (discussions is not null)
+        {
+            try
+            {
+                authoritativeObservation ??= await discussions.ObserveAsync(request, ct);
+            }
+            catch (DiscussionObservationUnavailableException exception) when (!ct.IsCancellationRequested)
+            {
+                authoritativeObservation = new PullRequestThreadSnapshot(DateTimeOffset.UtcNow, [], [], false)
+                {
+                    ReadFailure = exception, ObservedPullRequestStatus = exception.PullRequestStatus, ObservedReviewRevision = exception.ReviewRevision,
+                };
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(
+                    "Final discussion synchronization failed for PR {PullRequestId}: {ExceptionType}, code {ErrorCode}.", request.PullRequestId,
+                    exception.GetType().Name, exception.HResult);
+            }
+
+            if (authoritativeObservation?.ObservedPullRequestStatus is not (PrStatus.Completed or PrStatus.Abandoned))
+            {
+                return new(
+                    PullRequestSynchronizationReviewDecision.None, PullRequestSynchronizationLifecycleDecision.None,
+                    ["Pull-request closure is unconfirmed; lifecycle work remains pending."]);
+            }
+
+            request = request with { PullRequestStatus = authoritativeObservation.ObservedPullRequestStatus.Value };
+            finalObservationRetained = authoritativeObservation.CurrentConsumersRetained;
+        }
+
+        if (finalObservationRetained && await this.ObserveThreadsOnCloseAsync(request, ct))
+        {
+            await this.SealCodeInsightMetricAsync(request, ct);
+        }
 
         var activeJobs = await jobs.GetActiveJobsForConfigAsync(
             request.ClientId,
             request.ProviderScopePath,
             request.ProviderProjectKey,
             ct);
+        if (request.DiscussionOnly)
+        {
+            var equivalent = await jobs.FindActiveByProviderCoordinatesAsync(
+                request.ClientId, request.Provider, request.ProviderScopePath,
+                request.ProviderProjectKey, request.RepositoryId, request.PullRequestId, ct);
+            activeJobs = activeJobs.Concat(equivalent).DistinctBy(job => job.Id).ToList();
+        }
+
         var matchingJobs = activeJobs
             .Where(job => IsSamePullRequestTarget(job, request)
                           && job.PullRequestId == request.PullRequestId)
@@ -612,6 +758,13 @@ public sealed class PullRequestSynchronizationService(
 
         try
         {
+            if (request.DiscussionOnly && request.Provider == ScmProvider.AzureDevOps)
+            {
+                return await threadPassJobs.CancelActiveByProviderCoordinatesAsync(
+                    request.ClientId, request.Provider,
+                    request.ProviderScopePath, request.ProviderProjectKey, request.RepositoryId, request.PullRequestId, ct);
+            }
+
             return await threadPassJobs.CancelActiveForPullRequestAsync(
                 request.ClientId,
                 request.ProviderScopePath,
@@ -626,45 +779,40 @@ public sealed class PullRequestSynchronizationService(
                 ex,
                 "Cancelling thread-pass work for closed PR {PullRequestId} failed.",
                 request.PullRequestId);
+            if (request.DiscussionOnly)
+            {
+                throw;
+            }
+
             return 0;
         }
     }
 
-    /// <summary>
-    ///     Observes the pull request's threads one last time as it closes, so a judgement taken while a thread
-    ///     was open can be revised before the measurement is sealed.
-    /// </summary>
-    /// <remarks>
-    ///     The same seam the seal sweep calls, so a close this pass sees and a close only the sweep finds are
-    ///     observed identically. Costs nothing when the observer is not registered. A failed observation is
-    ///     swallowed so the seal and the job reconciliation below still run; a cancelled one is not, and ends
-    ///     the pass.
-    /// </remarks>
-    private async Task ObserveThreadsOnCloseAsync(
-        PullRequestSynchronizationRequest request,
-        CancellationToken ct)
+    /// <summary>Requires retained close evidence before sealing, while allowing lifecycle cancellation to proceed on failure.</summary>
+    private async Task<bool> ObserveThreadsOnCloseAsync(PullRequestSynchronizationRequest request, CancellationToken ct)
     {
         if (codeInsightCloseObserver is null)
         {
-            return;
+            return true;
         }
 
         try
         {
-            await codeInsightCloseObserver.ObserveAsync(
-                new CodeInsightPullRequestKey(request.ClientId, request.RepositoryId, request.PullRequestId),
-                request.ProviderScopePath,
-                request.ProviderProjectKey,
-                ct);
+            var key = new CodeInsightPullRequestKey(request.ClientId, request.RepositoryId, request.PullRequestId);
+            if (codeInsightCloseObserver is ICodeInsightAcknowledgedCloseObserver acknowledged)
+            {
+                return (await acknowledged.ObserveAcknowledgedAsync(key, request.ProviderScopePath, request.ProviderProjectKey, ct)).Retained;
+            }
+
+            await codeInsightCloseObserver.ObserveAsync(key, request.ProviderScopePath, request.ProviderProjectKey, ct);
+            return true;
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (Exception exception) when (!ct.IsCancellationRequested)
         {
-            // The observer already swallows its own failures. Catching again here means a substitute or a
-            // future implementation that does not cannot cost the measurement or the job cancellation.
             logger.LogWarning(
-                ex,
-                "Observing the threads of closed PR {PullRequestId} failed; the measurement is sealed from the judgements already recorded.",
-                request.PullRequestId);
+                "Close discussion observation failed for PR {PullRequestId}: {ExceptionType}, code {ErrorCode}.",
+                request.PullRequestId, exception.GetType().Name, exception.HResult);
+            return false;
         }
     }
 
@@ -963,7 +1111,9 @@ public sealed class PullRequestSynchronizationService(
                 request.ProviderProjectKey,
                 request.RepositoryId,
                 request.PullRequestId,
-                ct);
+                ct) ?? await prScanRepository.FindByProviderCoordinatesAsync(
+                request.ClientId, request.Provider,
+                request.ProviderScopePath, request.ProviderProjectKey, request.RepositoryId, request.PullRequestId, ct);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -1065,6 +1215,14 @@ public sealed class PullRequestSynchronizationService(
         if (job.ClientId != request.ClientId)
         {
             return false;
+        }
+
+        if (request.DiscussionOnly && request.Provider == ScmProvider.AzureDevOps)
+        {
+            return job.Provider == request.Provider && job.PullRequestId == request.PullRequestId &&
+                   string.Equals(job.OrganizationUrl.TrimEnd('/'), request.ProviderScopePath.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(job.ProjectId, request.ProviderProjectKey, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(job.RepositoryId, request.RepositoryId, StringComparison.OrdinalIgnoreCase);
         }
 
         if (request.CodeReview is not null)
@@ -1640,14 +1798,15 @@ public sealed class PullRequestSynchronizationService(
     /// </remarks>
     private sealed class ReviewerThreadStatusSnapshot(
         PullRequestSynchronizationRequest request,
-        ThreadOwnershipSnapshot ownership)
+        ThreadOwnershipSnapshot ownership,
+        PullRequestThreadSnapshot? observation = null)
     {
-        private IReadOnlyList<PrThreadStatusEntry>? threads;
+        private IReadOnlyList<PrThreadStatusEntry>? threads = observation?.ReadFailure is null ? observation?.ReviewerThreads : null;
         private ExceptionDispatchInfo? _lastFailure;
         private bool _frozen;
         public bool HasObservation => this.threads is not null;
         public bool IsUnobservedAfterPreparation => this._frozen && this.threads is null && this._lastFailure is null;
-        public DateTimeOffset ObservedAt { get; private set; }
+        public DateTimeOffset ObservedAt { get; private set; } = observation?.ObservedAt ?? default;
 
         public void Freeze() => this._frozen = true;
 
@@ -1661,6 +1820,11 @@ public sealed class PullRequestSynchronizationService(
             IReviewerThreadStatusFetcher fetcher,
             CancellationToken ct)
         {
+            if (observation?.ReadFailure is not null)
+            {
+                ExceptionDispatchInfo.Capture(observation.ReadFailure).Throw();
+            }
+
             if (this.threads is not null)
             {
                 return this.threads;

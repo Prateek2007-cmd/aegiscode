@@ -11,6 +11,27 @@ namespace MeisterDev.ProPR.Application.Features.ReviewArchive;
 /// </summary>
 public interface IReviewArchiveStore
 {
+    async Task ApplyThreadObservationAsync(
+        PullRequestRetentionKey key, string state, DateTimeOffset observedAt,
+        IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+    {
+        if (threads.Count > 0)
+        {
+            await this.TouchPullRequestAsync(key, state, threads.Max(thread => thread.UpdatedAt), ct);
+        }
+
+        await this.UpsertThreadsAsync(key, threads, ct);
+    }
+
+    /// <summary>Applies changed threads in one pull-request operation and preserves unchanged ciphertext.</summary>
+    async Task UpsertThreadsAsync(PullRequestRetentionKey key, IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+    {
+        foreach (var thread in threads)
+        {
+            await this.UpsertThreadAsync(key, thread, ct);
+        }
+    }
+
     /// <summary>
     ///     Upserts the retained pull-request row identified by <paramref name="key" /> and sets its
     ///     latest activity timestamp and lifecycle state. Creates the row when absent.

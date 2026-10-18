@@ -1277,6 +1277,156 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.ToTable("code_insight_thread_eligibility", (string)null);
                 });
 
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.DiscussionObservationFenceState", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("Completed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("completed");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at");
+
+                    b.Property<Guid>("OwnerStateId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_state_id");
+
+                    b.Property<Guid>("Token")
+                        .HasColumnType("uuid")
+                        .HasColumnName("token");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("discussion_observation_fences", (string)null);
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.DiscussionSynchronizationState", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<long>("CollectionGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("collection_generation");
+
+                    b.Property<long>("CompletedGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("completed_generation");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<bool>("FullRefreshRequested")
+                        .HasColumnType("boolean")
+                        .HasColumnName("full_refresh_requested");
+
+                    b.Property<bool>("IsClosed")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_closed");
+
+                    b.Property<DateTimeOffset?>("LastFullReconciledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_full_reconciled_at");
+
+                    b.Property<DateTimeOffset?>("LastObservedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_observed_at");
+
+                    b.Property<string>("LastReviewRevision")
+                        .HasColumnType("text")
+                        .HasColumnName("last_review_revision");
+
+                    b.Property<DateTimeOffset?>("LeaseExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at");
+
+                    b.Property<Guid?>("LeaseToken")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_token");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at");
+
+                    b.Property<long>("ObservationSequence")
+                        .HasColumnType("bigint")
+                        .HasColumnName("observation_sequence");
+
+                    b.Property<string>("PendingThreadIdsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("pending_thread_ids_json");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("integer")
+                        .HasColumnName("provider");
+
+                    b.Property<string>("ProviderProjectKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("provider_project_key");
+
+                    b.Property<string>("ProviderScopePath")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("provider_scope_path");
+
+                    b.Property<int>("PullRequestId")
+                        .HasColumnType("integer")
+                        .HasColumnName("pull_request_id");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("repository_id");
+
+                    b.Property<long>("RequestedGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("requested_generation");
+
+                    b.Property<long>("RetentionGeneration")
+                        .HasColumnType("bigint")
+                        .HasColumnName("retention_generation");
+
+                    b.Property<string>("ReviewerSummariesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reviewer_summaries_json");
+
+                    b.Property<string>("ThreadProgressJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("thread_progress_json");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NextAttemptAt", "IsClosed")
+                        .HasDatabaseName("ix_discussion_sync_due");
+
+                    b.HasIndex("ClientId", "ConnectionId", "Provider", "ProviderScopePath", "ProviderProjectKey", "RepositoryId", "PullRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("uq_discussion_sync_scope");
+
+                    b.ToTable("discussion_synchronization_states", (string)null);
+                });
+
             modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.MemoryActivityLogEntry", b =>
                 {
                     b.Property<Guid>("Id")
@@ -6807,6 +6957,12 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("delivery_key");
+
+                    b.Property<bool>("DiscussionRefreshRequested")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("discussion_refresh_requested");
 
                     b.Property<DateTimeOffset>("EligibleAt")
                         .HasColumnType("timestamp with time zone")

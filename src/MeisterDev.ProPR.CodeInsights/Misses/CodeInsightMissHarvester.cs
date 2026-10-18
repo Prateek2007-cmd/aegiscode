@@ -30,11 +30,82 @@ public sealed partial class CodeInsightMissHarvester(
     ICodeInsightTaxonomyService? taxonomy = null,
     ReviewerPerformanceCountProjector? performanceProjector = null) : ICodeInsightMissHarvester
 {
+    private CodeInsightDiscussionBatch? _batch;
+    private IReadOnlyDictionary<string, CodeInsightMissObservation>? _batchObservations;
+    private readonly Dictionary<string, CodeInsightThreadEligibilityObservation> _batchEligibilities = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _invalidated = new(StringComparer.Ordinal);
+    private CodeInsightTaxonomyDto? _batchTaxonomy;
+
+    private bool MatchesBatch(ThreadUpdatedEvent evt) => this._batch is not null && this._batch.Key.ClientId == evt.ClientId &&
+                                                         this._batch.Key.RepositoryId == evt.RepositoryId &&
+                                                         this._batch.Key.PullRequestId == evt.PullRequestId &&
+                                                         this._batch.ProviderScope == evt.ProviderScope && this._batch.ConnectionId == evt.ConnectionId;
+
+    public string DependencyVersion => classifier.ClassifierVersion + ":" + typeClassifier?.ClassifierVersion;
+
+    public async Task PrepareDiscussionBatchAsync(CodeInsightDiscussionBatch batch, CancellationToken ct = default)
+    {
+        this._batch = batch;
+        this._batchObservations = await missStore.GetObservationsAsync(batch.Key, batch.ProviderScope, ct);
+        this._batchEligibilities.Clear();
+        foreach (var item in await missStore.GetEligibilitiesAsync(batch.Key, batch.ProviderScope, ct))
+        {
+            this._batchEligibilities.Add(item.Key, item.Value);
+        }
+
+        this._invalidated.Clear();
+        this._batchTaxonomy = taxonomy is null ? null : await taxonomy.GetAssignableTaxonomyAsync(batch.Key.ClientId, ct);
+    }
+
+    public async Task<CodeInsightEvidenceAcknowledgment> ObserveCurrentAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
+    {
+        if (!await this.HandleAsync(evt, false, ct))
+        {
+            return new(false);
+        }
+
+        var source = await this.ReadObservationAsync(
+            new(evt.ClientId, evt.RepositoryId, evt.PullRequestId), evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        return new(
+            source is null || source.ExcludedAsOwnFinding || (!source.JudgementFailed || source.FailedAttempts >= 3) &&
+            (!source.DimensionJudgementFailed || source.FailedDimensionAttempts >= 3));
+    }
+
+    private Task<CodeInsightMissObservation?> ReadObservationAsync(
+        CodeInsightPullRequestKey key, string threadId, CancellationToken ct, Guid? connectionId, string? providerScope)
+    {
+        return this._batchObservations is not null && this._batch?.Key == key && this._batch.ProviderScope == providerScope &&
+               this._batch.ConnectionId == connectionId && !this._invalidated.Contains(threadId)
+            ? Task.FromResult(this._batchObservations.GetValueOrDefault(threadId))
+            : missStore.GetObservationAsync(key, threadId, ct, connectionId, providerScope);
+    }
+
+    private Task<CodeInsightThreadEligibilityObservation?> ReadEligibilityAsync(
+        CodeInsightPullRequestKey key, string threadId, string providerScope, Guid connectionId, CancellationToken ct)
+    {
+        return this._batch?.Key == key && this._batch.ProviderScope == providerScope && this._batch.ConnectionId == connectionId
+            ? Task.FromResult(this._batchEligibilities.GetValueOrDefault(threadId))
+            : missStore.GetThreadEligibilityAsync(key, threadId, providerScope, ct);
+    }
+
     public async Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(evt.ThreadId))
+        {
+            return new(false);
+        }
+
+        this._batch = null;
+        this._batchObservations = null;
+        this._batchEligibilities.Clear();
         var key = new CodeInsightPullRequestKey(evt.ClientId, evt.RepositoryId, evt.PullRequestId);
+        if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+        {
+            return new(false);
+        }
+
         if (!evt.Comments.Any(comment => comment.IsAiAuthored) && string.IsNullOrWhiteSpace(BuildDiscussion(evt))
-                                                               && await missStore.GetObservationAsync(
+                                                               && await this.ReadObservationAsync(
                                                                    key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope) is not null)
         {
             return await missStore.TryPreserveHistoricalMissAsync(
@@ -56,7 +127,7 @@ public sealed partial class CodeInsightMissHarvester(
             return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
         }
 
-        var retained = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        var retained = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
         return retained is { ExcludedAsOwnFinding: false } && (retained.JudgementFailed || retained.DimensionJudgementFailed)
             ? new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable)
             : new CodeInsightEvidenceAcknowledgment(true);
@@ -98,16 +169,48 @@ public sealed partial class CodeInsightMissHarvester(
         }
     }
 
+    private async Task<ThreadUpdatedEvent> ResolveEventScopeAsync(HarvestAttempt attempt, CancellationToken ct)
+    {
+        var evt = attempt.Event;
+        if (evt.ProviderScope is null)
+        {
+            evt = evt with { ProviderScope = await findingStore.ResolveProviderScopeAsync(evt.ClientId, evt.ConnectionId, ct) ?? string.Empty };
+            attempt.Event = evt;
+        }
+
+        return evt;
+    }
+
     private async Task<bool> ObserveCoreAsync(HarvestAttempt attempt, DateTimeOffset observedAt, CancellationToken ct)
     {
         var evt = attempt.Event;
         var historical = attempt.Historical;
-        // The producer captures authorship; own-thread outcomes belong to disposition collection.
-        if (evt.Comments.Count == 0)
+        if (string.IsNullOrWhiteSpace(evt.ThreadId))
         {
-            return true;
+            return false;
         }
 
+        if (evt.IsDeleted || evt.Comments.Count == 0)
+        {
+            if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+            {
+                return false;
+            }
+
+            evt = await this.ResolveEventScopeAsync(attempt, ct);
+            var deletionKey = new CodeInsightPullRequestKey(evt.ClientId, evt.RepositoryId, evt.PullRequestId);
+            var deletion = await missStore.ObserveThreadEligibilityAsync(deletionKey, evt.ThreadId, evt.ProviderScope ?? "", true, observedAt, ct);
+            if (!deletion.Retained)
+            {
+                return false;
+            }
+
+            this._invalidated.Add(evt.ThreadId);
+            var retained = await this.ReadObservationAsync(deletionKey, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+            return await this.ExcludeOwnFindingAsync(deletionKey, evt, "", observedAt, retained, ct);
+        }
+
+        // The producer captures authorship; own-thread outcomes belong to disposition collection.
         var key = new CodeInsightPullRequestKey(evt.ClientId, evt.RepositoryId, evt.PullRequestId);
         var threadResolved = this.IsResolved(evt.Status);
         var discussion = BuildDiscussion(evt);
@@ -127,17 +230,23 @@ public sealed partial class CodeInsightMissHarvester(
             return evt.Comments.Any(comment => comment.IsAiAuthored);
         }
 
-        evt = evt with
+        evt = await this.ResolveEventScopeAsync(attempt, ct);
+        if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
         {
-            ProviderScope = evt.ProviderScope ?? await findingStore.ResolveProviderScopeAsync(evt.ClientId, evt.ConnectionId, ct) ?? string.Empty,
-        };
-        attempt.Event = evt;
+            return false;
+        }
+
         var eligibility = await missStore.ObserveThreadEligibilityAsync(
             key, evt.ThreadId, evt.ProviderScope ?? string.Empty, evt.Comments.Any(comment => comment.IsAiAuthored), observedAt, ct,
             historical ? CodeInsightObservationMode.HistoricalBackfill : CodeInsightObservationMode.Current);
         if (!eligibility.Retained)
         {
             return false;
+        }
+
+        if (this.MatchesBatch(evt))
+        {
+            this._batchEligibilities[evt.ThreadId] = eligibility;
         }
 
         if (evt.Comments.Any(comment => comment.IsAiAuthored))
@@ -147,18 +256,29 @@ public sealed partial class CodeInsightMissHarvester(
                 return await this.AcknowledgedAsync(key, evt, observedAt, false, ct);
             }
 
-            var retainedSource = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+            var retainedSource = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
             return await this.ExcludeOwnFindingAsync(key, evt, "", observedAt, retainedSource, ct);
         }
 
-        var judgedThreadResolved = await missStore.GetJudgedThreadResolvedAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        if (this.MatchesBatch(evt))
+        {
+            this._batchEligibilities[evt.ThreadId] = eligibility;
+        }
+
+        var batchSource = this.MatchesBatch(evt) ? this._batchObservations?.GetValueOrDefault(evt.ThreadId) : null;
+        var judgedThreadResolved = !this.MatchesBatch(evt)
+            ? await missStore.GetJudgedThreadResolvedAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope)
+            : batchSource is null
+                ? null
+                : (bool?)(batchSource.JudgementFailed ? batchSource.FailedAttempts >= 3 : batchSource.JudgedThreadResolved);
         var alreadyHarvested = judgedThreadResolved is not null;
-        var fingerprint = SourceFingerprint(evt, discussion, classifier.ClassifierVersion);
-        var source = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        var fingerprint = SourceFingerprint(
+            evt, discussion, this.MatchesBatch(evt) ? classifier.ClassifierVersion + ":" + this._batch!.DependencyVersion : classifier.ClassifierVersion);
+        var source = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
         var sameSource = source?.SourceFingerprint == fingerprint &&
                          (historical || source.ClassifierVersion is null || source.ClassifierVersion == classifier.ClassifierVersion);
 
-        var findings = await findingStore.GetFindingsForPullRequestAsync(key, ct);
+        var findings = this.MatchesBatch(evt) ? this._batch!.Findings : await findingStore.GetFindingsForPullRequestAsync(key, ct);
         attempt.OwnFindingsObserved = true;
         if (!string.IsNullOrEmpty(evt.ProviderScope))
         {
@@ -177,6 +297,11 @@ public sealed partial class CodeInsightMissHarvester(
 
         if (source is not null)
         {
+            if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+            {
+                return false;
+            }
+
             if (attempt.Historical)
             {
                 var preserved = await missStore.TryPreserveHistoricalMissAsync(
@@ -198,6 +323,7 @@ public sealed partial class CodeInsightMissHarvester(
 
             if (historical || source.ClassifierVersion is null || source.ClassifierVersion == classifier.ClassifierVersion)
             {
+                this._invalidated.Add(evt.ThreadId);
                 var acknowledgment = await missStore.ObserveUnchangedMissAsync(
                     key, evt.ThreadId, fingerprint, observedAt, ct, evt.ConnectionId,
                     typeClassifier is not null && taxonomy is not null ? typeClassifier.ClassifierVersion : null, providerScope: evt.ProviderScope);
@@ -208,7 +334,7 @@ public sealed partial class CodeInsightMissHarvester(
                 }
             }
 
-            source = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+            source = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
             sameSource = source?.SourceFingerprint == fingerprint &&
                          (historical || source.ClassifierVersion is null || source.ClassifierVersion == classifier.ClassifierVersion);
         }
@@ -309,6 +435,7 @@ public sealed partial class CodeInsightMissHarvester(
         }
 
         record = record with { ObservationMode = historical ? CodeInsightObservationMode.HistoricalBackfill : CodeInsightObservationMode.Current };
+        this._invalidated.Add(evt.ThreadId);
         var retained = await this.RetainAsync(key, record, alreadyHarvested, ct);
         await this.ProjectIfChangedAsync(key, retained, ct);
         if (retained && record.CountsAsMiss)
@@ -335,6 +462,11 @@ public sealed partial class CodeInsightMissHarvester(
         }
         else
         {
+            if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+            {
+                return null;
+            }
+
             var request = new HumanMissJudgementRequest(evt.ClientId, evt.ThreadId, evt.FilePath, discussion, threadResolved);
             if (classifier is IHumanMissClassifierAttemptReporter attemptReporter)
             {
@@ -363,7 +495,14 @@ public sealed partial class CodeInsightMissHarvester(
             try
             {
                 dimensionAttempted = true;
-                var vocabulary = await taxonomy.GetAssignableTaxonomyAsync(evt.ClientId, ct);
+                if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+                {
+                    return new MissDimensionClassification(null, false, false);
+                }
+
+                var vocabulary = this.MatchesBatch(evt) && this._batchTaxonomy is not null
+                    ? this._batchTaxonomy
+                    : await taxonomy.GetAssignableTaxonomyAsync(evt.ClientId, ct);
                 var result = await typeClassifier.ClassifyAsync(
                     new FindingClassificationRequest(
                         evt.ClientId,
@@ -384,9 +523,9 @@ public sealed partial class CodeInsightMissHarvester(
     private async Task<bool> RetainFailedObservationAsync(HarvestAttempt attempt, DateTimeOffset observedAt, CancellationToken ct)
     {
         var evt = attempt.Event;
-        if (evt.Comments.Count == 0)
+        if (evt.IsDeleted || evt.Comments.Count == 0)
         {
-            return true;
+            return false;
         }
 
         if (evt.Comments.Any(comment => comment.IsAiAuthored))
@@ -413,7 +552,7 @@ public sealed partial class CodeInsightMissHarvester(
         var key = new CodeInsightPullRequestKey(evt.ClientId, evt.RepositoryId, evt.PullRequestId);
         if (!attempt.OwnFindingsObserved)
         {
-            var eligibility = await missStore.GetThreadEligibilityAsync(key, evt.ThreadId, evt.ProviderScope ?? string.Empty, ct);
+            var eligibility = await this.ReadEligibilityAsync(key, evt.ThreadId, evt.ProviderScope ?? string.Empty, evt.ConnectionId, ct);
             // A completed judgment cannot establish that the reviewer still has no overlapping finding.
             if (eligibility is not { ExcludedFromHumanMisses: true } || eligibility.SourceObservedAt < observedAt)
             {
@@ -423,9 +562,10 @@ public sealed partial class CodeInsightMissHarvester(
 
         var version = string.IsNullOrWhiteSpace(classifier.ClassifierVersion) ? "collection-failed" : classifier.ClassifierVersion;
         var fingerprint = SourceFingerprint(evt, discussion, version);
-        var source = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        var source = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
         if (source is not null)
         {
+            this._invalidated.Add(evt.ThreadId);
             var acknowledgment = await missStore.ObserveUnchangedMissAsync(
                 key, evt.ThreadId, fingerprint, observedAt, ct, evt.ConnectionId,
                 typeClassifier is not null && taxonomy is not null ? typeClassifier.ClassifierVersion : null, providerScope: evt.ProviderScope);
@@ -461,8 +601,8 @@ public sealed partial class CodeInsightMissHarvester(
             return true;
         }
 
-        var current = await missStore.GetObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
-        var eligibility = await missStore.GetThreadEligibilityAsync(key, evt.ThreadId, evt.ProviderScope ?? string.Empty, ct);
+        var current = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
+        var eligibility = await this.ReadEligibilityAsync(key, evt.ThreadId, evt.ProviderScope ?? string.Empty, evt.ConnectionId, ct);
         if (eligibility is { ExcludedFromHumanMisses: true } && eligibility.SourceObservedAt >= observedAt)
         {
             return current is null || (current.ExcludedAsOwnFinding && current.SourceObservedAt >= eligibility.SourceObservedAt);
@@ -480,6 +620,12 @@ public sealed partial class CodeInsightMissHarvester(
             return true;
         }
 
+        if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+        {
+            return false;
+        }
+
+        this._invalidated.Add(evt.ThreadId);
         var acknowledgment = await missStore.ObserveUnchangedMissAsync(
             key, evt.ThreadId, fingerprint, observedAt, ct, evt.ConnectionId,
             excludedAsOwnFinding: true, providerScope: evt.ProviderScope);

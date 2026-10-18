@@ -2,17 +2,18 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Globalization;
+using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Security;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Reviewing;
@@ -24,7 +25,7 @@ internal sealed class GitHubReviewThreadStatusProvider(
     // Read across pages from pageInfo, as the fetcher's copy of this query is. The comment connection inside
     // each thread is still one page, so a thread past a hundred comments contributes its first hundred.
     private const string GitHubReviewThreadsQuery =
-        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt author { login } } } } } } } }";
+        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt author { login ... on User { databaseId } ... on Bot { databaseId } } } } } } } } }";
 
     public ScmProvider Provider => ScmProvider.GitHub;
 
@@ -46,11 +47,29 @@ internal sealed class GitHubReviewThreadStatusProvider(
         string organizationUrl, string projectId, string repositoryId, int pullRequestId,
         ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct, bool requireComplete)
     {
+        return (await this.ReadSnapshotCoreAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, requireComplete))
+            .ReviewerThreads;
+    }
+
+    public Task<PullRequestThreadSnapshot> ReadSnapshotAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct = default, Guid? connectionId = null)
+    {
+        return this.ReadSnapshotCoreAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct, true, connectionId);
+    }
+
+    private async Task<PullRequestThreadSnapshot> ReadSnapshotCoreAsync(
+        string organizationUrl, string projectId, string repositoryId, int pullRequestId,
+        ThreadOwnershipResolver ownership, Guid clientId, CancellationToken ct, bool requireComplete, Guid? connectionId = null)
+    {
         ArgumentNullException.ThrowIfNull(ownership);
 
         var host = new ProviderHostRef(ScmProvider.GitHub, organizationUrl);
-        var context = await connectionVerifier.VerifyAsync(clientId, host, ct);
+        var context = connectionId.HasValue
+            ? await connectionVerifier.VerifyAsync(new ConnectionDiscoveryContext(clientId, connectionId.Value, host), ct)
+            : await connectionVerifier.VerifyAsync(clientId, host, ct);
         var repositoryPath = await this.ResolveRepositoryPathAsync(context, host, repositoryId, ct);
+        var observedAt = DateTimeOffset.UtcNow;
         var threads = await this.GetReviewThreadsAsync(context, host, repositoryPath, pullRequestId, ct, requireComplete);
 
         // GitHub names an author by login, and the connection verification above is the only place the
@@ -59,7 +78,7 @@ internal sealed class GitHubReviewThreadStatusProvider(
         // a connection of their own, decide with the identity too.
         ownership.ContributeIdentity(new ThreadOwnerIdentity(Login: context.AuthenticatedActorLogin));
 
-        return threads
+        var statuses = threads
             .Where(thread => thread.Comments.Nodes.Count > 0)
             .Where(thread => ownership.OwnsThread(ToCommentRef(thread.Comments.Nodes[0])))
             .Select(thread => new PrThreadStatusEntry(
@@ -78,6 +97,15 @@ internal sealed class GitHubReviewThreadStatusProvider(
                     : ThreadAnchorCodeChange.Unchanged))
             .ToList()
             .AsReadOnly();
+        var raw = threads.Select(thread => new PrCommentThread(
+            thread.Id, thread.Path, thread.Line,
+            thread.Comments.Nodes.Select(comment => new PrThreadComment(
+                comment.Author?.Login ?? "Unknown", comment.Body ?? "",
+                ProviderSnapshotCommentIdentity.FromLogin(comment.Author?.Login), comment.DatabaseId ?? 0, comment.CreatedAt,
+                AuthorNativeId: comment.Author?.DatabaseId?.ToString(CultureInfo.InvariantCulture))).ToArray(),
+            thread.IsResolved == true ? "Fixed" : "Active", SourceAnchor: JsonSerializer.Serialize(new { thread.Path, thread.Line, thread.IsOutdated }),
+            CodeChangedSinceRaised: thread.IsOutdated == false ? ThreadAnchorCodeChange.Unchanged : ThreadAnchorCodeChange.Unknown)).ToArray();
+        return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
     }
 
     private async Task<string> ResolveRepositoryPathAsync(
@@ -199,7 +227,8 @@ internal sealed class GitHubReviewThreadStatusProvider(
                                                           || connection.Nodes.Any(thread =>
                                                               thread.IsResolved is null || string.IsNullOrWhiteSpace(thread.Id) ||
                                                               thread.Comments?.Nodes is null || thread.Comments.PageInfo is null
-                                                              || thread.Comments.PageInfo.HasNextPage)))
+                                                              || thread.Comments.PageInfo.HasNextPage ||
+                                                              thread.Comments.Nodes.Any(comment => comment.DatabaseId is null or <= 0))))
         {
             throw new CodeInsightIncompleteEnumerationException();
         }
@@ -294,5 +323,8 @@ internal sealed class GitHubReviewThreadStatusProvider(
         DateTimeOffset CreatedAt,
         [property: JsonPropertyName("author")] GitHubActorNode? Author);
 
-    private sealed record GitHubActorNode([property: JsonPropertyName("login")] string? Login);
+    private sealed record GitHubActorNode(
+        [property: JsonPropertyName("login")] string? Login,
+        [property: JsonPropertyName("databaseId")]
+        long? DatabaseId = null);
 }

@@ -14,12 +14,15 @@ public sealed class ReviewJobMetrics : IDisposable
     private readonly Counter<long> _mentionScanCycles;
     private readonly Histogram<double> _mentionScanDuration;
     private readonly Meter _meter;
+    private readonly Histogram<double> _discussionDelay;
 
     /// <summary>Creates the metrics meter and instruments.</summary>
     /// <param name="scopeFactory">Factory used to resolve scoped repositories for observations.</param>
     public ReviewJobMetrics(IServiceScopeFactory scopeFactory)
     {
-        this._meter = new Meter("MeisterProPR", "1.0.0");
+        this._meter = new Meter("MeisterDEV.ProPR", "1.0.0");
+        this._discussionDelay = this._meter.CreateHistogram<double>(
+            "meisterpropr_discussion_scheduling_delay_seconds", "s", "Delay between discussion eligibility and processing.");
         this.JobDuration = this._meter.CreateHistogram<double>(
             "review_job_duration_seconds",
             "s",
@@ -68,6 +71,11 @@ public sealed class ReviewJobMetrics : IDisposable
         var tags = CreateProviderTags(provider);
         tags.Add("job_outcome", outcome);
         this.JobDuration.Record(durationSeconds, tags);
+    }
+
+    public void RecordDiscussionDelay(ScmProvider provider, double seconds)
+    {
+        this._discussionDelay.Record(Math.Max(0, seconds), CreateProviderTags(provider));
     }
 
     /// <summary>Records one crawl duration tagged with provider.</summary>

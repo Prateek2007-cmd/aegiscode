@@ -16,6 +16,17 @@ namespace MeisterDev.ProPR.CodeInsights.Ports;
 /// </remarks>
 public interface ICodeInsightDispositionStore
 {
+    async Task<IReadOnlyDictionary<Guid, CodeInsightDispositionRecord?>> GetDispositionsAsync(IReadOnlyList<Guid> findingIds, CancellationToken ct = default)
+    {
+        var results = new Dictionary<Guid, CodeInsightDispositionRecord?>();
+        foreach (var id in findingIds)
+        {
+            results[id] = await this.GetDispositionAsync(id, ct);
+        }
+
+        return results;
+    }
+
     /// <summary>
     ///     Records what became of a finding, and returns whether this call was the one that decided it.
     ///     An already-decided finding is left exactly as it was and <see langword="false" /> is returned: a

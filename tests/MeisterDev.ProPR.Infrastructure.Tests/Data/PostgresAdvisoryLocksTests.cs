@@ -196,6 +196,51 @@ public sealed class PostgresAdvisoryLocksTests(PostgresContainerFixture fixture)
         Assert.True(await ProbeProtocolAsync(observer, "bigint", "", key ^ 1, 1));
     }
 
+    [Fact]
+    public async Task NonblockingBorrowedSessionLeasePreservesConnectionAndIndependentLocks()
+    {
+        fixture.SkipIfUnavailable();
+        await using var source = new NpgsqlConnection(fixture.ConnectionString);
+        await using var observer = new NpgsqlConnection(fixture.ConnectionString);
+        await source.OpenAsync();
+        await observer.OpenAsync();
+        var key = $"try-lock-test:{Guid.NewGuid():N}";
+        var otherKey = $"try-lock-test:{Guid.NewGuid():N}";
+        var lease = await PostgresAdvisoryLocks.TryAcquireSessionAsync(source, key, CancellationToken.None);
+        Assert.NotNull(lease);
+        await using var independent = await PostgresAdvisoryLocks.TryAcquireSessionAsync(source, otherKey, CancellationToken.None);
+        Assert.NotNull(independent);
+        using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+        Assert.Null(await PostgresAdvisoryLocks.TryAcquireSessionAsync(observer, key, bounded.Token));
+        Assert.False(await TryAcquireAsync(observer, otherKey));
+        await lease.DisposeAsync();
+        await lease.DisposeAsync();
+        Assert.Equal(System.Data.ConnectionState.Open, source.State);
+        Assert.True(await TryAcquireAsync(observer, key));
+        await UnlockAsync(observer, key);
+        Assert.False(await TryAcquireAsync(observer, otherKey));
+    }
+
+    [Fact]
+    public async Task CancelledBorrowedSessionAcquisitionPreservesTheExistingLease()
+    {
+        fixture.SkipIfUnavailable();
+        await using var source = new NpgsqlConnection(fixture.ConnectionString);
+        await using var observer = new NpgsqlConnection(fixture.ConnectionString);
+        await source.OpenAsync();
+        await observer.OpenAsync();
+        var key = $"cancelled-lock-test:{Guid.NewGuid():N}";
+        await using var lease = await PostgresAdvisoryLocks.TryAcquireSessionAsync(source, key, CancellationToken.None);
+        Assert.NotNull(lease);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            PostgresAdvisoryLocks.TryAcquireSessionAsync(source, key, cancelled.Token));
+
+        Assert.False(await TryAcquireAsync(observer, key));
+    }
+
     private MeisterProPRDbContext CreateContext() => new(
         new DbContextOptionsBuilder<MeisterProPRDbContext>()
             .UseNpgsql(fixture.ConnectionString, npgsql => npgsql.UseVector()).Options);

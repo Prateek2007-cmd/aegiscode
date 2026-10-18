@@ -350,6 +350,64 @@ public sealed class CodeInsightDispositionServiceTests
             codeChange);
     }
 
+    [Fact]
+    public async Task ReusedBatchCannotBypassAnotherClientsOrHostsCollectionGate()
+    {
+        var harness = new Harness();
+        await harness.Service.PrepareDiscussionBatchAsync(new(new(ClientId, "repo", 1), "scope-a", [], "v1"));
+        harness.Gate.ClearReceivedCalls();
+        harness.Gate.IsCollectionEnabledAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(false);
+        var other = Guid.NewGuid();
+        await harness.Service.ObserveCurrentAsync(
+            Resolved(ThreadResolutionIntent.ClaimsFix, ThreadAnchorCodeChange.Changed) with
+            {
+                ClientId = other, ProviderScope = "scope-b"
+            });
+        await harness.Service.ObserveCurrentAsync(
+            Resolved(ThreadResolutionIntent.ClaimsFix, ThreadAnchorCodeChange.Changed) with
+            {
+                ProviderScope = "scope-b"
+            });
+        await harness.Gate.Received(1).IsCollectionEnabledAsync(other, Arg.Any<CancellationToken>());
+        await harness.Gate.Received(1).IsCollectionEnabledAsync(ClientId, Arg.Any<CancellationToken>());
+        await harness.Dispositions.DidNotReceive().RecordDispositionAsync(
+            Arg.Any<Guid>(), Arg.Any<CodeInsightDispositionRecord>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MatchingBatchCannotRetainAnUnchangedOutcomeAfterCollectionIsDisabled()
+    {
+        var harness = new Harness();
+        var evidence = Substitute.For<ICodeInsightPerformanceEvidenceStore>();
+        var finding = new CodeInsightFindingView(
+            FindingId, Guid.NewGuid(), "rev", 1, "file.cs", 1, CommentSeverity.Warning,
+            "Concern", "9001", DateTimeOffset.UtcNow, ProviderScope: "scope-a");
+        var service = new CodeInsightDispositionService(
+            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.CompatibilityCodec,
+            harness.Store, harness.Dispositions, harness.Classifier, harness.Gate, NullLogger<CodeInsightDispositionService>.Instance,
+            performanceEvidence: evidence);
+        harness.Dispositions.GetDispositionsAsync(Arg.Any<IReadOnlyList<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new Dictionary<Guid, CodeInsightDispositionRecord?>
+                {
+                    [FindingId] = new(
+                        CodeInsightDisposition.Addressed,
+                        ThreadResolutionIntent.ClaimsFix, ThreadAnchorCodeChange.Changed, null, null)
+                });
+        await service.PrepareDiscussionBatchAsync(new(new(ClientId, "repo-1", 7), "scope-a", [finding], "v1"));
+        harness.Gate.IsCollectionEnabledAsync(ClientId, Arg.Any<CancellationToken>()).Returns(false);
+        var ack = await service.ObserveCurrentAsync(
+            Resolved(ThreadResolutionIntent.ClaimsFix, ThreadAnchorCodeChange.Changed) with
+            {
+                ProviderScope = "scope-a", NativeStatus = "Fixed"
+            });
+        Assert.False(ack.Retained);
+        await evidence.DidNotReceiveWithAnyArgs().ObserveUnchangedOutcomeAsync(default, default!, default!, default);
+        await harness.Dispositions.DidNotReceive().RecordDispositionAsync(
+            Arg.Any<Guid>(), Arg.Any<CodeInsightDispositionRecord>(), Arg.Any<CancellationToken>());
+        await harness.Classifier.DidNotReceive().JudgeAsync(Arg.Any<DisregardedFindingJudgementRequest>(), Arg.Any<CancellationToken>());
+    }
+
     private sealed class Harness
     {
         public Harness()

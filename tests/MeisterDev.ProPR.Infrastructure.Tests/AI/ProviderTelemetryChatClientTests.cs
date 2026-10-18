@@ -57,7 +57,7 @@ public sealed class ProviderTelemetryChatClientTests : IDisposable
         {
             InstrumentPublished = (instrument, listener) =>
             {
-                if (instrument.Name == "meisterpropr_ai_provider_calls_total")
+                if (instrument.Meter.Name == "MeisterDEV.ProPR" && instrument.Name == "meisterpropr_ai_provider_calls_total")
                 {
                     listener.EnableMeasurementEvents(instrument);
                 }

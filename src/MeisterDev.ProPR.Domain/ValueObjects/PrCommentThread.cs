@@ -1,6 +1,8 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using MeisterDev.ProPR.Domain.Enums;
+
 namespace MeisterDev.ProPR.Domain.ValueObjects;
 
 /// <summary>
@@ -24,7 +26,11 @@ public sealed record PrCommentThread(
     string? FilePath,
     int? LineNumber,
     IReadOnlyList<PrThreadComment> Comments,
-    string? Status = null);
+    string? Status = null,
+    bool IsDeleted = false,
+    string? SourceAnchor = null,
+    ThreadAnchorCodeChange CodeChangedSinceRaised = ThreadAnchorCodeChange.Unknown,
+    DateTimeOffset? LastUpdatedAt = null);
 
 /// <summary>
 ///     Represents a single comment within a <see cref="PrCommentThread" />.
@@ -69,4 +75,6 @@ public sealed record PrThreadComment(
     long CommentId = 0,
     DateTimeOffset? PublishedAt = null,
     bool IsSystemGenerated = false,
-    string? AuthorNativeId = null);
+    string? AuthorNativeId = null,
+    bool IsDeleted = false,
+    DateTimeOffset? LastUpdatedAt = null);

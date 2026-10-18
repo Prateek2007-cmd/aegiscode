@@ -15,6 +15,13 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// </remarks>
 public interface ICodeInsightMissHarvester
 {
+    string DependencyVersion => "legacy";
+
+    async Task<CodeInsightEvidenceAcknowledgment> ObserveCurrentAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
+        => new(await this.HandleThreadObservedAsync(evt, ct));
+
+    Task PrepareDiscussionBatchAsync(CodeInsightDiscussionBatch batch, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Preserves consistent historical concern evidence and acknowledges completed retention.</summary>
     Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(ThreadUpdatedEvent evt, CancellationToken ct = default)
     {

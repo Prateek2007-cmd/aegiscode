@@ -34,7 +34,7 @@ public interface ICodeInsightPerformanceEvidenceStore
     /// <summary>Confirms durable current evidence after processing, including superseding observations.</summary>
     Task<CodeInsightEvidenceAcknowledgment> AcknowledgeOutcomeAsync(
         Guid findingId, CodeInsightPublicationReceipt receipt, string nativeStatus, string fingerprint,
-        DateTimeOffset observedAt, CancellationToken ct = default)
+        DateTimeOffset observedAt, CancellationToken ct = default, bool allowFailedAttemptCap = false)
     {
         return Task.FromResult(new CodeInsightEvidenceAcknowledgment(false));
     }

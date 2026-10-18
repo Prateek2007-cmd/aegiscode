@@ -307,6 +307,37 @@ public sealed class CodeInsightMissStore(
             }, ct);
     }
 
+    public Task<IReadOnlyDictionary<string, CodeInsightMissObservation>> GetObservationsAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        return this.WithDbAsync<IReadOnlyDictionary<string, CodeInsightMissObservation>>(
+            async db =>
+            {
+                var aggregateId = await FindPullRequestIdAsync(db, key, ct);
+                return await db.CodeInsightMisses.AsNoTracking().Where(row => row.CodeInsightPullRequestId == aggregateId && row.ProviderScope == providerScope)
+                    .ToDictionaryAsync(
+                        row => row.ProviderThreadId, row => new CodeInsightMissObservation(
+                            row.SourceFingerprint, row.JudgementFailed, row.FailedJudgementAttempts,
+                            row.IsSubstantive, row.WasActedOn, row.IsInScope, row.ClassifierConfidence, row.JudgedThreadResolved, row.TypeMembership,
+                            row.Qualifier, row.DimensionClassifierVersion, row.DimensionConfidence, row.DimensionJudgementFailed, row.FailedDimensionAttempts,
+                            row.SourceObservedAt, row.ExcludedAsOwnFinding, row.ClassifierVersion), ct);
+            }, ct);
+    }
+
+    public Task<IReadOnlyDictionary<string, CodeInsightThreadEligibilityObservation>> GetEligibilitiesAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+    {
+        return this.WithDbAsync<IReadOnlyDictionary<string, CodeInsightThreadEligibilityObservation>>(
+            async db =>
+            {
+                var aggregateId = await FindPullRequestIdAsync(db, key, ct);
+                return await db.CodeInsightThreadEligibility.AsNoTracking()
+                    .Where(row => row.CodeInsightPullRequestId == aggregateId && row.ProviderScope == providerScope)
+                    .ToDictionaryAsync(
+                        row => row.ProviderThreadId, row => new CodeInsightThreadEligibilityObservation(row.SourceObservedAt, row.ExcludedFromHumanMisses), ct);
+            }, ct);
+    }
+
     public Task<CodeInsightMissObservation?> GetObservationAsync(
         CodeInsightPullRequestKey key, string threadId, CancellationToken ct = default, Guid? connectionId = null, string? providerScope = null)
     {

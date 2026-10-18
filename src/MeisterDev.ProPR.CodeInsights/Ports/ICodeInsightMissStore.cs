@@ -42,6 +42,15 @@ public sealed record CodeInsightThreadEligibilityObservation(DateTimeOffset Sour
 
 public interface ICodeInsightMissStore
 {
+    Task<IReadOnlyDictionary<string, CodeInsightMissObservation>> GetObservationsAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, CodeInsightMissObservation>>(new Dictionary<string, CodeInsightMissObservation>());
+
+    Task<IReadOnlyDictionary<string, CodeInsightThreadEligibilityObservation>> GetEligibilitiesAsync(
+        CodeInsightPullRequestKey key, string providerScope, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, CodeInsightThreadEligibilityObservation>>(
+            new Dictionary<string, CodeInsightThreadEligibilityObservation>());
+
     /// <summary>Preserves a successful judgment over the same scoped concern and resolution state.</summary>
     Task<CodeInsightEvidenceAcknowledgment> TryPreserveHistoricalMissAsync(
         CodeInsightPullRequestKey key, CodeInsightHistoricalMissObservation observation, CancellationToken ct = default)

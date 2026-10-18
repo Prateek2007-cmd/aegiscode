@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
+using MeisterDev.ProPR.Infrastructure.Features.Crawling.Persistence;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -48,6 +49,15 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
 
         try
         {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(ct);
+            var entryId = Guid.NewGuid();
+            if (submission.DiscussionTarget is { } target && (target.Provider != submission.Provider ||
+                                                              !await dbContext.WebhookConfigurations.AnyAsync(
+                                                                  row => row.Id == submission.WebhookConfigurationId && row.ClientId == target.ClientId, ct)))
+            {
+                throw new InvalidOperationException("The discussion target does not belong to the webhook configuration.");
+            }
+
             // Eligibility comes from the database clock, here and everywhere below, because it is compared
             // against the database clock when the row is claimed. Two replicas whose own clocks disagree
             // would otherwise enqueue deliveries that are either invisible until the skew passes or ahead
@@ -60,7 +70,7 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
                 VALUES ({0}, {1}, {2}, {3}, {4}, NULLIF({5}, ''), CAST({6} AS jsonb), {7}, now(), 0, 0, now())
                 """,
                 [
-                    Guid.NewGuid(),
+                    entryId,
                     submission.WebhookConfigurationId,
                     (int)submission.Provider,
                     submission.PathKey,
@@ -75,6 +85,15 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
                 ],
                 ct);
 
+            if (submission.DiscussionTarget is not null)
+            {
+                var now = await dbContext.Database.SqlQuery<DateTimeOffset>($"SELECT CURRENT_TIMESTAMP AS \"Value\"").SingleAsync(ct);
+                await DiscussionSynchronizationStore.RequestInTransactionAsync(dbContext, submission.DiscussionTarget, submission.DiscussionThreadId, now, ct);
+                await dbContext.WebhookDeliveryQueue.Where(row => row.Id == entryId)
+                    .ExecuteUpdateAsync(set => set.SetProperty(row => row.DiscussionRefreshRequested, true), ct);
+            }
+
+            await transaction.CommitAsync(ct);
             return true;
         }
         catch (PostgresException ex)
@@ -116,7 +135,8 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
                           path_key AS "PathKey",
                           headers AS "HeadersJson",
                           payload AS "Payload",
-                          attempts AS "Attempts"
+                          attempts AS "Attempts",
+                          discussion_refresh_requested AS "DiscussionRefreshRequested"
                 """,
                 owner,
                 claimDuration.TotalSeconds)
@@ -131,7 +151,7 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
                 row.PathKey,
                 row.HeadersJson,
                 row.Payload,
-                row.Attempts);
+                row.Attempts, row.DiscussionRefreshRequested);
     }
 
     /// <inheritdoc />
@@ -200,5 +220,6 @@ public sealed class WebhookDeliveryQueue(MeisterProPRDbContext dbContext) : IWeb
         string PathKey,
         string HeadersJson,
         string Payload,
-        int Attempts);
+        int Attempts,
+        bool DiscussionRefreshRequested);
 }

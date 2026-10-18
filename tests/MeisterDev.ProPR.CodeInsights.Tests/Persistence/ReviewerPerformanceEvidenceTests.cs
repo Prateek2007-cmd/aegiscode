@@ -2,6 +2,12 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.CodeInsights.Dispositions;
+using MeisterDev.ProPR.CodeInsights.Misses;
+using MeisterDev.ProPR.CodeInsights.Ports;
+using MeisterDev.ProPR.Domain.Events;
+using Microsoft.Extensions.Logging.Abstractions;
 using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.CodeInsights.Persistence;
 using MeisterDev.ProPR.Domain.Entities;
@@ -305,6 +311,127 @@ public sealed class ReviewerPerformanceEvidenceTests
         Assert.Equal("new-comment", finding.ProviderCommentId);
         Assert.Equal(CodeInsightDuplicateState.ConfirmedDuplicate, finding.DuplicateState);
         Assert.Equal(stamp, finding.PerformanceEvidenceUpdatedAt);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task CurrentDispositionAcknowledgesOnlyCompletedJudgmentOrTheExistingAttemptCap(int successfulAttempt)
+    {
+        await using var db = Db();
+        var key = new CodeInsightPullRequestKey(Guid.NewGuid(), "repo", 1);
+        db.CodeInsightPullRequests.Add(new() { Id = Guid.NewGuid(), ClientId = key.ClientId, RepositoryId = key.RepositoryId, PullRequestId = 1 });
+        await db.SaveChangesAsync();
+        var finding = Finding((await db.CodeInsightPullRequests.SingleAsync()).Id, "scope-a");
+        db.Add(finding);
+        await db.SaveChangesAsync();
+        var codec = Substitute.For<ISecretProtectionCodec>();
+        codec.Unprotect(Arg.Any<string>(), Arg.Any<string>()).Returns("finding");
+        var findings = new CodeInsightFindingStore(db, codec);
+        var gate = Substitute.For<ICodeInsightsCollectionGate>();
+        gate.IsCollectionEnabledAsync(key.ClientId, Arg.Any<CancellationToken>()).Returns(true);
+        var classifier = Substitute.For<IDisregardedFindingClassifier>();
+        classifier.ClassifierVersion.Returns("judge-v1");
+        var attempts = 0;
+        classifier.JudgeAsync(Arg.Any<DisregardedFindingJudgementRequest>(), Arg.Any<CancellationToken>()).Returns(_ =>
+            ++attempts == successfulAttempt ? new DisregardedFindingJudgement(true, .9, "incorrect") : null);
+        var service = new CodeInsightDispositionService(
+            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.CompatibilityCodec,
+            findings, findings, classifier, gate, NullLogger<CodeInsightDispositionService>.Instance,
+            performanceEvidence: new CodeInsightPerformanceEvidenceStore(db));
+        var checkpoint = new MeisterDev.ProPR.Domain.Entities.DiscussionThreadProgress();
+        var stop = successfulAttempt == 0 ? 3 : successfulAttempt;
+        var now = DateTimeOffset.UtcNow;
+        for (var attempt = 1; attempt <= stop; attempt++)
+        {
+            Assert.True(checkpoint.Needs("disposition", "same-content", "same-version"));
+            var ack = await service.ObserveCurrentAsync(
+                new(
+                    key.ClientId, "https://dev.azure.com/org", "project", "repo", 1,
+                    "1", "file.cs", null, "Human: this was intentional", now.AddSeconds(attempt), ThreadResolutionIntent.ClaimsFix,
+                    ThreadAnchorCodeChange.Unchanged, "Fixed", "scope-a"));
+            Assert.Equal(attempt == stop, ack.Retained);
+            if (ack.Retained)
+            {
+                checkpoint.Acknowledge("disposition", "same-content", "same-version");
+            }
+        }
+
+        Assert.False(checkpoint.Needs("disposition", "same-content", "same-version"));
+        Assert.Equal(stop, attempts);
+        var initial = await db.CodeInsightFindingDispositions.SingleAsync();
+        Assert.Equal(CodeInsightDisposition.Dismissed, initial.Disposition);
+        Assert.Null(initial.ClassifierConfidence);
+    }
+
+    [Fact]
+    public async Task RemovingAllVisibleCommentsRemovesAnExistingHumanMissWithoutDeletingTheThread()
+    {
+        await using var db = Db();
+        var codec = Substitute.For<ISecretProtectionCodec>();
+        codec.Protect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        codec.Unprotect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        var store = new CodeInsightFindingStore(db, codec);
+        var classifier = Substitute.For<IHumanMissClassifier>();
+        classifier.ClassifierVersion.Returns("judge-v1");
+        classifier.JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new HumanMissJudgement(true, true, true, .9, "substantive"));
+        var gate = Substitute.For<ICodeInsightsCollectionGate>();
+        gate.IsCollectionEnabledAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        var service = new CodeInsightMissHarvester(
+            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.CompatibilityCodec,
+            store, store, classifier, gate, TestPostedCommentComposer.Default, NullLogger<CodeInsightMissHarvester>.Instance);
+        var evt = new ThreadUpdatedEvent(
+            Guid.NewGuid(), Guid.NewGuid(), "repo", 1, "thread-1", "file.cs", 1,
+            "Fixed", DateTimeOffset.UtcNow, [new("1", "alice", false, DateTimeOffset.UtcNow, "This can lose a record.")], ObservedAt: DateTimeOffset.UtcNow,
+            ProviderScope: "scope-a");
+        Assert.True((await service.ObserveCurrentAsync(evt)).Retained);
+        Assert.True((await db.CodeInsightMisses.SingleAsync()).IsSubstantive);
+        Assert.True((await service.ObserveCurrentAsync(evt with { Comments = [], ObservedAt = evt.ObservedAt!.Value.AddSeconds(1) })).Retained);
+        Assert.True((await db.CodeInsightMisses.SingleAsync()).ExcludedAsOwnFinding);
+        Assert.True((await db.CodeInsightThreadEligibility.SingleAsync()).ExcludedFromHumanMisses);
+        Assert.False(evt.IsDeleted);
+        await classifier.Received(1).JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DeletionWithCapturedConnectionPreventsOlderHumanEvidenceInItsResolvedScope()
+    {
+        await using var db = Db();
+        var client = Guid.NewGuid();
+        var connection = Guid.NewGuid();
+        const string host = "https://dev.azure.com/org";
+        var scope = ProviderSourceIdentity.FromConfiguredHost(ScmProvider.AzureDevOps, host).Value;
+        db.ClientScmConnections.Add(
+            new ClientScmConnectionRecord
+            {
+                Id = connection, ClientId = client, Provider = ScmProvider.AzureDevOps, HostBaseUrl = host,
+            });
+        await db.SaveChangesAsync();
+        var codec = Substitute.For<ISecretProtectionCodec>();
+        codec.Protect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        codec.Unprotect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        var store = new CodeInsightFindingStore(db, codec);
+        var classifier = Substitute.For<IHumanMissClassifier>();
+        classifier.ClassifierVersion.Returns("judge");
+        classifier.JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new HumanMissJudgement(true, true, true, .9, "substantive"));
+        var gate = Substitute.For<ICodeInsightsCollectionGate>();
+        gate.IsCollectionEnabledAsync(client, Arg.Any<CancellationToken>()).Returns(true);
+        var service = new CodeInsightMissHarvester(
+            MeisterDev.ProPR.TestSupport.LocalScmPolicies.Registry.CompatibilityCodec,
+            store, store, classifier, gate, TestPostedCommentComposer.Default, NullLogger<CodeInsightMissHarvester>.Instance);
+        var now = DateTimeOffset.UtcNow;
+        var human = new ThreadUpdatedEvent(
+            client, connection, "repo", 42, "thread", "file.cs", 1,
+            "Fixed", now, [new("comment", "alice", false, now, "This can lose a record.")], ObservedAt: now.AddSeconds(-1));
+        Assert.True((await service.ObserveCurrentAsync(human with { IsDeleted = true, Comments = [], ObservedAt = now })).Retained);
+        await service.ObserveCurrentAsync(human);
+        var eligibility = Assert.Single(await db.CodeInsightThreadEligibility.ToListAsync());
+        Assert.Equal(scope, eligibility.ProviderScope);
+        Assert.True(eligibility.ExcludedFromHumanMisses);
+        Assert.Empty(await db.CodeInsightMisses.ToListAsync());
+        await classifier.DidNotReceive().JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>());
     }
 
     private static MeisterProPRDbContext Db() =>

@@ -307,6 +307,7 @@ try
     if (hasDatabaseConnectionString && !disableHostedServices)
     {
         builder.Services.AddHostedService<WebhookDeliveryWorker>();
+        builder.Services.AddHostedService<DiscussionRefreshWorker>();
     }
 
     // AdoPrCrawlerWorker needs persistent crawl-configuration storage.
@@ -568,7 +569,7 @@ try
             "MeisterProPR.Crawling",
             "MeisterProPR.Infrastructure",
         ],
-        ["MeisterProPR"]);
+        ["MeisterDEV.ProPR"]);
 
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(options =>

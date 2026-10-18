@@ -75,6 +75,10 @@ public sealed record WebhookDeliveryEnvelope
     /// <summary>Gets the reviewer identity acting on the event.</summary>
     public ReviewerIdentity? Actor { get; }
 
+    public string? ThreadId { get; init; }
+    public string? CommentId { get; init; }
+    public bool HasReliableDeliveryId { get; init; }
+
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();

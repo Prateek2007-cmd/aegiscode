@@ -69,6 +69,7 @@ public static class CodeInsightsModuleServiceCollectionExtensions
         // Every collection path consults the gate before writing a row or spending a token. It fails closed,
         // so registering the module does not by itself start any collection.
         services.AddScoped<ICodeInsightsCollectionGate, CodeInsightsCollectionGate>();
+        services.AddScoped<ICodeInsightDiscussionBatchFactory, CodeInsightDiscussionBatchFactory>();
 
         // Finding ingestion, classification, dispositions and retention share one scoped owner.
         // Human-thread eligibility and miss judgements use a separate persistence owner.

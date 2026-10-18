@@ -56,6 +56,10 @@ provider and AI model, and getting a first review posted. The [deployment guide]
 covers what to change once you keep the installation. The compose stack is for evaluation;
 `example/azure/.azure/` deploys the same stack to Azure Container Apps.
 
+Discussion refreshes use authenticated notifications and a five-minute full reconciliation by default.
+Independent client processing uses bounded concurrency and durable per-thread progress.
+See [discussion synchronization](docs/operate/discussion-synchronization.md) for settings and diagnostics.
+
 Guided crawl, webhook, mention and ProCursor configuration starts with a saved client connection.
 The connection supplies its accessible scopes, native hierarchy and source capabilities. ProCursor
 knowledge-source creation is available for connections with a registered knowledge-source capability.

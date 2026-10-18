@@ -19,7 +19,8 @@ public sealed record RetainedThreadSnapshot(
     int? Line,
     string Status,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<RetainedCommentSnapshot> Comments);
+    IReadOnlyList<RetainedCommentSnapshot> Comments,
+    bool IsDeleted = false);
 
 /// <summary>
 ///     A single comment within a <see cref="RetainedThreadSnapshot" />. The comment <paramref name="Text" />

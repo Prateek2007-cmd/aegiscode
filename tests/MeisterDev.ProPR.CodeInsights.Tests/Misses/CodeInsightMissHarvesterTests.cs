@@ -542,6 +542,66 @@ public sealed class CodeInsightMissHarvesterTests
             comments);
     }
 
+    [Fact]
+    public async Task ReusedBatchCannotBypassAnotherClientsOrHostsCollectionGate()
+    {
+        var harness = new Harness();
+        await harness.Harvester.PrepareDiscussionBatchAsync(new(new(ClientId, "repo", 1), "scope-a", [], "v1", Guid.NewGuid()));
+        harness.Gate.ClearReceivedCalls();
+        harness.Gate.IsCollectionEnabledAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(false);
+        var other = Guid.NewGuid();
+        await harness.Harvester.ObserveCurrentAsync(HumanThread() with { ClientId = other, ProviderScope = "scope-b" });
+        await harness.Harvester.ObserveCurrentAsync(HumanThread() with { ProviderScope = "scope-b" });
+        await harness.Gate.Received(1).IsCollectionEnabledAsync(other, Arg.Any<CancellationToken>());
+        await harness.Gate.Received(1).IsCollectionEnabledAsync(ClientId, Arg.Any<CancellationToken>());
+        await harness.Misses.DidNotReceive().RecordMissAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<CodeInsightMissRecord>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MatchingBatchCannotPersistEligibilityAfterCollectionIsDisabled()
+    {
+        var harness = new Harness();
+        var evt = HumanThread() with { ProviderScope = "scope-a" };
+        await harness.Harvester.PrepareDiscussionBatchAsync(new(new(ClientId, "repo-1", 7), "scope-a", [], "v1", evt.ConnectionId));
+        harness.Gate.IsCollectionEnabledAsync(ClientId, Arg.Any<CancellationToken>()).Returns(false);
+        Assert.False((await harness.Harvester.ObserveCurrentAsync(evt)).Retained);
+        await harness.Misses.DidNotReceiveWithAnyArgs().ObserveThreadEligibilityAsync(default!, default!, default!, false, default);
+        await harness.Misses.DidNotReceive().RecordMissAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<CodeInsightMissRecord>(), Arg.Any<CancellationToken>());
+        await harness.Classifier.DidNotReceive().JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeletedOrEmptyThreadWithoutNativeIdentityCannotPersistEligibility(bool deleted)
+    {
+        var harness = new Harness();
+        var evt = HumanThread() with { ThreadId = "", Comments = [], IsDeleted = deleted };
+        Assert.False((await harness.Harvester.ObserveCurrentAsync(evt)).Retained);
+        await harness.Misses.DidNotReceiveWithAnyArgs().ObserveThreadEligibilityAsync(default!, default!, default!, false, default);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemovalFailureRemainsIncompleteUntilTheRemovalRetrySucceeds(bool deleted)
+    {
+        var harness = new Harness();
+        var evt = HumanThread() with { Comments = [], IsDeleted = deleted };
+        harness.Misses.ObserveThreadEligibilityAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<bool>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>()).ThrowsAsync(new InvalidOperationException("transient"));
+        Assert.False((await harness.Harvester.ObserveCurrentAsync(evt)).Retained);
+        harness.Misses.ObserveThreadEligibilityAsync(
+                Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(call => new CodeInsightThreadEligibilityObservation(call.Arg<DateTimeOffset>(), true));
+        Assert.True((await harness.Harvester.ObserveCurrentAsync(evt)).Retained);
+        await harness.Classifier.DidNotReceive().JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>());
+    }
+
     private sealed class Harness
     {
         public Harness()

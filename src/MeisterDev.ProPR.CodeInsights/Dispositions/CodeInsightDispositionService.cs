@@ -27,9 +27,30 @@ public sealed partial class CodeInsightDispositionService(
     ICodeInsightRollupProjector? rollupProjector = null,
     ICodeInsightPerformanceEvidenceStore? performanceEvidence = null) : ICodeInsightDispositionService
 {
+    private CodeInsightDiscussionBatch? _batch;
+    private IReadOnlyDictionary<Guid, CodeInsightDispositionRecord?>? _batchDispositions;
+
+    private bool MatchesBatch(ThreadResolvedDomainEvent evt) => this._batch is not null &&
+                                                                this._batch.Key.ClientId == evt.ClientId && this._batch.Key.RepositoryId == evt.RepositoryId &&
+                                                                this._batch.Key.PullRequestId == evt.PullRequestId &&
+                                                                this._batch.ProviderScope == evt.ProviderScope;
+
+    public string DependencyVersion => classifier.ClassifierVersion;
+
+    public async Task PrepareDiscussionBatchAsync(CodeInsightDiscussionBatch batch, CancellationToken ct = default)
+    {
+        this._batch = batch;
+        this._batchDispositions = await dispositionStore.GetDispositionsAsync(batch.Findings.Select(finding => finding.Id).ToArray(), ct);
+    }
+
+    public Task<CodeInsightEvidenceAcknowledgment> ObserveCurrentAsync(ThreadResolvedDomainEvent evt, CancellationToken ct = default)
+        => this.ObserveAsync(evt, null, ct);
+
     public Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(
         CodeInsightNativeFindingSnapshot finding, ThreadResolvedDomainEvent evt, CancellationToken ct = default)
     {
+        this._batch = null;
+        this._batchDispositions = null;
         return this.ObserveAsync(evt, finding, ct);
     }
 
@@ -57,7 +78,9 @@ public sealed partial class CodeInsightDispositionService(
 
             var finding = source.Finding!;
             var historical = historicalFinding is not null;
-            var existing = await dispositionStore.GetDispositionAsync(finding.Id, ct);
+            var existing = this.MatchesBatch(evt) && this._batchDispositions is not null && historicalFinding is null
+                ? this._batchDispositions.GetValueOrDefault(finding.Id)
+                : await dispositionStore.GetDispositionAsync(finding.Id, ct);
             var receipt = new CodeInsightPublicationReceipt(finding.ProviderScope, finding.ProviderThreadId, finding.ProviderCommentId);
             var fingerprint = this.OutcomeFingerprint(evt);
             var reused = await this.TryReuseOutcomeAsync(evt, finding, existing, receipt, fingerprint, historical, ct);
@@ -90,8 +113,10 @@ public sealed partial class CodeInsightDispositionService(
     private async Task<DispositionSource> ResolveFindingAsync(
         ThreadResolvedDomainEvent evt, CodeInsightNativeFindingSnapshot? historicalFinding, CancellationToken ct)
     {
-        var finding = historicalFinding?.Finding ?? await findingStore.FindByProviderThreadAsync(
-            evt.ClientId, evt.RepositoryId, evt.PullRequestId, evt.ThreadId, ct, evt.ProviderScope);
+        var finding = historicalFinding?.Finding ?? (this.MatchesBatch(evt)
+            ? this._batch!.Findings.Where(finding => finding.ProviderThreadId == evt.ThreadId && finding.ProviderScope == evt.ProviderScope)
+                .OrderBy(finding => finding.CreatedAt ?? finding.ObservedAt).ThenBy(finding => finding.Id).FirstOrDefault()
+            : await findingStore.FindByProviderThreadAsync(evt.ClientId, evt.RepositoryId, evt.PullRequestId, evt.ThreadId, ct, evt.ProviderScope));
         if (finding is null)
         {
             LogNoMatchingFinding(logger, evt.ThreadId, evt.ClientId);
@@ -132,24 +157,29 @@ public sealed partial class CodeInsightDispositionService(
 
     private string OutcomeFingerprint(ThreadResolvedDomainEvent evt)
     {
-        return Convert.ToHexString(
-            SHA256.HashData(
-                Encoding.UTF8.GetBytes(
-                    JsonSerializer.Serialize(
-                        new
-                        {
-                            evt.NativeStatus,
-                            evt.CodeChangedSinceRaised,
-                            evt.CommentHistory,
-                            evt.ChangeExcerpt,
-                            classifier.ClassifierVersion,
-                        }))));
+        var source = new
+        {
+            evt.NativeStatus,
+            evt.CodeChangedSinceRaised,
+            evt.CommentHistory,
+            evt.ChangeExcerpt,
+            classifier.ClassifierVersion,
+        };
+        var payload = this.MatchesBatch(evt)
+            ? JsonSerializer.Serialize(new { Source = source, BatchDependencies = this._batch!.DependencyVersion })
+            : JsonSerializer.Serialize(source);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 
     private async Task<CodeInsightEvidenceAcknowledgment?> TryReuseOutcomeAsync(
         ThreadResolvedDomainEvent evt, CodeInsightFindingView finding, CodeInsightDispositionRecord? existing,
         CodeInsightPublicationReceipt receipt, string fingerprint, bool historical, CancellationToken ct)
     {
+        if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+        {
+            return new(false);
+        }
+
         if (historical)
         {
             var preserved = await performanceEvidence!.TryPreserveHistoricalOutcomeAsync(
@@ -182,9 +212,9 @@ public sealed partial class CodeInsightDispositionService(
             && (historical || finding.CurrentClassifierVersion is null || finding.CurrentClassifierVersion == classifier.ClassifierVersion)
             && await performanceEvidence.ObserveUnchangedOutcomeAsync(finding.Id, evt.NativeStatus, fingerprint, evt.ObservedAt, ct, receipt))
         {
-            return historical
-                ? await performanceEvidence.AcknowledgeOutcomeAsync(finding.Id, receipt, evt.NativeStatus, fingerprint, evt.ObservedAt, ct)
-                : new CodeInsightEvidenceAcknowledgment(true);
+            return await performanceEvidence.AcknowledgeOutcomeAsync(
+                finding.Id, receipt, evt.NativeStatus, fingerprint, evt.ObservedAt, ct,
+                allowFailedAttemptCap: !historical);
         }
 
         return existing is not null && performanceEvidence is null && this.HasCompletedLocalOutcome(evt, finding, fingerprint)
@@ -232,9 +262,17 @@ public sealed partial class CodeInsightDispositionService(
             await rollupProjector.ProjectJobAsync(finding.JobId, ct);
         }
 
-        return historical
-            ? await performanceEvidence!.AcknowledgeOutcomeAsync(finding.Id, receipt, evt.NativeStatus!, fingerprint, evt.ObservedAt, ct)
-            : new CodeInsightEvidenceAcknowledgment(true, changed || decided);
+        if (performanceEvidence is not null && evt.NativeStatus is not null)
+        {
+            var retained = await performanceEvidence.AcknowledgeOutcomeAsync(
+                finding.Id, receipt, evt.NativeStatus, fingerprint, evt.ObservedAt, ct,
+                allowFailedAttemptCap: !historical);
+            return retained with { Changed = changed || decided };
+        }
+
+        return new(
+            record?.ClassifierVersion is null || record.ClassifierConfidence is not null || finding.OutcomeJudgementAttempts >= 3,
+            changed || decided);
     }
 
     private static CodeInsightEvidenceAcknowledgment IdentityUnavailable() =>
@@ -257,6 +295,11 @@ public sealed partial class CodeInsightDispositionService(
                 evt.CodeChangedSinceRaised,
                 null,
                 null);
+        }
+
+        if (!await gate.IsCollectionEnabledAsync(evt.ClientId, ct))
+        {
+            throw new InvalidOperationException("Code Insights collection permission changed before classification.");
         }
 
         var judgment = await classifier.JudgeAsync(

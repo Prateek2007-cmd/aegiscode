@@ -2,6 +2,9 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Globalization;
+using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Providers.Identity;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
@@ -20,147 +23,110 @@ namespace MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 public sealed partial class PullRequestCloseObserver(
     IScmProviderRegistry providerRegistry,
     ILogger<PullRequestCloseObserver> logger,
-    IPullRequestFetcher? pullRequestFetcher = null,
     ICodeInsightMissHarvester? missHarvester = null,
     ICodeInsightFindingStore? findingStore = null,
     ICodeInsightsCollectionGate? collectionGate = null,
     IClientScmConnectionRepository? scmConnectionRepository = null,
     IPostedCommentOriginStore? postedCommentOriginStore = null,
-    IReviewerThreadStatusFetcher? reviewerThreadStatuses = null,
     ICodeInsightDispositionService? dispositionService = null,
     ICodeInsightHarvestCoverageRecorder? harvestCoverageRecorder = null,
-    ICodeInsightProviderFeedbackReader? feedbackReader = null) : ICodeInsightCloseObserver, ICodeInsightHistoricalObserver
+    ICodeInsightProviderFeedbackReader? feedbackReader = null,
+    IDiscussionSynchronizationService? discussionSynchronization = null,
+    IDiscussionSynchronizationStore? discussionStore = null,
+    IPullRequestThreadSnapshotReader? snapshotReader = null,
+    TimeProvider? timeProvider = null) : ICodeInsightAcknowledgedCloseObserver, ICodeInsightHistoricalObserver
 {
-    public async Task ObserveAsync(
-        CodeInsightPullRequestKey key,
-        string providerScopePath,
-        string providerProjectKey,
-        CancellationToken ct = default)
+    public async Task ObserveAsync(CodeInsightPullRequestKey key, string providerScopePath, string providerProjectKey, CancellationToken ct = default)
+        => _ = await this.ObserveAcknowledgedAsync(key, providerScopePath, providerProjectKey, ct);
+
+    public async Task<CodeInsightEvidenceAcknowledgment> ObserveAcknowledgedAsync(
+        CodeInsightPullRequestKey key, string providerScopePath,
+        string providerProjectKey, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(key);
-
-        // Optional dependencies represent module or host availability; licensing remains a runtime collection gate.
-        if (pullRequestFetcher is null
-            || missHarvester is null
-            || findingStore is null
-            || collectionGate is null
-            || scmConnectionRepository is null
-            || harvestCoverageRecorder is null)
+        if (discussionSynchronization is null)
         {
-            return;
+            return new(false);
         }
 
-        string? harvestScope = null;
-        var observedAt = DateTimeOffset.UtcNow;
-        try
+        var connection = await this.ResolveConnectionAsync(key.ClientId, providerScopePath, ct);
+        if (connection is null)
         {
-            if (!await collectionGate.IsCollectionEnabledAsync(key.ClientId, ct))
-            {
-                return;
-            }
-
-            // Sealing candidates require collected findings. A human miss alone can create an aggregate.
-            var findings = await findingStore.GetFindingsForPullRequestAsync(key, ct);
-            if (findings.Count == 0)
-            {
-                LogNothingCollected(logger, key.PullRequestId, key.ClientId);
-                return;
-            }
-
-            // Resolve the provider family before interpreting provider comment identities.
-            var connection = await this.ResolveConnectionAsync(key.ClientId, providerScopePath, ct);
-            if (connection is null)
-            {
-                // Log only the authority because source paths may contain credentials.
-                LogNoConnection(
-                    logger,
-                    key.PullRequestId,
-                    key.ClientId,
-                    ScmConnectionHostMatch.ToAuthority(providerScopePath) ?? "(no host)");
-                return;
-            }
-
-            var ownership = await this.ResolveOwnershipAsync(key, connection.ProviderFamily, ct);
-            harvestScope = ProviderSourceIdentity.FromReviewSource(
-                connection.ProviderFamily,
-                providerRegistry.GetSourceIdentityPolicy(connection.ProviderFamily).SelectCapturedSource(providerScopePath, connection.HostBaseUrl),
-                providerRegistry.GetSourceIdentityPolicy(connection.ProviderFamily)).Value;
-
-            // The adapter contributes its account identity before human-thread authorship is resolved.
-            var reviewerObservedAt = DateTimeOffset.UtcNow;
-            IReadOnlyList<PrThreadStatusEntry> reviewerThreads;
-            IReadOnlyList<PrCommentThread> threads;
-            var reviewerEnumerationComplete = true;
-            if (feedbackReader is not null)
-            {
-                var feedback = await feedbackReader.ReadAsync(
-                    new CodeInsightProviderEvidenceTarget(
-                        key, connection.ProviderFamily,
-                        providerScopePath, providerProjectKey, harvestScope), ownership, ct, CodeInsightObservationMode.Current);
-                reviewerThreads = feedback.ReviewerThreads;
-                threads = feedback.Threads;
-                reviewerEnumerationComplete = feedback.ReviewerEnumerationComplete;
-                observedAt = reviewerObservedAt;
-            }
-            else
-            {
-                var reviewerRead = await this.ReadReviewerThreadsAsync(key, providerScopePath, providerProjectKey, ownership, ct);
-                reviewerThreads = reviewerRead.Threads;
-                reviewerEnumerationComplete = reviewerRead.EnumerationComplete;
-                observedAt = DateTimeOffset.UtcNow;
-                threads = await pullRequestFetcher.FetchThreadsAsync(
-                    providerScopePath, providerProjectKey, key.RepositoryId,
-                    (int)key.PullRequestId, key.ClientId, ct);
-            }
-
-            var coverage = new HarvestCoverageState();
-            foreach (var thread in threads)
-            {
-                var evt = ThreadUpdatedEventFactory.Build(
-                    key.ClientId, connection.Id, key.RepositoryId, key.PullRequestId, thread, ownership, observedAt, harvestScope);
-                coverage.Observe(
-                    evt, providerRegistry.GetCodeReviewPreparationPolicy(connection.ProviderFamily)
-                        .InterpretThreadResolution(evt.Status));
-                if (string.IsNullOrWhiteSpace(thread.ThreadId))
-                {
-                    if (ThreadUpdatedEventFactory.IsHumanThread(evt))
-                    {
-                        coverage.RecordRetention(false);
-                    }
-
-                    continue;
-                }
-
-                coverage.RecordRetention(await missHarvester.HandleThreadObservedAsync(evt, ct));
-            }
-
-            await this.RecordDispositionsAsync(
-                key,
-                providerScopePath,
-                providerProjectKey,
-                reviewerThreads,
-                findings,
-                harvestScope, reviewerObservedAt, connection.ProviderFamily,
-                ct);
-            await harvestCoverageRecorder.RecordAsync(
-                key, harvestScope, coverage.AllHumanThreadsResolved, observedAt, ct, coverage.AllHumanObservationsRetained && reviewerEnumerationComplete);
+            return new(false);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            if (harvestScope is not null)
-            {
-                await harvestCoverageRecorder.RecordAsync(key, harvestScope, false, observedAt, ct, false);
-            }
 
-            LogObservationFailed(logger, key.PullRequestId, key.ClientId, ex);
-        }
+        var observation = await discussionSynchronization.ObserveAsync(
+            new()
+            {
+                ClientId = key.ClientId, ConnectionId = connection.Id, Provider = connection.ProviderFamily,
+                ProviderScopePath = providerScopePath, ProviderProjectKey = providerProjectKey, RepositoryId = key.RepositoryId,
+                PullRequestId = checked((int)key.PullRequestId), PullRequestStatus = PrStatus.Completed, DiscussionOnly = true,
+                AllowReviewSubmission = false, ActivationSource = PullRequestActivationSource.Crawl, SummaryLabel = "close observation",
+            }, ct);
+        return new(observation.CurrentConsumersRetained && observation.ObservedPullRequestStatus is PrStatus.Completed or PrStatus.Abandoned);
     }
 
     public async Task<CodeInsightObservationResult> RefreshAsync(CodeInsightProviderEvidenceTarget target, CancellationToken ct = default)
+    {
+        if (discussionStore is null || !this.HasCapturedCoordinates(target))
+        {
+            return await this.RefreshCoreAsync(target, null, ct);
+        }
+
+        if (collectionGate is not null && !await collectionGate.IsCollectionEnabledAsync(target.Key.ClientId, ct))
+        {
+            return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
+        }
+
+        var connection = await this.ResolveHistoricalConnectionAsync(target, ct);
+        if (connection is null)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable);
+        }
+
+        var policy = providerRegistry.GetReviewSourcePolicy(target.Provider);
+        var coordinates = policy.GetCacheCoordinates(target.ProviderScopePath, target.ProviderProjectKey);
+        var scoped = new PullRequestThreadSnapshotTarget(
+            target.Key.ClientId, connection.Id, target.Provider,
+            coordinates.Authority + coordinates.ScopePath, coordinates.ProjectKey,
+            policy.GetCacheCoordinates(target.ProviderScopePath, target.Key.RepositoryId).ProjectKey, checked((int)target.Key.PullRequestId));
+        await using var lease = await discussionStore.TryAcquireAsync(scoped, null, true, TimeSpan.FromSeconds(300), ct);
+        if (lease is null)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+        }
+
+        using var writeScope = lease.BeginWrites();
+        await using var renewal = new DiscussionLeaseRenewal(lease, timeProvider ?? TimeProvider.System, ct);
+        snapshotReader?.Invalidate(scoped);
+        discussionSynchronization?.Invalidate(scoped);
+        try
+        {
+            await lease.EnsureCurrentAsync(renewal.Token);
+            return await this.RefreshCoreAsync(target with { ConnectionId = connection.Id }, lease.ObservedAt, renewal.Token);
+        }
+        finally
+        {
+            await renewal.StopAsync();
+            snapshotReader?.Invalidate(scoped);
+            discussionSynchronization?.Invalidate(scoped);
+            renewal.ThrowIfLost();
+
+            var progress = lease.State.ReadProgress();
+            foreach (var state in progress.Values)
+            {
+                state.Consumers.Remove("disposition");
+                state.Consumers.Remove("miss");
+            }
+
+            await lease.CompleteAsync(
+                JsonSerializer.Serialize(progress), lease.State.ReviewerSummariesJson, lease.ObservedAt,
+                false, false, lease.State.IsClosed, lease.State.LastReviewRevision, TimeSpan.FromSeconds(300), CancellationToken.None);
+        }
+    }
+
+    private async Task<CodeInsightObservationResult> RefreshCoreAsync(
+        CodeInsightProviderEvidenceTarget target,
+        DateTimeOffset? observationCutoff, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (collectionGate is null || feedbackReader is null || findingStore is null || missHarvester is null
@@ -195,9 +161,9 @@ public sealed partial class PullRequestCloseObserver(
             }
 
             var source = await this.ReadHistoricalSourceAsync(target, ct);
-            var observedAt = NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow);
+            var observedAt = observationCutoff ?? NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow);
             failure = CodeInsightObservationUnavailableReason.ProviderReadFailed;
-            var feedback = await feedbackReader.ReadAsync(target, source.Ownership, ct);
+            var feedback = await feedbackReader.ReadAsync(target with { ConnectionId = connection.Id }, source.Ownership, ct);
             ct.ThrowIfCancellationRequested();
             var readFailure = ValidateHistoricalFeedback(source, feedback);
             if (readFailure is not null)
@@ -265,7 +231,8 @@ public sealed partial class PullRequestCloseObserver(
     {
         var authority = ScmConnectionHostMatch.ToAuthority(target.ProviderScopePath);
         var connections = await scmConnectionRepository!.GetByClientIdAsync(target.Key.ClientId, ct);
-        return connections.Where(row => row.IsActive && row.ProviderFamily == target.Provider && authority is not null
+        return connections.Where(row => (target.ConnectionId == Guid.Empty || row.Id == target.ConnectionId) && row.IsActive &&
+                                        row.ProviderFamily == target.Provider && authority is not null
                                         && providerRegistry.GetConnectionConfigurationPolicy(target.Provider)
                                             .MatchesObservedConnectionHost(row.HostBaseUrl, authority)
                                         && CapturedPathMatches(row.HostBaseUrl, target.ProviderScopePath))
@@ -484,96 +451,17 @@ public sealed partial class PullRequestCloseObserver(
                || capturedUri.AbsolutePath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>Reads own-thread statuses and allows the adapter to contribute its authenticated account identity.</summary>
-    /// <remarks>Without a status fetcher, ownership uses retained provenance and dispositions are unavailable.</remarks>
-    private async Task<(IReadOnlyList<PrThreadStatusEntry> Threads, bool EnumerationComplete)> ReadReviewerThreadsAsync(
-        CodeInsightPullRequestKey key,
-        string providerScopePath,
-        string providerProjectKey,
-        ThreadOwnershipResolver ownership,
-        CancellationToken ct)
-    {
-        if (reviewerThreadStatuses is null)
-        {
-            return ([], true);
-        }
-
-        try
-        {
-            var threads = await reviewerThreadStatuses.GetReviewerThreadStatusesAsync(
-                providerScopePath,
-                providerProjectKey,
-                key.RepositoryId,
-                (int)key.PullRequestId,
-                ownership,
-                key.ClientId,
-                ct);
-            return (threads, true);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            LogReviewerThreadsUnavailable(logger, key.PullRequestId, key.ClientId, ex);
-            return ([], false);
-        }
-    }
-
-    /// <summary>Records final outcomes for collected findings before the measurement is sealed.</summary>
-    /// <remarks>Every known thread is offered; the disposition service handles replay and unresolved outcomes.</remarks>
-    private async Task RecordDispositionsAsync(
-        CodeInsightPullRequestKey key,
-        string providerScopePath,
-        string providerProjectKey,
-        IReadOnlyList<PrThreadStatusEntry> reviewerThreads,
-        IReadOnlyList<CodeInsightFindingView> findings,
-        string providerScope,
-        DateTimeOffset observedAt,
-        ScmProvider provider,
-        CancellationToken ct)
-    {
-        if (dispositionService is null || reviewerThreads.Count == 0)
-        {
-            return;
-        }
-
-        // Restrict disposition lookups to threads represented by collected findings.
-        var findingThreads = findings
-            .Select(finding => finding.ProviderThreadId)
-            .Where(threadId => !string.IsNullOrWhiteSpace(threadId))
-            .ToHashSet(StringComparer.Ordinal);
-
-        foreach (var thread in reviewerThreads)
-        {
-            if (string.IsNullOrWhiteSpace(thread.ThreadId) || !findingThreads.Contains(thread.ThreadId))
-            {
-                continue;
-            }
-
-            var intent = providerRegistry.GetCodeReviewPreparationPolicy(provider).InterpretThreadResolution(thread.Status);
-            await dispositionService.HandleThreadResolvedAsync(
-                new ThreadResolvedDomainEvent(
-                    key.ClientId,
-                    providerScopePath,
-                    providerProjectKey,
-                    key.RepositoryId,
-                    (int)key.PullRequestId,
-                    thread.ThreadId,
-                    thread.FilePath,
-                    null,
-                    thread.CommentHistory,
-                    observedAt,
-                    intent,
-                    thread.CodeChangedSinceRaised,
-                    thread.Status, providerScope),
-                ct);
-        }
-    }
-
     /// <summary>Finds the client's active connection for the host the pull request lives on.</summary>
     private async Task<ClientScmConnectionDto?> ResolveConnectionAsync(
         Guid clientId,
         string providerScopePath,
         CancellationToken ct)
     {
+        if (scmConnectionRepository is null)
+        {
+            return null;
+        }
+
         var authority = ScmConnectionHostMatch.ToAuthority(providerScopePath);
         if (authority is null)
         {
@@ -602,38 +490,6 @@ public sealed partial class PullRequestCloseObserver(
             .FirstOrDefault();
     }
 
-    /// <summary>Resolves own-comment provenance without invoking a provider adapter.</summary>
-    /// <remarks>The harvester checks retained finding identities when provenance is unavailable.</remarks>
-    private async Task<ThreadOwnershipResolver> ResolveOwnershipAsync(
-        CodeInsightPullRequestKey key,
-        ScmProvider provider,
-        CancellationToken ct)
-    {
-        if (postedCommentOriginStore is null)
-        {
-            return ThreadOwnershipResolver.None;
-        }
-
-        try
-        {
-            var provenance = await postedCommentOriginStore.GetJobIdsForPullRequestAsync(
-                key.ClientId,
-                key.RepositoryId,
-                key.PullRequestId,
-                ct);
-
-            return ThreadOwnershipResolver.Create(
-                provenance,
-                ThreadOwnerIdentity.None,
-                providerRegistry.GetIdentityPolicy(provider).CommentIdScope);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            LogOwnershipUnavailable(logger, key.PullRequestId, key.ClientId, ex);
-            return ThreadOwnershipResolver.None;
-        }
-    }
-
     [LoggerMessage(
         EventId = 6106, Level = LogLevel.Warning,
         Message =
@@ -642,40 +498,9 @@ public sealed partial class PullRequestCloseObserver(
         ILogger logger, long pullRequestId, Guid clientId, CodeInsightObservationUnavailableReason reason, string exceptionType, int errorCode);
 
     [LoggerMessage(
-        EventId = 6105,
-        Level = LogLevel.Warning,
-        Message = "Reading ProPR's own threads on PR {PullRequestId} of client {ClientId} failed; its findings keep whatever outcome earlier passes recorded.")]
-    private static partial void LogReviewerThreadsUnavailable(ILogger logger, long pullRequestId, Guid clientId, Exception ex);
-
-    [LoggerMessage(
-        EventId = 6102,
-        Level = LogLevel.Debug,
-        Message = "PR {PullRequestId} of client {ClientId} has no collected findings; its close is not observed.")]
-    private static partial void LogNothingCollected(ILogger logger, long pullRequestId, Guid clientId);
-
-    [LoggerMessage(
-        EventId = 6103,
-        Level = LogLevel.Warning,
-        Message =
-            "No active SCM connection of client {ClientId} matches {Authority}; the close of PR {PullRequestId} is sealed without observing its threads.")]
-    private static partial void LogNoConnection(ILogger logger, long pullRequestId, Guid clientId, string authority);
-
-    [LoggerMessage(
         EventId = 6104,
         Level = LogLevel.Warning,
         Message =
-            "Client {ClientId} has active connections of more than one provider family on {Authority}; closes there are sealed without observing their threads.")]
+            "Client {ClientId} has active connections of more than one provider family on {Authority}; the close observation requires an unambiguous provider connection.")]
     private static partial void LogAmbiguousConnection(ILogger logger, Guid clientId, string authority);
-
-    [LoggerMessage(
-        EventId = 6100,
-        Level = LogLevel.Warning,
-        Message = "Close observation failed for PR {PullRequestId} of client {ClientId}; the measurement is sealed from the judgments already recorded.")]
-    private static partial void LogObservationFailed(ILogger logger, long pullRequestId, Guid clientId, Exception ex);
-
-    [LoggerMessage(
-        EventId = 6101,
-        Level = LogLevel.Warning,
-        Message = "Comment-origin lookup failed for PR {PullRequestId} of client {ClientId}; observing threads without ProPR's own provenance.")]
-    private static partial void LogOwnershipUnavailable(ILogger logger, long pullRequestId, Guid clientId, Exception ex);
 }

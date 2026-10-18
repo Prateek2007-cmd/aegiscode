@@ -2,6 +2,10 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Globalization;
+using MeisterDev.ProPR.Application.Interfaces;
+using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -9,7 +13,6 @@ using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
-using MeisterDev.ProPR.Infrastructure.Features.Providers.Common;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Security;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Support;
 
@@ -30,10 +33,24 @@ internal sealed class GitLabReviewThreadStatusProvider(
         Guid clientId,
         CancellationToken ct = default)
     {
+        return (await this.ReadSnapshotAsync(organizationUrl, projectId, repositoryId, pullRequestId, ownership, clientId, ct)).ReviewerThreads;
+    }
+
+    public async Task<PullRequestThreadSnapshot> ReadSnapshotAsync(
+        string organizationUrl,
+        string projectId,
+        string repositoryId,
+        int pullRequestId,
+        ThreadOwnershipResolver ownership,
+        Guid clientId,
+        CancellationToken ct = default, Guid? connectionId = null)
+    {
         ArgumentNullException.ThrowIfNull(ownership);
 
         var host = new ProviderHostRef(ScmProvider.GitLab, organizationUrl);
-        var context = await connectionVerifier.VerifyAsync(clientId, host, ct);
+        var context = connectionId.HasValue
+            ? await connectionVerifier.VerifyAsync(new ConnectionDiscoveryContext(clientId, connectionId.Value, host), ct)
+            : await connectionVerifier.VerifyAsync(clientId, host, ct);
 
         // GitLab names an author by username, and the connection verification above is the only place the
         // authenticated one exists, so the pass's resolver is completed with it here. It is contributed into
@@ -41,6 +58,7 @@ internal sealed class GitLabReviewThreadStatusProvider(
         // a connection of their own, decide with the identity too.
         ownership.ContributeIdentity(new ThreadOwnerIdentity(Login: context.AuthenticatedUsername));
 
+        var observedAt = DateTimeOffset.UtcNow;
         var payload = await ProviderRestPager.LoadAllAsync(
             (page, pageSize, pageCt) => this.GetDiscussionPageAsync(
                 context,
@@ -54,7 +72,7 @@ internal sealed class GitLabReviewThreadStatusProvider(
             $"GitLab's discussion listing for merge request {pullRequestId}",
             ct, requireComplete: true);
 
-        return payload
+        var statuses = payload
             .Where(discussion => !discussion.IndividualNote)
             .Select(discussion => new
             {
@@ -71,6 +89,16 @@ internal sealed class GitLabReviewThreadStatusProvider(
                 item.Notes.Count(note => !ownership.OwnsComment(ToCommentRef(note)))))
             .ToList()
             .AsReadOnly();
+        var raw = payload.Where(discussion => !discussion.IndividualNote).Select(discussion => new PrCommentThread(
+            discussion.Id,
+            ResolveFilePath(discussion.Notes),
+            discussion.Notes.Select(note => note.Position?.NewLine ?? note.Position?.OldLine).FirstOrDefault(line => line.HasValue),
+            discussion.Notes.Select(note => new PrThreadComment(
+                note.Author?.Username ?? "Unknown", note.Body ?? "",
+                ProviderSnapshotCommentIdentity.FromLogin(note.Author?.Username), note.Id, note.CreatedAt, note.System,
+                note.Author?.Id.ToString(CultureInfo.InvariantCulture))).ToArray(), discussion.Notes.Any(note => note.Resolved) ? "Fixed" : "Active",
+            SourceAnchor: JsonSerializer.Serialize(discussion.Notes.Select(note => note.Position)))).ToArray();
+        return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
     }
 
     private async Task<ProviderRestPager.RestPage<GitLabDiscussionResponse>> GetDiscussionPageAsync(
@@ -178,7 +206,9 @@ internal sealed class GitLabReviewThreadStatusProvider(
         bool Resolved,
         [property: JsonPropertyName("author")] GitLabAuthorResponse? Author,
         [property: JsonPropertyName("position")]
-        GitLabPositionResponse? Position);
+        GitLabPositionResponse? Position,
+        [property: JsonPropertyName("created_at")]
+        DateTimeOffset? CreatedAt = null);
 
     private sealed record GitLabAuthorResponse(
         [property: JsonPropertyName("id")] long Id,
@@ -189,5 +219,9 @@ internal sealed class GitLabReviewThreadStatusProvider(
         [property: JsonPropertyName("new_path")]
         string? NewPath,
         [property: JsonPropertyName("old_path")]
-        string? OldPath);
+        string? OldPath,
+        [property: JsonPropertyName("new_line")]
+        int? NewLine = null,
+        [property: JsonPropertyName("old_line")]
+        int? OldLine = null);
 }

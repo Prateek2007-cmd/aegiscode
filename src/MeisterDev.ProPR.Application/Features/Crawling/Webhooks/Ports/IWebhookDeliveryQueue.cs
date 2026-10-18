@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Domain.Enums;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
 
 namespace MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
 
@@ -56,7 +57,9 @@ public sealed record WebhookDeliveryQueueSubmission(
     string EventType,
     string? DeliveryKey,
     string HeadersJson,
-    string Payload);
+    string Payload,
+    PullRequestThreadSnapshotTarget? DiscussionTarget = null,
+    string? DiscussionThreadId = null);
 
 /// <summary>A delivery claimed for processing.</summary>
 /// <param name="Id">The queue entry.</param>
@@ -71,4 +74,5 @@ public sealed record WebhookDeliveryQueueItem(
     string PathKey,
     string HeadersJson,
     string Payload,
-    int Attempts);
+    int Attempts,
+    bool DiscussionRefreshRequested = false);

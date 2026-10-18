@@ -127,11 +127,23 @@ public sealed partial class CodeInsightSealSweeper(
             {
                 try
                 {
-                    await closeObserver.ObserveAsync(
-                        new CodeInsightPullRequestKey(candidate.ClientId, candidate.RepositoryId, candidate.PullRequestId),
-                        job.OrganizationUrl,
-                        job.ProjectId,
-                        ct);
+                    if (closeObserver is ICodeInsightAcknowledgedCloseObserver acknowledged)
+                    {
+                        var retained = await acknowledged.ObserveAcknowledgedAsync(
+                            new(candidate.ClientId, candidate.RepositoryId, candidate.PullRequestId), job.OrganizationUrl, job.ProjectId, ct);
+                        if (!retained.Retained)
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        await closeObserver.ObserveAsync(
+                            new CodeInsightPullRequestKey(candidate.ClientId, candidate.RepositoryId, candidate.PullRequestId),
+                            job.OrganizationUrl,
+                            job.ProjectId,
+                            ct);
+                    }
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
@@ -139,6 +151,10 @@ public sealed partial class CodeInsightSealSweeper(
                     // observation from costing the measurement as well, which the enclosing catch would do by
                     // returning without sealing.
                     LogObservationFailed(logger, candidate.PullRequestId, candidate.ClientId, ex);
+                    if (closeObserver is ICodeInsightAcknowledgedCloseObserver)
+                    {
+                        return false;
+                    }
                 }
             }
 

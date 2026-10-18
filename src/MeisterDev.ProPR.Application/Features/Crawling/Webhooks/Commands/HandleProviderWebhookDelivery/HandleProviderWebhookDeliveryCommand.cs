@@ -11,7 +11,9 @@ public sealed record HandleProviderWebhookDeliveryCommand(
     string PathKey,
     IReadOnlyDictionary<string, string> Headers,
     string Payload,
-    WebhookDeliveryProcessingMode Mode = WebhookDeliveryProcessingMode.AcceptAndQueue);
+    WebhookDeliveryProcessingMode Mode = WebhookDeliveryProcessingMode.AcceptAndQueue,
+    Guid? QueueEntryId = null,
+    bool DiscussionRefreshRequested = false);
 
 /// <summary>How far a delivery is taken on the caller's thread.</summary>
 public enum WebhookDeliveryProcessingMode

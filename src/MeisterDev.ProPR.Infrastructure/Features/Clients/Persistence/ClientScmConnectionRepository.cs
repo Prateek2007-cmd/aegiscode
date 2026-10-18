@@ -344,6 +344,7 @@ public sealed class ClientScmConnectionRepository(
             "gitHubAppInstallationId");
         record.DisplayName = NormalizeRequired(displayName);
         record.IsActive = isActive;
+        var retentionChanged = record.StoreThreads != storeThreads || record.RetentionDays != retentionDays;
         record.StoreThreads = storeThreads;
         record.StoreDiffs = storeDiffs;
         record.RetentionDays = retentionDays;
@@ -379,6 +380,19 @@ public sealed class ClientScmConnectionRepository(
                     ? "Connection settings changed and verification was reset."
                     : null,
                 occurredAt: record.UpdatedAt));
+        if (retentionChanged)
+        {
+            var discussionStates = await dbContext.DiscussionSynchronizationStates
+                .Where(state => state.ClientId == clientId && state.ConnectionId == connectionId).ToListAsync(ct);
+            foreach (var state in discussionStates)
+            {
+                state.RetentionGeneration = checked(state.RetentionGeneration + 1);
+                state.IsClosed = false;
+                state.FullRefreshRequested = true;
+                state.NextAttemptAt = record.UpdatedAt;
+            }
+        }
+
         await dbContext.SaveChangesAsync(ct);
         return ToDto(record);
     }

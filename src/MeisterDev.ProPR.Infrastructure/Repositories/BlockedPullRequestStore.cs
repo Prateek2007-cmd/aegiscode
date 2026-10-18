@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -15,6 +16,31 @@ public sealed partial class BlockedPullRequestStore(
     MeisterProPRDbContext dbContext,
     ILogger<BlockedPullRequestStore> logger) : IBlockedPullRequestStore
 {
+    /// <inheritdoc />
+    public async Task<bool> IsBlockedByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default)
+    {
+        if (provider != ScmProvider.AzureDevOps)
+        {
+            return false;
+        }
+
+        try
+        {
+            var candidates = await dbContext.BlockedPullRequests.AsNoTracking()
+                .Where(row => row.ClientId == clientId && row.PullRequestId == pullRequestId).ToListAsync(ct);
+            return candidates.Any(row => string.Equals(row.ProviderScopePath.TrimEnd('/'), scope.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
+                                         string.Equals(row.ProviderProjectKey, project, StringComparison.OrdinalIgnoreCase) &&
+                                         string.Equals(row.RepositoryId, repository, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            LogBlockCheckFailed(logger, clientId, pullRequestId, exception);
+            return false;
+        }
+    }
+
     /// <inheritdoc />
     public async Task<bool> IsBlockedAsync(
         Guid clientId,

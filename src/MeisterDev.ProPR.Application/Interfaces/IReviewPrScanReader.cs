@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 
 namespace MeisterDev.ProPR.Application.Interfaces;
 
@@ -10,6 +11,12 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// </summary>
 public interface IReviewPrScanReader
 {
+    /// <summary>Finds an existing provider-equivalent scan without changing its persisted identity.</summary>
+    Task<ReviewPrScan?> FindByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string organizationUrl,
+        string projectId, string repositoryId, int pullRequestId, CancellationToken ct = default)
+        => Task.FromResult<ReviewPrScan?>(null);
+
     /// <summary>
     ///     Gets the scan record for the given client and pull request,
     ///     or <c>null</c> if no scan has been performed yet.

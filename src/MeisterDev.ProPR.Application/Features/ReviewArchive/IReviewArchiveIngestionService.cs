@@ -12,6 +12,28 @@ namespace MeisterDev.ProPR.Application.Features.ReviewArchive;
 /// </summary>
 public interface IReviewArchiveIngestionService
 {
+    /// <summary>Retains changed thread content and records pull-request freshness once.</summary>
+    async Task HandleThreadsUpdatedAsync(
+        PullRequestRetentionKey key, string state, DateTimeOffset observedAt,
+        IReadOnlyList<RetainedThreadSnapshot> threads, CancellationToken ct = default)
+    {
+        foreach (var thread in threads)
+        {
+            if (thread.IsDeleted)
+            {
+                throw new NotSupportedException("The archive consumer cannot retain thread deletions.");
+            }
+
+            await this.HandleThreadUpdatedAsync(
+                new ThreadUpdatedEvent(
+                    key.ClientId, key.ConnectionId, key.RepositoryId,
+                    key.PullRequestId, thread.ThreadId, thread.FilePath, thread.Line, thread.Status, thread.UpdatedAt,
+                    thread.Comments.Select(comment => new ThreadUpdatedComment(
+                        comment.CommentId, comment.AuthorIdentity,
+                        comment.IsAiAuthored, comment.PublishedAt, comment.Text, comment.OriginatingJobId)).ToArray(), observedAt), ct);
+        }
+    }
+
     /// <summary>
     ///     Persists the full thread snapshot carried by <paramref name="evt" /> into the review-archive
     ///     store, touching the parent pull request and upserting the thread with its comments.

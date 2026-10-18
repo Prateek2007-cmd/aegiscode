@@ -12,7 +12,8 @@ public sealed record CodeInsightProviderEvidenceTarget(
     ScmProvider Provider,
     string ProviderScopePath,
     string ProviderProjectKey,
-    string ProviderScope);
+    string ProviderScope,
+    Guid ConnectionId = default);
 
 /// <summary>Distinguishes completed source retention from unavailable or disabled collection.</summary>
 public enum CodeInsightObservationStatus

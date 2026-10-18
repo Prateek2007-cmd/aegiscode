@@ -213,7 +213,7 @@ public sealed class VssConnectionFactory(TokenCredential credential, EgressUrlPo
         return new VssConnection(
             new Uri(normalizedUrl),
             new VssHttpMessageHandler(credentials, settings, transport),
-            overview ? [new AdoOverviewResponseHandler()] : []);
+            overview ? [new AdoOverviewResponseHandler(), new AdoDiscussionResponseHandler()] : [new AdoDiscussionResponseHandler()]);
     }
 
     /// <summary>The transport every connection this factory hands out sends its requests through.</summary>

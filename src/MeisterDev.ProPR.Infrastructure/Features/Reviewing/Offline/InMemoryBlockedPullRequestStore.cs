@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline;
 
@@ -15,6 +16,18 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline;
 public sealed class InMemoryBlockedPullRequestStore : IBlockedPullRequestStore
 {
     private readonly ConcurrentDictionary<string, BlockedPullRequest> _blocks = new(StringComparer.Ordinal);
+
+    /// <inheritdoc />
+    public Task<bool> IsBlockedByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default) => Task.FromResult(
+        provider == ScmProvider.AzureDevOps && this._blocks.Values.Any(row => row.ClientId == clientId && row.PullRequestId == pullRequestId &&
+                                                                              string.Equals(
+                                                                                  row.ProviderScopePath.TrimEnd('/'), scope.TrimEnd('/'),
+                                                                                  StringComparison.OrdinalIgnoreCase) &&
+                                                                              string.Equals(
+                                                                                  row.ProviderProjectKey, project, StringComparison.OrdinalIgnoreCase) &&
+                                                                              string.Equals(row.RepositoryId, repository, StringComparison.OrdinalIgnoreCase)));
 
     /// <inheritdoc />
     public Task<bool> IsBlockedAsync(

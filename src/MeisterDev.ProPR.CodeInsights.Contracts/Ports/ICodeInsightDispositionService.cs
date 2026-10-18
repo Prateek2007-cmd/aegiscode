@@ -19,6 +19,15 @@ namespace MeisterDev.ProPR.CodeInsights.Contracts;
 /// </remarks>
 public interface ICodeInsightDispositionService
 {
+    string DependencyVersion => "legacy";
+    Task PrepareDiscussionBatchAsync(CodeInsightDiscussionBatch batch, CancellationToken ct = default) => Task.CompletedTask;
+
+    async Task<CodeInsightEvidenceAcknowledgment> ObserveCurrentAsync(ThreadResolvedDomainEvent evt, CancellationToken ct = default)
+    {
+        await this.HandleThreadResolvedAsync(evt, ct);
+        return new CodeInsightEvidenceAcknowledgment(false);
+    }
+
     /// <summary>Processes one historical receipt family and positively acknowledges its retained evidence.</summary>
     Task<CodeInsightEvidenceAcknowledgment> ObserveHistoricalAsync(
         CodeInsightNativeFindingSnapshot finding, ThreadResolvedDomainEvent evt, CancellationToken ct = default)

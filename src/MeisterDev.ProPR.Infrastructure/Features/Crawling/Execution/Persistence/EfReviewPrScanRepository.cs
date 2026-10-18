@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,6 +19,25 @@ namespace MeisterDev.ProPR.Infrastructure.Repositories;
 /// </remarks>
 public sealed class EfReviewPrScanRepository(MeisterProPRDbContext dbContext) : IReviewPrScanRepository
 {
+    /// <inheritdoc />
+    public async Task<ReviewPrScan?> FindByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string organizationUrl,
+        string projectId, string repositoryId, int pullRequestId, CancellationToken ct = default)
+    {
+        if (provider != ScmProvider.AzureDevOps)
+        {
+            return null;
+        }
+
+        var candidates = await dbContext.ReviewPrScans.Include(scan => scan.Threads).AsNoTracking()
+            .Where(scan => scan.ClientId == clientId && scan.PullRequestId == pullRequestId).ToListAsync(ct);
+        var matches = candidates.Where(scan =>
+            string.Equals(scan.OrganizationUrl.TrimEnd('/'), organizationUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(scan.ProjectId, projectId, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(scan.RepositoryId, repositoryId, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
     /// <inheritdoc />
     public async Task<ReviewPrScan?> GetAsync(
         Guid clientId,

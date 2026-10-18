@@ -64,6 +64,10 @@ Disposition, harvesting and history import obtain normalized intent for saved di
 the credential-free compatibility codec. Their account and publication exclusions retain the separate
 providerless stored-evidence decoder.
 
+Discussion consumers share one provider observation. PostgreSQL records independent consumer progress
+so failed consumers can retry without repeating completed work. Collection and archive policies still
+apply, and immutable measurements require acknowledged final evidence.
+
 ## Measurements
 
 Performance measurements apply scoring premises to stored counts. Counts refresh as evidence is collected,

@@ -188,6 +188,28 @@ public sealed class ThreadMemoryServiceTests
         await repo.Received(1).UpsertAsync(Arg.Any<ThreadMemoryRecord>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ObserveResolvedAsyncTransientFailureIsNotAcknowledged()
+    {
+        var (embedder, repo, _, _, service) = CreateService();
+        embedder.GenerateResolutionSummaryAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(new ThreadResolutionSummary("Summary", ResolutionClarity.ResolvedByChange));
+        embedder.GenerateEmbeddingAsync(Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("unavailable"));
+        Assert.False(await service.ObserveResolvedAsync(ResolvedEvent("Discussion")));
+        await repo.DidNotReceive().UpsertAsync(Arg.Any<ThreadMemoryRecord>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ObserveResolvedAsyncFailedSummaryIsNotAcknowledgedButIntentionalSkipIs()
+    {
+        var (embedder, _, _, _, service) = CreateService();
+        embedder.GenerateResolutionSummaryAsync(Arg.Any<string?>(), Arg.Any<string?>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(new ThreadResolutionSummary(ThreadResolutionSummary.GenerationFailedSummary, ResolutionClarity.Undetermined));
+        Assert.False(await service.ObserveResolvedAsync(ResolvedEvent("Discussion")));
+        Assert.True(await service.ObserveResolvedAsync(ResolvedEvent("")));
+    }
+
     private static ThreadResolvedDomainEvent ResolvedEvent(string commentHistory) =>
         ResolvedEvent(commentHistory, "src/Foo.cs");
 

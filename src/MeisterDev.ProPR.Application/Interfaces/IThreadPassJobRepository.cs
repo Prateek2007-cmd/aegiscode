@@ -15,6 +15,11 @@ namespace MeisterDev.ProPR.Application.Interfaces;
 /// </remarks>
 public interface IThreadPassJobRepository
 {
+    /// <summary>Cancels active passes using provider-equivalent coordinates without requiring a review job or scan.</summary>
+    Task<int> CancelActiveByProviderCoordinatesAsync(
+        Guid clientId, ScmProvider provider, string scope, string project,
+        string repository, int pullRequestId, CancellationToken ct = default);
+
     /// <summary>
     ///     Persists the pass unless the pull request is already held: by a pass still in flight, or by one
     ///     that already ran for the same trigger state and would therefore repeat its work.

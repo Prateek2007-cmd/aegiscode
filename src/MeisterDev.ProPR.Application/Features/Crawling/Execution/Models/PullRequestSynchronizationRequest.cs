@@ -18,6 +18,9 @@ public sealed record PullRequestSynchronizationRequest
     /// <summary>The client that owns the pull request.</summary>
     public required Guid ClientId { get; init; }
 
+    /// <summary>Captured authorized connection for durable discussion refreshes.</summary>
+    public Guid? ConnectionId { get; init; }
+
     /// <summary>The provider-specific scope path or URL used for synchronization lookups.</summary>
     public required string ProviderScopePath { get; init; }
 
@@ -59,6 +62,9 @@ public sealed record PullRequestSynchronizationRequest
 
     /// <summary>When false, synchronization may perform lifecycle checks but must not queue review work.</summary>
     public bool AllowReviewSubmission { get; init; } = true;
+
+    /// <summary>Refreshes discussions and thread-pass scheduling without admitting a file review.</summary>
+    public bool DiscussionOnly { get; init; }
 
     /// <summary>
     ///     When true, a revision that has already been reviewed, or that a prior review failed at, is queued

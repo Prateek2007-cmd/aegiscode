@@ -50,6 +50,37 @@ public sealed class AdoReviewerThreadStatusFetcherTests
             ThreadOwnershipResolver.None, Guid.NewGuid()));
     }
 
+    [Theory]
+    [InlineData("5")]
+    [InlineData("05")]
+    public async Task IdentifiedEventReadsOnlyTheRequestedThreadAfterInitialEnumeration(string id)
+    {
+        var git = MakeGitClient();
+        var native = new GitPullRequestCommentThread
+        {
+            Id = 5, Status = CommentThreadStatus.Active,
+            Comments = [CreateComment("Human", Guid.NewGuid(), "Edited concern", commentId: 2)]
+        };
+        git.GetThreadsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns([native]);
+        git.GetPullRequestThreadAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), 5, Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(native);
+        var sut = BuildSut(git, null);
+        await sut.ReadSnapshotAsync("https://dev.azure.com/org", "project", "repo", 1, ThreadOwnershipResolver.None, Guid.NewGuid());
+        git.ClearReceivedCalls();
+        var targeted = await sut.ReadTargetedSnapshotAsync(
+            "https://dev.azure.com/org", "project", "repo", 1, [id, "5"], ThreadOwnershipResolver.None, Guid.NewGuid());
+        Assert.False(targeted.EnumerationComplete);
+        Assert.Equal(["5"], targeted.TargetThreadIds);
+        Assert.Equal("5", Assert.Single(targeted.Threads).ThreadId);
+        await git.Received(1).GetPullRequestThreadAsync(
+            "project", "repo", 1, 5, Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>());
+        await git.DidNotReceive().GetThreadsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>());
+    }
+
     private static AdoReviewerThreadStatusFetcher BuildSut(GitHttpClient gitClient, Guid? authorizedIdentityId)
     {
         var factory = new VssConnectionFactory(Substitute.For<TokenCredential>());

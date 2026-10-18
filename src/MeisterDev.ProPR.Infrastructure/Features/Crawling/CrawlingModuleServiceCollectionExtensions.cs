@@ -4,6 +4,8 @@
 
 using MeisterDev.ProPR.Application.Features.Crawling.Configuration;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Infrastructure.Features.Crawling.Persistence;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Commands.HandleProviderWebhookDelivery;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
@@ -44,6 +46,15 @@ public static class CrawlingModuleServiceCollectionExtensions
         IConfiguration configuration,
         IHostEnvironment? environment = null)
     {
+        services.AddOptions<DiscussionSynchronizationOptions>().Configure(options =>
+        {
+            options.ReconciliationIntervalSeconds = configuration.GetValue("DISCUSSION_RECONCILIATION_INTERVAL_SECONDS", 300);
+            options.GlobalConcurrency = configuration.GetValue("CRAWL_GLOBAL_CONCURRENCY", 8);
+            options.ProviderHostConcurrency = configuration.GetValue("CRAWL_PROVIDER_HOST_CONCURRENCY", 4);
+            options.ClientProviderHostConcurrency = configuration.GetValue("CRAWL_CLIENT_PROVIDER_HOST_CONCURRENCY", 1);
+            options.OperationTimeoutSeconds = configuration.GetValue("CRAWL_OPERATION_TIMEOUT_SECONDS", 90);
+        });
+        services.TryAddSingleton<ICrawlWorkScheduler, FairCrawlWorkScheduler>();
         services.AddScmProviderLocalDeclarations();
         services.AddAzureDevOpsProviderAdapters();
         services.AddGitHubProviderAdapters();
@@ -54,6 +65,15 @@ public static class CrawlingModuleServiceCollectionExtensions
         {
             services.TryAddScoped<IScmProviderRegistry, ScmProviderRegistry>();
             services.AddScoped<ICrawlConfigurationRepository, CrawlConfigurationRepository>();
+            if (!configuration.GetValue<bool>("ADO_STUB_PR"))
+            {
+                services.AddScoped<IPullRequestThreadSnapshotReader, PullRequestThreadSnapshotReader>();
+                services.AddScoped<IDiscussionSynchronizationStore, DiscussionSynchronizationStore>();
+                services.AddScoped<MeisterDev.ProPR.Application.AI.IAiConfigurationVersionReader, DiscussionAiConfigurationVersionReader>();
+                services.AddScoped<IDiscussionSynchronizationService, DiscussionSynchronizationService>();
+                services.AddScoped<ICrawlTargetRunner, ScopedCrawlTargetRunner>();
+            }
+
             services.AddScoped<IClientPullRequestOverviewStore, ClientPullRequestOverviewStore>();
             services.AddScoped<ClientPullRequestOverviewService>();
             services.AddScoped<IClientPullRequestOverviewService>(sp => sp.GetRequiredService<ClientPullRequestOverviewService>());
@@ -108,7 +128,7 @@ public static class CrawlingModuleServiceCollectionExtensions
         services.AddScoped<HandleProviderWebhookDeliveryHandler>();
 
         services.AddScoped<IWebhookSecretGenerator, WebhookSecretGenerator>();
-        services.AddScoped<IPrCrawlService>(sp => new PrCrawlService(
+        services.AddScoped<PrCrawlService>(sp => new PrCrawlService(
             sp.GetRequiredService<ICrawlConfigurationRepository>(),
             sp.GetRequiredService<IAssignedReviewDiscoveryService>(),
             sp.GetRequiredService<IJobRepository>(),
@@ -120,7 +140,10 @@ public static class CrawlingModuleServiceCollectionExtensions
             sp.GetService<IScmProviderRegistry>(),
             configuration.GetValue<bool>("ADO_STUB_PR")
                 ? null
-                : sp.GetService<IScheduledReviewAuthorityService>()));
+                : sp.GetService<IScheduledReviewAuthorityService>(),
+            sp.GetService<ICrawlTargetRunner>(), sp.GetService<ICrawlWorkScheduler>(),
+            sp.GetService<Microsoft.Extensions.Options.IOptions<DiscussionSynchronizationOptions>>()));
+        services.AddScoped<IPrCrawlService>(sp => sp.GetRequiredService<PrCrawlService>());
 
         return services;
     }

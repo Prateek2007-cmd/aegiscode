@@ -2,6 +2,20 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Infrastructure.Data;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Threads.Persistence;
+using MeisterDev.ProPR.Application.DTOs;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
+using MeisterDev.ProPR.Application.Features.ThreadOwnership;
+using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.Enums;
+using MeisterDev.ProPR.Domain.Events;
+using MeisterDev.ProPR.Domain.ValueObjects;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using NSubstitute;
 using MeisterDev.ProPR.Infrastructure.Data.Models;
 using MeisterDev.ProPR.Infrastructure.Features.IdentityAndAccess;
 using MeisterDev.ProPR.Infrastructure.Repositories;
@@ -58,6 +72,115 @@ public sealed class EfReviewPrScanRepositoryTests(PostgresContainerFixture fixtu
         foreach (var context in this._contexts)
         {
             await context.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task CanonicalDiscussionRefreshUpdatesTheOriginalMixedCaseScanAndMemory()
+    {
+        const string originalHost = "https://dev.azure.com/Org/";
+        const string originalProject = "MixedProject";
+        const string originalRepository = "ABCDEF01-0000-0000-0000-000000000042";
+        await this._repo.SetReviewWatermarkAsync(SeedClientId, originalHost, originalProject, originalRepository, 42, "7");
+        var originalId = (await this._dbContext.ReviewPrScans.SingleAsync()).Id;
+        var registry = LocalScmPolicies.CreateRuntimeSubstitute();
+        registry.GetReviewSourcePolicy(ScmProvider.AzureDevOps).Returns(LocalScmPolicies.Registry.GetReviewSourcePolicy(ScmProvider.AzureDevOps));
+        var connectionId = Guid.NewGuid();
+        var connections = Substitute.For<IClientScmConnectionRepository>();
+        connections.GetOperationalConnectionByIdAsync(SeedClientId, connectionId, Arg.Any<CancellationToken>()).Returns(
+            new ClientScmConnectionCredentialDto(
+                connectionId, SeedClientId, ScmProvider.AzureDevOps, "https://dev.azure.com/org",
+                ScmAuthenticationKind.PersonalAccessToken, "Test", "synthetic", true));
+        connections.GetByIdAsync(SeedClientId, connectionId, Arg.Any<CancellationToken>()).Returns(
+            new ClientScmConnectionDto(
+                connectionId, SeedClientId, ScmProvider.AzureDevOps, "https://dev.azure.com/org",
+                ScmAuthenticationKind.PersonalAccessToken, "Test", true, "verified", null, null, null, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+        var query = Substitute.For<ICodeReviewQueryService>();
+        registry.GetCodeReviewQueryService(ScmProvider.AzureDevOps).Returns(query);
+        query.GetReviewAsync(SeedClientId, Arg.Any<CodeReviewRef>(), Arg.Any<CancellationToken>(), Arg.Any<ReviewDiscoveryContext?>()).Returns(call =>
+            new ReviewDiscoveryItemDto(
+                ScmProvider.AzureDevOps, call.Arg<CodeReviewRef>().Repository, call.Arg<CodeReviewRef>(), CodeReviewState.Open,
+                new ReviewRevision("head", "base", null, "7", null), null, "Test", null, null, null));
+        var store = Substitute.For<IDiscussionSynchronizationStore>();
+        var lease = Substitute.For<IDiscussionSynchronizationLease>();
+        lease.State.Returns(new DiscussionSynchronizationState());
+        lease.ObservedAt.Returns(DateTimeOffset.UtcNow);
+        store.TryAcquireAsync(
+            Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<string?>(), Arg.Any<bool>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(lease);
+        var reader = Substitute.For<IPullRequestThreadSnapshotReader>();
+        reader.ReadAsync(Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>()).Returns(
+            new PullRequestThreadSnapshot(
+                DateTimeOffset.UtcNow,
+                [new("1", "file.cs", 1, [new("Bot", "Concern", CommentId: 1)], "Fixed")],
+                [new("1", "Fixed", "file.cs", "Concern", CodeChangedSinceRaised: ThreadAnchorCodeChange.Changed)]));
+        var memory = Substitute.For<IThreadMemoryService>();
+        memory.ObserveResolvedAsync(Arg.Any<ThreadResolvedDomainEvent>(), Arg.Any<CancellationToken>()).Returns(true);
+        var service = new DiscussionSynchronizationService(
+            store, reader, connections, registry,
+            NullLogger<DiscussionSynchronizationService>.Instance, Microsoft.Extensions.Options.Options.Create(new DiscussionSynchronizationOptions()),
+            memory: memory, scans: this._repo);
+        await service.ObserveAsync(
+            new()
+            {
+                ActivationSource = PullRequestActivationSource.Crawl, SummaryLabel = "discussion refresh", ClientId = SeedClientId, ConnectionId = connectionId,
+                Provider = ScmProvider.AzureDevOps, ProviderScopePath = "https://dev.azure.com/org", ProviderProjectKey = "mixedproject",
+                RepositoryId = originalRepository.ToLowerInvariant(), PullRequestId = 42, PullRequestStatus = PrStatus.Active,
+                AllowReviewSubmission = false, DiscussionOnly = true,
+            });
+        await memory.Received(1).ObserveResolvedAsync(
+            Arg.Is<ThreadResolvedDomainEvent>(evt => evt.OrganizationUrl == originalHost &&
+                                                     evt.ProjectId == originalProject && evt.RepositoryId == originalRepository), Arg.Any<CancellationToken>());
+        await using var verification = this.CreateDbContext();
+        var saved = await verification.ReviewPrScans.Include(scan => scan.Threads).SingleAsync();
+        Assert.Equal(originalId, saved.Id);
+        Assert.Equal(originalHost, saved.OrganizationUrl);
+        Assert.Equal("Fixed", Assert.Single(saved.Threads).LastSeenStatus);
+    }
+
+    [Fact]
+    public async Task ProviderPolicyLookupsFindPreScanBlocksAndQueuedJobsWithinTheClientAndSource()
+    {
+        var client = Guid.NewGuid();
+        this._dbContext.Clients.Add(
+            new ClientRecord
+                { Id = client, TenantId = TenantCatalog.SystemTenantId, DisplayName = "Policy test", IsActive = true, CreatedAt = DateTimeOffset.UtcNow });
+        var job = new ReviewJob(Guid.NewGuid(), client, "https://dev.azure.com/Org/", "MixedProject", "Repo", 42, 7);
+        this._dbContext.ReviewJobs.Add(job);
+        this._dbContext.BlockedPullRequests.Add(new(Guid.NewGuid(), client, "https://dev.azure.com/Org/", "MixedProject", "Repo", 42, Guid.NewGuid(), null));
+        await this._dbContext.SaveChangesAsync();
+        try
+        {
+            Assert.False(await this._dbContext.ReviewPrScans.AnyAsync(scan => scan.ClientId == client));
+            var blocks = new BlockedPullRequestStore(this._dbContext, NullLogger<BlockedPullRequestStore>.Instance);
+            var jobs = new JobRepository(this._dbContext, Substitute.For<IDbContextFactory<MeisterProPRDbContext>>(), NullLogger<JobRepository>.Instance);
+            Assert.True(
+                await blocks.IsBlockedByProviderCoordinatesAsync(client, ScmProvider.AzureDevOps, "https://dev.azure.com/org", "mixedproject", "repo", 42));
+            Assert.Equal(
+                job.Id,
+                Assert.Single(
+                        await jobs.FindActiveByProviderCoordinatesAsync(
+                            client, ScmProvider.AzureDevOps, "https://dev.azure.com/org", "mixedproject", "repo", 42))
+                    .Id);
+            Assert.False(await blocks.IsBlockedByProviderCoordinatesAsync(client, ScmProvider.GitHub, "https://dev.azure.com/org", "mixedproject", "repo", 42));
+            Assert.Empty(await jobs.FindActiveByProviderCoordinatesAsync(client, ScmProvider.GitHub, "https://dev.azure.com/org", "mixedproject", "repo", 42));
+            Assert.Empty(
+                await jobs.FindActiveByProviderCoordinatesAsync(client, ScmProvider.AzureDevOps, "https://dev.azure.com/other", "mixedproject", "repo", 42));
+            await this._dbContext.ReviewJobs.Where(row => row.ClientId == client).ExecuteDeleteAsync();
+            var thread = new ThreadPassJob(Guid.NewGuid(), client, "https://dev.azure.com/Org/", "MixedProject", "Repo", 42, 7, "7", "trigger");
+            this._dbContext.ThreadPassJobs.Add(thread);
+            await this._dbContext.SaveChangesAsync();
+            var passes = new EfThreadPassJobRepository(this._dbContext);
+            Assert.Equal(
+                0, await passes.CancelActiveByProviderCoordinatesAsync(client, ScmProvider.GitHub, "https://dev.azure.com/org", "mixedproject", "repo", 42));
+            Assert.Equal(
+                1,
+                await passes.CancelActiveByProviderCoordinatesAsync(client, ScmProvider.AzureDevOps, "https://dev.azure.com/org", "mixedproject", "repo", 42));
+            Assert.Equal(ThreadPassJobStatus.Cancelled, (await this._dbContext.ThreadPassJobs.AsNoTracking().SingleAsync(row => row.Id == thread.Id)).Status);
+            Assert.False(await this._dbContext.ReviewPrScans.AnyAsync(scan => scan.ClientId == client));
+        }
+        finally
+        {
+            await this._dbContext.Clients.Where(row => row.Id == client).ExecuteDeleteAsync();
         }
     }
 

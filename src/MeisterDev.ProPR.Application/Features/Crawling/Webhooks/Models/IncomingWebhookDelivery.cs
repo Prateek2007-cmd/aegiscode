@@ -15,4 +15,6 @@ public sealed record IncomingWebhookDelivery(
     string SourceBranch,
     string TargetBranch,
     string PullRequestStatus,
-    IReadOnlyList<Guid> ReviewerIds);
+    IReadOnlyList<Guid> ReviewerIds,
+    string? ThreadId = null,
+    string? CommentId = null);

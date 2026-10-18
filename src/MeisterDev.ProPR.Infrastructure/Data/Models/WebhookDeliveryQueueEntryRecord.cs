@@ -40,6 +40,8 @@ public sealed class WebhookDeliveryQueueEntryRecord
 
     public int Attempts { get; set; }
 
+    public bool DiscussionRefreshRequested { get; set; }
+
     /// <summary>When this entry becomes eligible again. Moved forward by the backoff after a failure.</summary>
     public DateTimeOffset EligibleAt { get; set; }
 

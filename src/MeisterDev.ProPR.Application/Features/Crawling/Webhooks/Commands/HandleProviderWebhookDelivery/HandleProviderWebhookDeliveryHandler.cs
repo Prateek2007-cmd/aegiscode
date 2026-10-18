@@ -27,7 +27,8 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
     ILogger<HandleProviderWebhookDeliveryHandler> logger,
     IPullRequestSynchronizationService pullRequestSynchronizationService,
     IWebhookDeliveryQueue deliveryQueue,
-    IProviderActivationService? providerActivationService = null)
+    IProviderActivationService? providerActivationService = null,
+    IDiscussionSynchronizationService? discussions = null)
 {
     private const int OkStatusCode = 200;
     private const int BadRequestStatusCode = 400;
@@ -37,7 +38,7 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
     private const int MaxDeliveryActionSummaryLength = 280;
     private const int MaxFailureReasonLength = 280;
     private static readonly ActivitySource WebhookActivitySource = new("MeisterProPR.Webhooks", "1.0.0");
-    private static readonly Meter WebhookMeter = new("MeisterProPR", "1.0.0");
+    private static readonly Meter WebhookMeter = new("MeisterDEV.ProPR", "1.0.0");
 
     private static readonly Counter<long> WebhookDeliveryCounter = WebhookMeter.CreateCounter<long>(
         "meisterpropr_webhook_deliveries_total",
@@ -219,6 +220,18 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
             return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, rejected);
         }
 
+        var discussionRepository = ResolveEffectiveRepository(configuration, delivery.Repository, matchedFilter);
+        var discussionRequest = new PullRequestSynchronizationRequest
+        {
+            ActivationSource = PullRequestActivationSource.Webhook, SummaryLabel = "webhook discussion refresh",
+            ClientId = configuration.ClientId, ProviderScopePath = configuration.OrganizationUrl,
+            ProviderProjectKey = configuration.ProjectId, RepositoryId = discussionRepository.ExternalRepositoryId,
+            PullRequestId = delivery.Review.Number, PullRequestStatus = classification.PullRequestStatus,
+            Provider = delivery.Host.Provider, Host = delivery.Host, Repository = discussionRepository,
+            CodeReview = new CodeReviewRef(discussionRepository, delivery.Review.Platform, delivery.Review.ExternalReviewId, delivery.Review.Number),
+            AllowReviewSubmission = false, DiscussionOnly = true,
+        };
+
         // The seam. Everything above reads only the delivery and this installation's own configuration.
         // Everything below reads the provider, meaning the revision, the reviewer and the pull request
         // itself, and that is the part no provider's delivery timeout will wait for. An accepted delivery is
@@ -226,15 +239,16 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
         // bound by that timeout.
         if (command.Mode == WebhookDeliveryProcessingMode.AcceptAndQueue)
         {
+            var discussionTarget = discussions is null ? null : await discussions.ResolveTargetAsync(discussionRequest, ct);
             var queued = await deliveryQueue.EnqueueAsync(
                 new WebhookDeliveryQueueSubmission(
                     configuration.Id,
                     command.Provider,
                     command.PathKey,
                     delivery.EventName,
-                    TryReadDeliveryKey(command.Provider, command.Headers),
+                    TryReadDeliveryKey(command.Provider, command.Headers) ?? (delivery.HasReliableDeliveryId ? delivery.DeliveryId : null),
                     JsonSerializer.Serialize(command.Headers),
-                    command.Payload),
+                    command.Payload, discussionTarget, delivery.ThreadId),
                 ct);
 
             var accepted = NormalizeDecision(new WebhookDeliveryQueueOutcome(queued).ToDecision(OkStatusCode));
@@ -255,6 +269,18 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
 
             LogDeliveryQueued(logger, configuration.Id, command.Provider, delivery.EventName, queued);
             return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, accepted);
+        }
+
+        if (discussions is not null && !command.DiscussionRefreshRequested)
+        {
+            if (command.QueueEntryId.HasValue)
+            {
+                await discussions.RequestFromDeliveryAsync(discussionRequest, delivery.ThreadId, command.QueueEntryId.Value, ct);
+            }
+            else
+            {
+                await discussions.RequestAsync(discussionRequest, delivery.ThreadId, ct);
+            }
         }
 
         try

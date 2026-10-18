@@ -27,6 +27,7 @@ internal sealed class
         builder.Property(x => x.ReceivedAt).HasColumnName("received_at").IsRequired();
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<int>().IsRequired();
         builder.Property(x => x.Attempts).HasColumnName("attempts").IsRequired();
+        builder.Property(x => x.DiscussionRefreshRequested).HasColumnName("discussion_refresh_requested").HasDefaultValue(false);
         builder.Property(x => x.EligibleAt).HasColumnName("eligible_at").IsRequired();
         builder.Property(x => x.ClaimedBy).HasColumnName("claimed_by").HasMaxLength(256);
         builder.Property(x => x.ClaimedAt).HasColumnName("claimed_at");

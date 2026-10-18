@@ -33,6 +33,20 @@ public sealed partial class CodeInsightHarvestCoverageRecorder(
         }
 
         await this.RecordCoreAsync(key, providerScope, allHumanThreadsResolved, observedAt, ct, true, true);
+        return await this.AcknowledgeAsync(key, providerScope, observedAt, ct);
+    }
+
+    public async Task<CodeInsightEvidenceAcknowledgment> RecordCurrentAcknowledgedAsync(
+        CodeInsightPullRequestKey key, string providerScope, bool allHumanThreadsResolved, DateTimeOffset observedAt,
+        CancellationToken ct = default, bool enumerationComplete = true)
+    {
+        await this.RecordCoreAsync(key, providerScope, allHumanThreadsResolved, observedAt, ct, enumerationComplete, false);
+        return enumerationComplete ? await this.AcknowledgeAsync(key, providerScope, observedAt, ct) : new(false);
+    }
+
+    private async Task<CodeInsightEvidenceAcknowledgment> AcknowledgeAsync(
+        CodeInsightPullRequestKey key, string providerScope, DateTimeOffset observedAt, CancellationToken ct)
+    {
         await using var lease = await CodeInsightDbContextLease.CreateAsync(dbContext, contextFactory, ct);
         var aggregateId = await lease.Context.CodeInsightPullRequests.AsNoTracking().Where(row => row.ClientId == key.ClientId
                                                                                                   && row.RepositoryId == key.RepositoryId &&

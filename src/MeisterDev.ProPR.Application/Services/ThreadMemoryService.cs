@@ -66,6 +66,9 @@ public sealed partial class ThreadMemoryService(
 
     /// <inheritdoc />
     public async Task HandleThreadResolvedAsync(ThreadResolvedDomainEvent evt, CancellationToken ct = default)
+        => _ = await this.ObserveResolvedAsync(evt, ct);
+
+    public async Task<bool> ObserveResolvedAsync(ThreadResolvedDomainEvent evt, CancellationToken ct = default)
     {
         // Heuristic pre-gate: a thread with no discussion carries no resolution to learn from.
         // Skip before spending any AI call. Threads with any content (including a lone bot finding)
@@ -73,7 +76,7 @@ public sealed partial class ThreadMemoryService(
         if (string.IsNullOrWhiteSpace(evt.CommentHistory))
         {
             await this.RecordResolvedSkipAsync(evt, "empty_comment_history", ct);
-            return;
+            return true;
         }
 
         // Grounding gate: a close that only claims a fix must be corroborated by an actual code change
@@ -88,7 +91,7 @@ public sealed partial class ThreadMemoryService(
                 : "code_change_undetermined";
             await this.RecordResolvedSkipAsync(evt, groundingReason, ct);
             LogResolvedSkipped(logger, evt.ThreadId, evt.ClientId, groundingReason);
-            return;
+            return true;
         }
 
         // The store keeps one canonical path form, so a record written from a provider thread path stays
@@ -118,7 +121,7 @@ public sealed partial class ThreadMemoryService(
                 var reason = ClassifySkipReason(resolution);
                 await this.RecordResolvedSkipAsync(evt, reason, ct);
                 LogResolvedSkipped(logger, evt.ThreadId, evt.ClientId, reason);
-                return;
+                return resolution.Summary != ThreadResolutionSummary.GenerationFailedSummary;
             }
 
             var compositeText = BuildCompositeText(
@@ -134,6 +137,8 @@ public sealed partial class ThreadMemoryService(
                 Id = Guid.NewGuid(),
                 ClientId = evt.ClientId,
                 ThreadId = evt.ThreadId,
+                OrganizationUrl = evt.OrganizationUrl,
+                ProjectId = evt.ProjectId,
                 RepositoryId = evt.RepositoryId,
                 PullRequestId = evt.PullRequestId,
                 FilePath = canonicalFilePath,
@@ -177,6 +182,7 @@ public sealed partial class ThreadMemoryService(
                 ct);
 
             LogEmbeddingStored(logger, evt.ThreadId, evt.ClientId);
+            return true;
         }
         catch (Exception ex)
         {
@@ -184,6 +190,7 @@ public sealed partial class ThreadMemoryService(
             // record the skip rather than a phantom "Stored" entry.
             LogProcessResolvedFailed(logger, evt.ThreadId, evt.ClientId, ex);
             await this.RecordResolvedSkipAsync(evt, "embedding_failed", ct);
+            return false;
         }
     }
 
@@ -282,6 +289,9 @@ public sealed partial class ThreadMemoryService(
 
     /// <inheritdoc />
     public async Task HandleThreadReopenedAsync(ThreadReopenedDomainEvent evt, CancellationToken ct = default)
+        => _ = await this.ObserveReopenedAsync(evt, ct);
+
+    public async Task<bool> ObserveReopenedAsync(ThreadReopenedDomainEvent evt, CancellationToken ct = default)
     {
         try
         {
@@ -311,10 +321,12 @@ public sealed partial class ThreadMemoryService(
                 ct);
 
             LogEmbeddingRemoved(logger, evt.ThreadId, evt.ClientId, outcome);
+            return true;
         }
         catch (Exception ex)
         {
             LogProcessReopenedFailed(logger, evt.ThreadId, evt.ClientId, ex);
+            return false;
         }
     }
 
