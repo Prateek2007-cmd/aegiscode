@@ -38,3 +38,17 @@ public sealed record ReviewerPerformanceScore(
     ReviewerPerformanceCounts Counts,
     IReadOnlyList<ReviewerPerformanceScenario> Scenarios,
     ReviewerPerformanceSummary Summary);
+
+/// <summary>One scoring premise applied to the overall published-outcome population.</summary>
+public sealed record ReviewerPerformancePrecisionScenario(
+    string Id,
+    long TruePositives,
+    long FalsePositives,
+    long Excluded,
+    double? Precision);
+
+/// <summary>Overall precision and raw selected inputs, independent of recall coverage.</summary>
+public sealed record ReviewerPerformancePrecisionScore(
+    ReviewerPerformanceCounts Counts,
+    IReadOnlyList<ReviewerPerformancePrecisionScenario> Scenarios,
+    ReviewerPerformanceRange? Summary);

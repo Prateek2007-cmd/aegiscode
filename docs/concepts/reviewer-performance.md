@@ -21,6 +21,12 @@ FN. Precision is `TP / (TP + FP)`, observed recall is `TP / (TP + FN)`, and F1 i
 unavailable value. Excluded observations do not contribute to that denominator. These measurements do not
 estimate TN or a complete population of defects.
 
+Precision uses all supported published outcomes in the selected scope. Recall and F1 use covered source
+pull requests. F1 applies TP, FP and FN from that same covered population; its precision contribution can
+differ from the overall precision shown by the precision metric. Coverage exclusions remove a pull
+request's findings and misses from the covered calculation without removing its supported findings from
+overall precision.
+
 Unknown outcomes, unresolved publications and failed outcome judgments are excluded before any duplicate
 interpretation is applied. Duplicate counts are subsets of the outcome population; they replace a
 contribution once. Suppressed repeats receive no publication credit. Generated, withheld, failed,
@@ -36,6 +42,8 @@ The range describes interpretation choices; it is not a confidence interval or v
 requests. Cumulative series retain earlier evidence through the selected window. Per-period measurements
 have gaps for missing periods and inactive series. Direct labels identify each series, metric median,
 complete range and last available measurement date.
+An open circle marks an inactive period or empty denominator; an X marks unavailable evidence or unsupported
+attribution. A measured zero remains a score. Missing measurements are not interpolated.
 
 ## Filtering and comparing
 
@@ -62,6 +70,12 @@ exploration. Focus the chart to inspect with the keyboard: Left and Right move b
 move between series, and Home and End move to the first and last periods. Enter or Space selects the point;
 Escape closes its details, and Page Up/Down scrolls long details. Unavailable periods remain inspectable.
 
+The coverage panel shows the inspected point, or the window end before a point is selected. It remains
+attached to that date even when an earlier point has the latest available score. **View exclusions** opens
+the captured pull requests for that point, with client, repository, source identity, evidence reason,
+collection attempts and recovery state. The list pages locally. Source links are available when retained
+provider coordinates establish an unambiguous browser URL.
+
 Activate **Compare side by side** to add an independently filtered view. Desktop charts appear beside each
 other when both fit at a readable size; narrower screens stack them. Both views are read under the same
 database snapshot, use the same 0–100% metric scale and share a calendar or elapsed-period axis. Calendar
@@ -70,7 +84,7 @@ shows B-minus-A differences for the same interpretation premise. Toggling compar
 view's filters. Choose View A or View B under **Edit view**. **Apply filters** submits both views.
 
 **Explore dimensions** opens a matrix at the current point. Choose two dimensions to inspect score ranges
-for their intersections. Model is an available axis for precision exploration. Selecting a cell filters the
+for their intersections. Model is an available axis for qualified precision, observed recall and F1. Selecting a cell filters the
 timeline and returns keyboard focus to it at the cell's measurement date. Filters being edited
 apply after **Apply filters**. Changing aggregation, buckets or series keeps those edits pending; exploration
 and snapshot capture use the scope displayed by the chart. Automatic measurement changes retain the scope
@@ -82,24 +96,67 @@ labels remain attached to the retained results.
 
 Observed recall measures retained human review concerns; it does not measure every defect in the code.
 Complete successful thread enumeration is required even when no human misses were found. Open human
-threads are provisional and excluded from both settled-miss premises. Failed collection or judgment and
-missing compatible attribution produce explicit reasons and unavailable recall/F1. Chart point details
-show the metric ranges and their evidence limitations. Failed human judgments display unavailable
-decisions in the Misses panel.
+threads with successful judgments are provisional and excluded from both settled-miss premises. Missing
+enumeration, failed human judgments or incompatible source attribution exclude the affected source pull
+request from recall and F1. A refresh failure alone does not exclude a source with sufficient retained
+evidence. Failed human judgments display unavailable decisions in the Misses panel.
 
-Model-specific precision is supported where publication and outcome evidence exists. All model-filtered,
-model-grouped and model-axis recall/F1 measurements remain unavailable: file review exposures are retained,
-but compatible membership connecting human misses to models is not recorded. A latest file model or
-observation order does not establish that membership. Finding-type and kind recall/F1 are available only
-when the relevant settled misses have compatible recorded classification. Missing classifications remain
-unknown.
+Coverage counts distinct source pull requests in the selected client, repository and date population.
+Repeated dates or overlapping type memberships count a source once. The default advisory minimums are
+80% covered sources and one covered pull request. They use unrounded counts and are configurable through
+the [Code Insights settings](../operate/configuration.md#code-insights). Scores remain available below either
+advisory when at least one covered source supplies a nonempty metric denominator. Complete enumeration
+with zero misses is eligible. A period without scored outcomes or settled misses has no F1 value.
+
+Exclusion reasons remain visible alongside scores. The covered subset can differ systematically
+from excluded sources; its coverage percentage does not establish that it represents all pull requests.
+
+Model-specific precision uses retained publication and outcome evidence. Model recall and F1 additionally
+require positively retained execution opportunities and independent human concerns. Model grouping, filters
+and matrix cells qualify each source before type and kind filtering. A source with unknown applicable
+execution, original concern position or candidate matching is excluded from that model's covered outcomes
+and misses. Models can have different covered workloads; compare their coverage as well as their scores.
+
+A completed finding-producing pass records its actual remote and logical model, source connection,
+original revision, assigned file/ranges, candidate set and first durable server acceptance. Valid structured
+empty output is a certified zero. Failed, skipped, cancelled or invalid generation cannot certify zero.
+A certified zero with a verified applicable missed concern has recall and F1 of 0%, even if precision has
+an empty denominator. A certified zero without scored outcomes or concerns is inactive. Both remain in the
+model facets. Context-only, planning and verifier calls do not establish detection opportunities.
+
+Independent human concerns include substantive human confirmation in reviewer-owned threads. Bot-only
+findings are not human ground truth. Original native revision, file, side, range and issue-raise time
+establish compatibility; the observation head or later confirmation time cannot replace them. Later
+reviews cannot remove an earlier qualified miss. Repeated concerns are combined only with positive
+candidate or concern equivalence proof. Open concerns with successful judgments remain informational.
+
+Selecting multiple models in Combined evaluates their applicable opportunity union. If B detected an issue
+that A missed, A receives one miss, B receives none and selected A+B receives none. If neither detected it,
+selected A+B receives one miss. Coverage and misses are never summed across singleton model views. A model
+with positively proven non-assignment to the issue's file/range receives no miss for it. Complete A remains
+usable when unrelated B fails; selecting an applicable incomplete B excludes that source from A+B.
+Withheld candidates can establish detection but receive no published true-positive credit.
+An earlier failed or invalid applicable pass remains unknown even when another pass completed. An
+unresolved configured pass cannot prove that a model was absent from a file. Editing a concern removes
+its prior equivalence until current evidence proves the relationship again.
+
+Historical files, configuration and finding absence do not establish execution completeness or zero misses.
+Missing original proof remains unreconstructable. Current PR-wide generation retains positive candidates,
+but its assigned line-level scope is not certified, so it cannot establish non-detection for arbitrary
+concerns. Cross-revision reuse retains its origin; an unchanged file digest alone cannot certify that all
+relevant review context stayed unchanged. Such opportunities remain excluded from model recall/F1.
+
+Finding-type and kind recall/F1 are available only
+over sources whose relevant settled misses have compatible recorded classification. Eligibility is
+assessed before finding-dimension filters can remove unattributed misses. Missing classifications remain
+unknown and exclude the affected source.
 
 Repository identities include client, provider family, host and repository ID when that provenance is
 recorded. Missing source identity is displayed as unavailable provenance. Outcome observations require
 matching source identity. Recall and F1 require compatible miss attribution across the selected client,
 repository and date population, including when model, type or kind filters are applied. Eligible human
-concerns without source identity make recall and F1 unavailable because their membership cannot be
-established.
+concerns without source identity exclude compatible sources because their membership cannot be
+established. Sources with coverage records remain visible even when they have no findings or scored misses.
 
 ## Current evidence and saved reports
 
@@ -107,20 +164,48 @@ Current results reuse stored counts. Collection and background catch-up refresh 
 changes. Each view shows its latest evidence update time. **Report captured** shows the response capture
 time separately. Background collection refreshes retained pull requests, including those already closed.
 Consistent finding outcomes and human concerns keep their stored judgments. Missing provider data keeps
-affected scores unavailable until collection completes.
+affected sources excluded until collection completes. Recall and F1 remain available when the covered
+population contains at least one source and metric denominators exist.
 Missing update times are shown as unavailable. Pending updates warn that current scores may change as
 updates are processed. Filtering uses retained evidence without repeating review analysis.
 
-Current outcomes include reopened threads. A human concern that matches a reviewer finding or contains an
-AI-authored comment is excluded from miss counts; its recorded judgments remain visible. Failed collection
-makes compatible recall unavailable. Failed human judgments are displayed as unavailable decisions.
+Current outcomes include reopened threads. Unfiltered Combined retains its global overlap exclusions for
+reviewer findings and AI-authored discussions. Model measurements use independently verified concerns
+before that overlap exclusion. Failed human judgments are displayed as unavailable decisions.
+
+Transient provider reads, timeouts, classification and retention failures are eligible for automatic retry
+after the configured cooldown. Missing usable connections, source coordinates or provider identity,
+unsupported historical collection and missing observer dependencies require operator repair. Their
+automatic retries are paused. Generic provider failures do not establish that a remote repository was
+deleted and remain retryable.
+
+After repairing a source, use **Requeue collection** in its live exclusion details. The request queues a
+subsequent bounded background sweep. Active observations and disabled client collection prevent requeue
+with an actionable message. Queued status persists when the dialog is reopened or current evidence is
+loaded again. The dialog shows the request acknowledgement time or the queued sweep eligibility time.
+An active observation shows its start and lease expiry. **Refresh current evidence** updates progress and
+scores while preserving the inspected measurement and pending filter edits. Failed observations retain
+their reason and permit another request after repair. Exclusions disappear when retained evidence becomes
+usable. Queuing preserves the displayed evidence until a fresh read establishes its state.
+
+For incomplete retained concern classification or candidate matching, **Retry retained classification**
+uses only the captured provider scope and connection. It performs bounded local classification without
+provider collection or review execution. The dialog records the captured retry cooldown; refresh after an
+attempt to inspect its result. Successful facts and original source cutoffs remain fixed. Missing historical
+execution or original-anchor proof offers no retry action. A collection retry cannot reconstruct it.
+Classification input or concern-equivalence limits also offer no retry for unchanged evidence. Their
+captured exclusion reason identifies the exceeded bound.
 
 **Save snapshot** captures the server's complete query response, including filters, display identities,
 counts, premises, calculated values, evidence reasons, source freshness and scoring version. Opening it
 reads that stored payload without applying current evidence or recalculating its version. Metric selection
 uses its stored precision, recall and F1 values. Pending-update status describes the time of capture; saved
-scores remain unchanged. Saved scope and measurement controls are fixed. Dimension exploration is
-available only for intersections included in the capture, and inspection aligns to their
+scores remain unchanged. Coverage policy, exclusions, source links and recovery metadata describe the
+capture. Calculation version `reviewer-performance-v2` treats the coverage minimums as advisories.
+Saved v1 reports retain their stored values and availability. Reports without coverage fields identify
+their absence; coverage is not reconstructed from current data. Collection commands are unavailable in saved
+reports. Saved scope and measurement controls are fixed.
+Dimension exploration is available only for intersections included in the capture, and inspection aligns to their
 captured measurement bucket. A failed capture can be retried with the same request ID, name and scope.
 After confirmed snapshot deletion, a failed return to current evidence retains the cached snapshot and marks
 it deleted. Repeat deletion is disabled; returning to current or selecting another report remains available.

@@ -2,16 +2,69 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
+import type { PerformanceCounts, PerformanceCoverage, PerformanceRange } from '@/services/reviewerPerformanceService'
+
 export type PerformanceMetric = 'precision' | 'recall' | 'f1'
 type PartialPoint = {
   date?: string
-  score?: { summary?: Partial<Record<PerformanceMetric, { median?: number } | null>> }
+  score?: {
+    summary?: Partial<Record<PerformanceMetric, PerformanceRange | null>>
+    counts?: PerformanceCounts
+    scenarios?: PartialScenario[] | null
+  }
+  overallPrecision?: {
+    summary?: PerformanceRange | null
+    counts?: PerformanceCounts
+    scenarios?: PartialScenario[] | null
+  } | null
+  coverage?: PerformanceCoverage | null
+  unavailableReasons?: string[] | null
+}
+
+export function metricRange(point: PartialPoint, metric: PerformanceMetric): PerformanceRange | null | undefined {
+  return usesOverallPrecision(point, metric)
+    ? point.overallPrecision?.summary
+    : point.score?.summary?.[metric]
+}
+
+export function metricCounts(point: PartialPoint, metric: PerformanceMetric): PerformanceCounts | undefined {
+  return usesOverallPrecision(point, metric)
+    ? point.overallPrecision?.counts
+    : point.score?.counts
+}
+
+export function metricScenarios(point: PartialPoint, metric: PerformanceMetric): PartialScenario[] {
+  return (usesOverallPrecision(point, metric)
+    ? point.overallPrecision?.scenarios
+    : point.score?.scenarios) ?? []
+}
+
+function usesOverallPrecision(point: PartialPoint, metric: PerformanceMetric): boolean {
+  return metric === 'precision' && (point.overallPrecision != null || point.coverage != null)
+}
+
+export function pointAvailability(point: PartialPoint, metric: PerformanceMetric): 'available' | 'inactive' | 'unavailable' {
+  if (metricRange(point, metric)?.median != null) return 'available'
+  const coverage = point.coverage
+  if (metric !== 'precision' && coverage?.recallSupported && (coverage.coveredPullRequests ?? 0) > 0 &&
+    point.score?.scenarios?.some((scenario) => scenario.falseNegatives != null)) return 'inactive'
+  if (metric !== 'precision' && coverage && (coverage.candidatePullRequests ?? 0) > 0 && (
+    !coverage.meetsMinimum || !coverage.recallSupported
+  )) return 'unavailable'
+  if ((metric === 'precision' && point.overallPrecision != null) ||
+    (metric !== 'precision' && coverage?.meetsMinimum && coverage.recallSupported)) return 'inactive'
+  if (point.unavailableReasons?.includes('no-series-observation-in-period') ||
+    (coverage && ((coverage.candidatePullRequests ?? 0) === 0 || metricCounts(point, metric)?.outcomes?.total === 0))) {
+    return 'inactive'
+  }
+  return 'unavailable'
 }
 type PartialScenario = {
   id?: string | null
   precision?: number | null
   recall?: number | null
   f1?: number | null
+  falseNegatives?: number | null
 }
 
 export function connectedSegments<T extends PartialPoint>(
@@ -21,7 +74,7 @@ export function connectedSegments<T extends PartialPoint>(
   const segments: T[][] = []
   let current: T[] = []
   for (const point of points) {
-    if (point.score?.summary?.[metric]?.median == null) {
+    if (metricRange(point, metric)?.median == null) {
       if (current.length) segments.push(current)
       current = []
     } else current.push(point)

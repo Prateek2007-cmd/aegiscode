@@ -18,7 +18,8 @@ public sealed record RetainedThreadView(
     int? Line,
     string Status,
     DateTimeOffset UpdatedAt,
-    IReadOnlyList<RetainedCommentView> Comments);
+    IReadOnlyList<RetainedCommentView> Comments,
+    MeisterDev.ProPR.Domain.ValueObjects.ReviewConcernAnchor? ConcernAnchor = null);
 
 /// <summary>
 ///     A retained comment as returned from the store, with its body decrypted.

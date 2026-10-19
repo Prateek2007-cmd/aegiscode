@@ -60,6 +60,19 @@ public sealed partial class CodeInsightCatchUpWorker(
             await using var scope = scopeFactory.CreateAsyncScope();
 
             var current = options.CurrentValue;
+            var modelEvidence = scope.ServiceProvider.GetService<IModelEvidenceMaintenance>();
+            if (modelEvidence is not null)
+            {
+                try
+                {
+                    await modelEvidence.SweepAsync(Math.Clamp(current.EffectiveBackfillMaxJobs, 1, 100), stoppingToken);
+                }
+                catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.LogWarning("Retained model evidence maintenance unavailable: {FailureType}", exception.GetType().Name);
+                }
+            }
+
             var projector = scope.ServiceProvider.GetService<ICodeInsightRollupProjector>();
             var sweeper = scope.ServiceProvider.GetService<ICodeInsightSealSweeper>();
             if (projector is null || sweeper is null)
@@ -83,7 +96,8 @@ public sealed partial class CodeInsightCatchUpWorker(
                 var evidence = scope.ServiceProvider.GetService<ICodeInsightProviderEvidenceBackfill>();
                 if (evidence is not null)
                 {
-                    await evidence.SweepAsync(current.EffectiveProviderEvidenceBackfillMaxPullRequests, stoppingToken);
+                    var result = await evidence.SweepAsync(current.EffectiveProviderEvidenceBackfillMaxPullRequests, stoppingToken);
+                    LogProviderEvidenceCompleted(logger, result.Attempted, result.Observed, result.Unavailable, result.Disabled);
                 }
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)

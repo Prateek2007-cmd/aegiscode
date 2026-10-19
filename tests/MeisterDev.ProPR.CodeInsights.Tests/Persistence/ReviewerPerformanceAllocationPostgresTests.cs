@@ -68,7 +68,7 @@ public sealed class ReviewerPerformanceAllocationPostgresTests(PostgresContainer
         };
         var allocatedBefore = GC.GetTotalAllocatedBytes(true);
         var timer = Stopwatch.StartNew();
-        var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(query, clients);
+        var result = await new ReviewerPerformanceRangeReader(db, providerRegistry: LocalScmPolicies.Registry).QueryAsync(query, clients);
         timer.Stop();
         var allocated = GC.GetTotalAllocatedBytes(true) - allocatedBefore;
 
@@ -76,7 +76,7 @@ public sealed class ReviewerPerformanceAllocationPostgresTests(PostgresContainer
         Assert.Equal(100_000, view.AggregateCells);
         Assert.Equal(8, view.Series.Count);
         Assert.Equal(2_000, view.Series.Sum(series => series.Points.Count));
-        Assert.Equal(100_000, view.Series.Sum(series => series.Points[^1].Score.Counts.Outcomes.Positive));
+        Assert.Equal(100_000, view.Series.Sum(series => series.Points[^1].OverallPrecision!.Counts.Outcomes.Positive));
         Assert.All(
             view.Series, series =>
             {
@@ -84,7 +84,7 @@ public sealed class ReviewerPerformanceAllocationPostgresTests(PostgresContainer
                 for (var index = 0; index < series.Points.Count; index++)
                 {
                     Assert.Equal(from.AddDays(index), series.Points[index].Date);
-                    Assert.Equal(50L * (index + 1), series.Points[index].Score.Counts.Outcomes.Positive);
+                    Assert.Equal(50L * (index + 1), series.Points[index].OverallPrecision!.Counts.Outcomes.Positive);
                 }
             });
         Console.WriteLine(
@@ -133,7 +133,7 @@ public sealed class ReviewerPerformanceAllocationPostgresTests(PostgresContainer
             Bucket = "day", Aggregation = "cumulative", Grouping = "none",
             Views = [new() { From = from, To = from.AddDays(249), ClientIds = [client], Repositories = [.. malformedSelectors, .. malformedSelectors] }]
         };
-        var reader = new ReviewerPerformanceRangeReader(db);
+        var reader = new ReviewerPerformanceRangeReader(db, providerRegistry: LocalScmPolicies.Registry);
         // Warm the public query path without decoding malformed selectors before measuring process-wide allocations.
         await reader.QueryAsync(query with { Views = [query.Views[0] with { Repositories = [] }] }, [client]);
         var allocatedBefore = GC.GetTotalAllocatedBytes(true);
@@ -145,7 +145,7 @@ public sealed class ReviewerPerformanceAllocationPostgresTests(PostgresContainer
         Assert.Equal(repositoryCount * 250, view.AggregateCells);
         var series = Assert.Single(view.Series);
         Assert.Equal(250, series.Points.Count);
-        Assert.All(series.Points, point => Assert.Equal(0, point.Score.Counts.HarvestedThreads));
+        Assert.All(series.Points, point => Assert.Equal(0, point.OverallPrecision!.Counts.HarvestedThreads));
         Console.WriteLine($"Malformed repository selection: {view.AggregateCells:N0} cells, 128 selectors, {allocated / 1_000_000d:F1} MB allocated.");
         Assert.True(
             allocated <= allocationBudget,

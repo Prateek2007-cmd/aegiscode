@@ -124,8 +124,9 @@ public sealed class ReviewerPerformanceCountProjectorTests
         var gate = Substitute.For<ICodeInsightsCollectionGate>();
         gate.IsCollectionEnabledAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
         await new ReviewerPerformanceCountProjector(db, gate, NullLogger<ReviewerPerformanceCountProjector>.Instance).ProjectPullRequestAsync(pr.Id);
-        var cell = Assert.Single(await db.ReviewerPerformanceDailyCounts.ToListAsync());
-        Assert.Equal("collectionUnknown", cell.Outcome);
+        var cells = await db.ReviewerPerformanceDailyCounts.ToListAsync();
+        var cell = Assert.Single(cells, row => row.Outcome == "collectionUnknown");
+        Assert.Equal("review-model", Assert.Single(cells, row => row.Outcome == "collectionModelOpportunity").ModelId);
         Assert.Equal(new DateOnly(2026, 9, 1), cell.BucketDate);
     }
 

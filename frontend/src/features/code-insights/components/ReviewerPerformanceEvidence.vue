@@ -19,6 +19,13 @@
         {{ metric.range }}
       </span>
     </div>
+    <p v-if="point?.coverage" class="performance-evidence__coverage">
+      {{ point.coverage.coveredPullRequests ?? 0 }} of {{ point.coverage.candidatePullRequests ?? 0 }} PRs covered
+      · {{ point.coverage.percentage == null ? 'Percentage unavailable' : `${point.coverage.percentage.toFixed(1)}%` }}
+      · {{ point.coverage.excludedPullRequests ?? 0 }} excluded.
+      The Precision metric uses all supported published outcomes. F1 uses precision and recall from the same covered PRs.
+    </p>
+    <p v-else class="performance-evidence__coverage">Coverage details were not captured for this measurement.</p>
     <ul
       v-if="evidence.unavailableReasons.length"
       class="evidence-reasons"

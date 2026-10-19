@@ -17,6 +17,52 @@ public sealed class CodeInsightMissHarvesterTests
     private static readonly Guid ClientId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
     [Fact]
+    public async Task HistoricalHandlerFailuresDoNotLogProviderExceptionPayloads()
+    {
+        const string secret = "private-provider-token";
+        var logger = new Metrics.RecoveryCapturingLogger<CodeInsightMissHarvester>();
+        var h = new Harness(logger);
+        h.Misses.ObserveThreadEligibilityAsync(
+                Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(),
+                Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), CodeInsightObservationMode.HistoricalBackfill)
+            .ThrowsAsync(new IOException($"https://service:{secret}@provider.test?token={secret}"));
+        await h.Harvester.ObserveHistoricalAsync(HumanThread());
+        var failure = Assert.Single(logger.Entries, entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning);
+        Assert.Null(failure.Exception);
+        Assert.Contains("ExceptionType", failure.Fields.Keys);
+        Assert.All(failure.Fields, field => Assert.DoesNotContain(secret, field.Value?.ToString() ?? "", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task FailedHistoricalHandlingIdentifiesHumanEvidenceRetention()
+    {
+        var h = new Harness();
+        h.Misses.ObserveThreadEligibilityAsync(
+                Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(),
+                Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>(), CodeInsightObservationMode.HistoricalBackfill)
+            .Returns(call => new CodeInsightThreadEligibilityObservation(call.Arg<DateTimeOffset>(), false, Retained: false));
+        var result = await h.Harvester.ObserveHistoricalAsync(HumanThread());
+        Assert.False(result.Retained);
+        Assert.Equal(CodeInsightObservationUnavailableReason.EvidenceRetentionFailed, result.Reason);
+        Assert.Equal(CodeInsightObservationStage.HumanEvidenceRetention, result.Stage);
+    }
+
+    [Fact]
+    public async Task DisabledHistoricalCollectionDoesNotReportAnEvidenceRetentionFailure()
+    {
+        var h = new Harness();
+        h.Gate.IsCollectionEnabledAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(false);
+
+        var result = await h.Harvester.ObserveHistoricalAsync(HumanThread());
+
+        Assert.False(result.Retained);
+        Assert.Null(result.Reason);
+        Assert.Null(result.Stage);
+        await h.Classifier.DidNotReceive().JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>());
+        await h.Misses.DidNotReceive().RecordMissAsync(Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<CodeInsightMissRecord>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task AHumanThreadPassingAllThreeJudgements_CountsAsAMiss()
     {
         var harness = new Harness();
@@ -604,7 +650,7 @@ public sealed class CodeInsightMissHarvesterTests
 
     private sealed class Harness
     {
-        public Harness()
+        public Harness(Microsoft.Extensions.Logging.ILogger<CodeInsightMissHarvester>? logger = null)
         {
             this.Store = Substitute.For<ICodeInsightFindingStore>();
             this.Misses = Substitute.For<ICodeInsightMissStore>();
@@ -652,7 +698,7 @@ public sealed class CodeInsightMissHarvesterTests
                 this.Classifier,
                 this.Gate,
                 TestPostedCommentComposer.Default,
-                NullLogger<CodeInsightMissHarvester>.Instance);
+                logger ?? NullLogger<CodeInsightMissHarvester>.Instance);
         }
 
         public ICodeInsightFindingStore Store { get; }

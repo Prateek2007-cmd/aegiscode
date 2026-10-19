@@ -5,6 +5,7 @@
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.ValueObjects;
 
 namespace MeisterDev.ProPR.Runner.Execution;
 
@@ -77,6 +78,19 @@ public sealed class SpoolingFileResultStore(ReviewJob job, JobSpool spool) : IRe
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
+    public Task RecordModelManifestAsync(Guid id, int attempt, ModelReviewManifest manifest, CancellationToken ct = default)
+    {
+        if (id != job.Id || attempt != job.RetryCount + 1)
+        {
+            return Task.CompletedTask;
+        }
+
+        job.RecordModelEvidenceManifest(manifest);
+        spool.Add(manifest);
+        return Task.CompletedTask;
+    }
+
     private void Buffer(ReviewFileResult result)
     {
         spool.Add(
@@ -92,6 +106,7 @@ public sealed class SpoolingFileResultStore(ReviewJob job, JobSpool spool) : IRe
                 result.Comments is { Count: > 0 } ? [.. result.Comments] : null,
                 result.IsExcluded,
                 result.ExclusionReason,
-                result.WithheldFindings));
+                result.WithheldFindings,
+                result.ModelEvidence is { } proof ? proof with { PendingFragments = [], RetainedTransportDigests = [] } : null));
     }
 }

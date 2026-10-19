@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Background commands must not be group leaders before setsid creates their tracked session.
+set +m
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -429,65 +431,145 @@ wait_for_http_ready() {
     fi
 
     if ! kill -0 "$pid" 2>/dev/null; then
-      write_status "$name exited before becoming ready"
-      return 1
+      break
     fi
 
     sleep 1
     waited=$((waited + 1))
   done
 
+  if ! kill -0 "$pid" 2>/dev/null; then
+    local status=1
+    wait "$pid" 2>/dev/null || status=$?
+    write_status "$name exited before becoming ready (startup exit code $status)"
+    return "$status"
+  fi
+
   write_status "Timed out waiting for $name readiness after ${timeout_seconds}s"
   return 1
 }
 
-TMPDIR="$(mktemp -d)"
-API_OUT="$TMPDIR/api.out"
-API_ERR="$TMPDIR/api.err"
-PROCURSOR_OUT="$TMPDIR/procursor.out"
-PROCURSOR_ERR="$TMPDIR/procursor.err"
-UI_OUT="$TMPDIR/ui.out"
-UI_ERR="$TMPDIR/ui.err"
-mkfifo "$API_OUT" "$API_ERR" "$PROCURSOR_OUT" "$PROCURSOR_ERR" "$UI_OUT" "$UI_ERR"
+if ! command -v setsid >/dev/null 2>&1; then
+  write_status "setsid is required to isolate local service processes"
+  exit 1
+fi
 
-pipe_stream "API" "$API_OUT" "stdout" &
-API_OUT_READER=$!
-pipe_stream "API" "$API_ERR" "stderr" &
-API_ERR_READER=$!
-pipe_stream "PROCURSOR" "$PROCURSOR_OUT" "stdout" &
-PROCURSOR_OUT_READER=$!
-pipe_stream "PROCURSOR" "$PROCURSOR_ERR" "stderr" &
-PROCURSOR_ERR_READER=$!
-pipe_stream "UI" "$UI_OUT" "stdout" &
-UI_OUT_READER=$!
-pipe_stream "UI" "$UI_ERR" "stderr" &
-UI_ERR_READER=$!
+RunTempDir=""
+declare -A OWNED_GROUPS=()
+LOG_READERS=()
 
-cleanup() {
-  echo
-  write_status "Shutting down child processes"
-  set +e
-  [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
-  [ -n "${PROCURSOR_PID:-}" ] && kill "$PROCURSOR_PID" 2>/dev/null || true
-  [ -n "${UI_PID:-}" ] && kill "$UI_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
-  rm -f "$API_OUT" "$API_ERR" "$PROCURSOR_OUT" "$PROCURSOR_ERR" "$UI_OUT" "$UI_ERR"
-  rmdir "$TMPDIR" 2>/dev/null || true
-  exit 0
+processes_running() {
+  local pid
+  for pid in "$@"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
 }
-trap cleanup INT TERM
 
-wait_for_log_readers() {
-  for reader_pid in "$@"; do
-    [ -n "${reader_pid:-}" ] || continue
-    wait "$reader_pid" 2>/dev/null || true
+groups_running() {
+  local pid
+  for pid in "$@"; do
+    if kill -0 -- "-$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+stop_groups() {
+  local pid attempt
+  # Each command starts a Linux session, so its wrapper and application children share an owned group.
+  for pid in "$@"; do
+    kill -TERM -- "-$pid" "$pid" 2>/dev/null || true
+  done
+  for ((attempt = 0; attempt < 50; attempt++)); do
+    groups_running "$@" || break
+    sleep 0.1
+  done
+  for pid in "$@"; do
+    kill -KILL -- "-$pid" "$pid" 2>/dev/null || true
   done
 }
+
+reap_finished() {
+  local pid
+  for pid in "$@"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  trap '' INT TERM
+  set +e
+  echo
+  write_status "Shutting down child processes"
+  stop_groups "${!OWNED_GROUPS[@]}"
+
+  # Active readers can finish buffered output after their service group exits.
+  local attempt pid
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    processes_running "${LOG_READERS[@]}" || break
+    sleep 0.1
+  done
+  if processes_running "${LOG_READERS[@]}"; then
+    write_status "Timed out draining child output after 10s; remaining output may be incomplete"
+  fi
+  for pid in "${LOG_READERS[@]}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for ((attempt = 0; attempt < 10; attempt++)); do
+    processes_running "${LOG_READERS[@]}" || break
+    sleep 0.1
+  done
+  for pid in "${LOG_READERS[@]}"; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  reap_finished "${!OWNED_GROUPS[@]}" "${LOG_READERS[@]}"
+  if [ -n "$RunTempDir" ]; then
+    rm -rf -- "$RunTempDir"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+run_owned() {
+  local pid status=0
+  setsid "$@" &
+  pid=$!
+  OWNED_GROUPS["$pid"]=true
+  wait "$pid" || status=$?
+  stop_groups "$pid"
+  reap_finished "$pid"
+  unset 'OWNED_GROUPS[$pid]'
+  return "$status"
+}
+
+start_log_reader() {
+  ( trap - EXIT INT TERM; pipe_stream "$@" ) &
+  LOG_READERS+=("$!")
+}
+
+RunTempDir="$(mktemp -d)"
+API_OUT="$RunTempDir/api.out"
+API_ERR="$RunTempDir/api.err"
+PROCURSOR_OUT="$RunTempDir/procursor.out"
+PROCURSOR_ERR="$RunTempDir/procursor.err"
+UI_OUT="$RunTempDir/ui.out"
+UI_ERR="$RunTempDir/ui.err"
+mkfifo "$API_OUT" "$API_ERR" "$PROCURSOR_OUT" "$PROCURSOR_ERR" "$UI_OUT" "$UI_ERR"
 
 build_env_array_ui ui_env_assign
 if [ "$SKIP_UI_INSTALL" = false ] && [ ! -d "$UiFolder/node_modules" ]; then
   write_status "Installing frontend dependencies (npm ci)"
-  env "${ui_env_assign[@]}" npm ci --prefix "$UiFolder"
+  run_owned env "${ui_env_assign[@]}" npm ci --prefix "$UiFolder"
 fi
 
 build_env_array_api api_env_assign
@@ -495,97 +577,50 @@ build_env_array_procursor procursor_env_assign
 build_env_array_ui ui_env_assign
 
 write_status "Building backend and ProCursor host"
-dotnet build "$ApiProject"
-dotnet build "$ProCursorProject"
+run_owned dotnet build "$ApiProject"
+run_owned dotnet build "$ProCursorProject"
 
 write_status "Starting backend, ProCursor, and frontend in this terminal. Press Ctrl+C to stop all processes."
 write_status "Local run log: $LogFile"
 write_status "Shared ProCursor key generated for this run"
 
-( env "${api_env_assign[@]}" dotnet run --project "$ApiProject" --no-build --no-launch-profile ) > "$API_OUT" 2> "$API_ERR" &
+start_log_reader "API" "$API_OUT" "stdout"
+start_log_reader "API" "$API_ERR" "stderr"
+setsid env "${api_env_assign[@]}" dotnet run --project "$ApiProject" --no-build --no-launch-profile > "$API_OUT" 2> "$API_ERR" &
 API_PID=$!
+OWNED_GROUPS["$API_PID"]=true
 
-if ! wait_for_http_ready "API" "$BACKEND_PORT" "$API_PID" "${RUN_LOCAL_BACKEND_READY_TIMEOUT_SECONDS:-60}" "/livez"; then
-  [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
-  wait "$API_PID" 2>/dev/null || true
-  wait_for_log_readers "${API_OUT_READER:-}" "${API_ERR_READER:-}"
-  write_status "API startup logs were flushed to $LogFile"
-  exit 1
-fi
+wait_for_http_ready "API" "$BACKEND_PORT" "$API_PID" "${RUN_LOCAL_BACKEND_READY_TIMEOUT_SECONDS:-60}" "/livez" || exit "$?"
 
-( env "${procursor_env_assign[@]}" dotnet run --project "$ProCursorProject" --no-build --no-launch-profile ) > "$PROCURSOR_OUT" 2> "$PROCURSOR_ERR" &
+start_log_reader "PROCURSOR" "$PROCURSOR_OUT" "stdout"
+start_log_reader "PROCURSOR" "$PROCURSOR_ERR" "stderr"
+setsid env "${procursor_env_assign[@]}" dotnet run --project "$ProCursorProject" --no-build --no-launch-profile > "$PROCURSOR_OUT" 2> "$PROCURSOR_ERR" &
 PROCURSOR_PID=$!
+OWNED_GROUPS["$PROCURSOR_PID"]=true
 
-if ! wait_for_http_ready "ProCursor" "$PROCURSOR_PORT" "$PROCURSOR_PID" "${RUN_LOCAL_PROCURSOR_READY_TIMEOUT_SECONDS:-60}"; then
-  [ -n "${PROCURSOR_PID:-}" ] && kill "$PROCURSOR_PID" 2>/dev/null || true
-  [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
-  wait "$PROCURSOR_PID" 2>/dev/null || true
-  wait "$API_PID" 2>/dev/null || true
-  wait_for_log_readers "${PROCURSOR_OUT_READER:-}" "${PROCURSOR_ERR_READER:-}" "${API_OUT_READER:-}" "${API_ERR_READER:-}"
-  write_status "Startup logs were flushed to $LogFile"
-  exit 1
-fi
+wait_for_http_ready "ProCursor" "$PROCURSOR_PORT" "$PROCURSOR_PID" "${RUN_LOCAL_PROCURSOR_READY_TIMEOUT_SECONDS:-60}" || exit "$?"
 
-( env "${ui_env_assign[@]}" npm run dev --prefix "$UiFolder" ) > "$UI_OUT" 2> "$UI_ERR" &
+start_log_reader "UI" "$UI_OUT" "stdout"
+start_log_reader "UI" "$UI_ERR" "stderr"
+setsid env "${ui_env_assign[@]}" npm run dev --prefix "$UiFolder" > "$UI_OUT" 2> "$UI_ERR" &
 UI_PID=$!
+OWNED_GROUPS["$UI_PID"]=true
 
 write_status "API PID: $API_PID"
 write_status "ProCursor PID: $PROCURSOR_PID"
 write_status "UI PID: $UI_PID"
 write_status "API -> http://localhost:$BACKEND_PORT  ProCursor -> http://localhost:$PROCURSOR_PORT  Frontend -> http://localhost:5173"
 
-API_EXIT=0
-PROCURSOR_EXIT=0
-UI_EXIT=0
-
 while true; do
-  if [ -n "${API_PID:-}" ] && ! kill -0 "$API_PID" 2>/dev/null; then
-    wait "$API_PID" 2>/dev/null || API_EXIT=$?
-    break
-  fi
-
-  if [ -n "${PROCURSOR_PID:-}" ] && ! kill -0 "$PROCURSOR_PID" 2>/dev/null; then
-    wait "$PROCURSOR_PID" 2>/dev/null || PROCURSOR_EXIT=$?
-    break
-  fi
-
-  if [ -n "${UI_PID:-}" ] && ! kill -0 "$UI_PID" 2>/dev/null; then
-    wait "$UI_PID" 2>/dev/null || UI_EXIT=$?
-    break
-  fi
-
+  for service in API PROCURSOR UI; do
+    pid_variable="${service}_PID"
+    service_pid="${!pid_variable}"
+    if ! kill -0 "$service_pid" 2>/dev/null; then
+      service_exit=0
+      wait "$service_pid" 2>/dev/null || service_exit=$?
+      write_status "$service exited with code $service_exit"
+      exit "$service_exit"
+    fi
+  done
   sleep 0.1
 done
-
-if [ "$API_EXIT" -ne 0 ]; then
-  write_status "API exited with code $API_EXIT"
-  [ -n "${PROCURSOR_PID:-}" ] && kill "$PROCURSOR_PID" 2>/dev/null || true
-  [ -n "${UI_PID:-}" ] && kill "$UI_PID" 2>/dev/null || true
-  wait "$PROCURSOR_PID" 2>/dev/null || true
-  wait "$UI_PID" 2>/dev/null || true
-  wait_for_log_readers "${API_OUT_READER:-}" "${API_ERR_READER:-}" "${PROCURSOR_OUT_READER:-}" "${PROCURSOR_ERR_READER:-}" "${UI_OUT_READER:-}" "${UI_ERR_READER:-}"
-  exit "$API_EXIT"
-fi
-
-if [ "$PROCURSOR_EXIT" -ne 0 ]; then
-  write_status "ProCursor exited with code $PROCURSOR_EXIT"
-  [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
-  [ -n "${UI_PID:-}" ] && kill "$UI_PID" 2>/dev/null || true
-  wait "$API_PID" 2>/dev/null || true
-  wait "$UI_PID" 2>/dev/null || true
-  wait_for_log_readers "${API_OUT_READER:-}" "${API_ERR_READER:-}" "${PROCURSOR_OUT_READER:-}" "${PROCURSOR_ERR_READER:-}" "${UI_OUT_READER:-}" "${UI_ERR_READER:-}"
-  exit "$PROCURSOR_EXIT"
-fi
-
-if [ "$UI_EXIT" -ne 0 ]; then
-  write_status "UI exited with code $UI_EXIT"
-  [ -n "${API_PID:-}" ] && kill "$API_PID" 2>/dev/null || true
-  [ -n "${PROCURSOR_PID:-}" ] && kill "$PROCURSOR_PID" 2>/dev/null || true
-  wait "$API_PID" 2>/dev/null || true
-  wait "$PROCURSOR_PID" 2>/dev/null || true
-  wait_for_log_readers "${API_OUT_READER:-}" "${API_ERR_READER:-}" "${PROCURSOR_OUT_READER:-}" "${PROCURSOR_ERR_READER:-}" "${UI_OUT_READER:-}" "${UI_ERR_READER:-}"
-  exit "$UI_EXIT"
-fi
-
-wait "$API_PID" "$PROCURSOR_PID" "$UI_PID" 2>/dev/null || true
-cleanup

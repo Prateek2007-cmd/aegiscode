@@ -28,7 +28,6 @@ public sealed partial class CodeInsightDispositionService
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "Recording a disposition for thread {ThreadId} (client {ClientId}) failed; "
-                  + "the crawl continues unaffected.")]
-    private static partial void LogHandlingFailed(ILogger logger, string threadId, Guid clientId, Exception ex);
+        Message = "Recording a disposition for thread {ThreadId} (client {ClientId}) failed with {ExceptionType}, code {ErrorCode}.")]
+    private static partial void LogHandlingFailed(ILogger logger, string threadId, Guid clientId, string exceptionType, int errorCode);
 }

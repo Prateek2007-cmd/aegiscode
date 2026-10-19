@@ -7,7 +7,15 @@ import ReviewerPerformanceWorkspace from '../components/ReviewerPerformanceWorks
 import ReviewerPerformanceScopeFilters from '../components/ReviewerPerformanceScopeFilters.vue'
 import ReviewerPerformanceExplorer from '../components/ReviewerPerformanceExplorer.vue'
 import ReviewerPerformanceRangeChart from '../components/ReviewerPerformanceRangeChart.vue'
+import ReviewerPerformanceCoverage from '../components/ReviewerPerformanceCoverage.vue'
+import ReviewerPerformanceExclusionsDialog from '../components/ReviewerPerformanceExclusionsDialog.vue'
 import type { PerformancePoint } from '@/services/reviewerPerformanceService'
+import { mockPerformanceResponse } from '@/mocks/reviewerPerformance'
+
+vi.mock('@/composables/useSession', async () => {
+  const { ref } = await import('vue')
+  return { useSession: () => ({ isCapabilityAvailable: () => true, isAdmin: ref(true), tenantRoles: ref({}) }) }
+})
 
 vi.mock('../components/ReviewerPerformanceSelect.vue', async () => {
   const { performanceSelectStub } = await import('./performanceControlStubs')
@@ -20,6 +28,7 @@ const save = vi.fn()
 const open = vi.fn()
 const remove = vi.fn()
 const clients = vi.fn()
+const retry = vi.fn()
 vi.mock('@/services/reviewerPerformanceService', () => ({
   queryPerformance: (...args: unknown[]) => query(...args),
   listPerformanceReports: () => list(),
@@ -27,6 +36,7 @@ vi.mock('@/services/reviewerPerformanceService', () => ({
   openPerformanceReport: (...args: unknown[]) => open(...args),
   deletePerformanceReport: (...args: unknown[]) => remove(...args),
   listPerformanceClients: () => clients(),
+  retryPerformanceEvidence: (...args: unknown[]) => retry(...args),
 }))
 const point = {
   date: '2026-09-01',
@@ -68,7 +78,429 @@ async function selectChartPoint(wrapper: VueWrapper, index: number, date: string
   await wrapper.vm.$nextTick()
 }
 
+function collectionResponse(disposition = 'repair-required') {
+  const measurement = { ...point, coverage: {
+    candidatePullRequests: 2, coveredPullRequests: 1, excludedPullRequests: 1, percentage: 50,
+    recallSupported: true, meetsMinimum: false, exclusionIds: [0],
+  } }
+  const entry = { id: 0, aggregateId: 'review-source', pullRequestId: 1, recoveryDisposition: disposition,
+    collectionEnabled: true, lastAttemptAt: '2026-10-18T12:00:00Z', notBefore: '2026-10-18T12:15:00Z',
+    lastRefreshReason: disposition === 'retryable' ? 'ProviderReadFailed' : null,
+  }
+  return { ...response, calculationVersion: 'reviewer-performance-v2', views: [{ ...view,
+    series: [{ ...view.series[0], points: [measurement] }], exclusionCatalog: [entry],
+  }] }
+}
+async function openCollectionDetails(wrapper: VueWrapper) {
+  await wrapper.getComponent(ReviewerPerformanceCoverage).get('button').trigger('click')
+  return wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+}
+
 describe('reviewer performance workspace', () => {
+  it('inspects the latest v2 point and filters exclusions by captured IDs including zero', async () => {
+    const earlier = { ...point, coverage: { candidatePullRequests: 1, coveredPullRequests: 1, meetsMinimum: true, recallSupported: true, exclusionIds: [] } }
+    const later = { date: '2026-09-02', score: { summary: {} }, coverage: { candidatePullRequests: 2, coveredPullRequests: 1, excludedPullRequests: 1, meetsMinimum: false, recallSupported: true, exclusionIds: [0] } }
+    query.mockResolvedValueOnce({ ...response, views: [{ ...view, series: [{ ...view.series[0], points: [earlier, later] }], exclusionCatalog: [{ id: 0, aggregateId: 'first', pullRequestId: 1 }, { id: 1, aggregateId: 'later', pullRequestId: 2 }] }] })
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const coverage = wrapper.getComponent(ReviewerPerformanceCoverage)
+    expect(coverage.props('point')?.date).toBe('2026-09-02')
+    expect(coverage.props('label')).toBe('Window end')
+    await coverage.get('button').trigger('click')
+    expect(wrapper.getComponent(ReviewerPerformanceExclusionsDialog).props('entries').map((entry) => entry.id)).toEqual([0])
+    expect(query).toHaveBeenCalledTimes(1)
+    await selectChartPoint(wrapper, 0, earlier.date)
+    expect(wrapper.findComponent(ReviewerPerformanceExclusionsDialog).exists()).toBe(false)
+    expect(coverage.props('point')?.date).toBe(earlier.date)
+    expect(coverage.props('label')).toBe('Selected point')
+  })
+
+  it('updates covered populations across real mock aggregation responses while precision remains independent', async () => {
+    query.mockImplementation(async (request) => mockPerformanceResponse(request))
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const coverage = wrapper.getComponent(ReviewerPerformanceCoverage)
+    expect(coverage.props('point')?.coverage?.meetsMinimum).toBe(true)
+    const cumulativeCoverage = { ...coverage.props('point')!.coverage }
+
+    await wrapper.get('[data-test="aggregation"]').setValue('period')
+    await flushPromises()
+    const chart = wrapper.getComponent(ReviewerPerformanceRangeChart)
+    const blocked = chart.props('data')[0]!.points!.find((measurement) =>
+      (measurement.coverage?.excludedPullRequests ?? 0) > 0 && !measurement.coverage?.meetsMinimum,
+    )!
+    expect(blocked.coverage!.candidatePullRequests).toBeLessThan(cumulativeCoverage.candidatePullRequests!)
+    expect(blocked.coverage!.coveredPullRequests).toBeLessThan(cumulativeCoverage.coveredPullRequests!)
+    expect(blocked.coverage!.candidatePullRequests).toBe(blocked.coverage!.coveredPullRequests! + blocked.coverage!.excludedPullRequests!)
+    await selectChartPoint(wrapper, 0, blocked.date!)
+    expect(coverage.text()).toContain('F1 is available')
+    expect(coverage.text()).toContain('Coverage is below the advisory minimum')
+    await coverage.get('button').trigger('click')
+    expect(wrapper.getComponent(ReviewerPerformanceExclusionsDialog).props('entries').map((entry) => entry.id))
+      .toEqual(blocked.coverage!.exclusionIds)
+
+    await wrapper.get('[data-test="metric"]').setValue('precision')
+    expect(coverage.text()).toContain('Precision is available')
+    expect(wrapper.findComponent(ReviewerPerformanceExclusionsDialog).exists()).toBe(false)
+    expect(query).toHaveBeenCalledTimes(2)
+
+    await wrapper.get('[data-test="aggregation"]').setValue('cumulative')
+    await flushPromises()
+    const latest = chart.props('data')[0]!.points!.at(-1)!
+    await selectChartPoint(wrapper, 0, latest.date!)
+    expect(coverage.props('point')?.coverage?.meetsMinimum).toBe(true)
+    expect(coverage.props('point')?.overallPrecision?.counts?.outcomes?.total)
+      .toBeGreaterThan(coverage.props('point')?.score?.counts?.outcomes?.total ?? 0)
+    wrapper.unmount()
+  })
+
+  it('retains acknowledged collection across reopen and refreshes durable progress in the inspected scope', async () => {
+    const entry = { id: 0, aggregateId: 'recover', pullRequestId: 1, recoveryDisposition: 'repair-required', collectionEnabled: true }
+    const inspected = { ...point, coverage: { candidatePullRequests: 2, coveredPullRequests: 1, excludedPullRequests: 1, recallSupported: true, meetsMinimum: false, exclusionIds: [0] } }
+    const current = { ...response, calculationVersion: 'reviewer-performance-v2', views: [{ ...view, series: [{ ...view.series[0], points: [inspected] }], exclusionCatalog: [entry] }] }
+    query.mockResolvedValueOnce(current)
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const coverage = wrapper.getComponent(ReviewerPerformanceCoverage)
+    await coverage.get('button').trigger('click')
+    let dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await flushPromises()
+    expect(retry).toHaveBeenCalledTimes(1)
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    await coverage.get('button').trigger('click')
+    dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    expect(dialog.text()).toContain('Collection queued')
+    expect(dialog.find('[data-test="retry-evidence"]').exists()).toBe(false)
+    expect(coverage.props('point')!.coverage!.excludedPullRequests).toBe(1)
+
+    const filters = wrapper.getComponent(ReviewerPerformanceScopeFilters)
+    filters.vm.$emit('update:scope', { ...view.scope, repositories: ['pending-edit'] })
+    query.mockResolvedValueOnce({ ...current, views: [{ ...current.views[0], exclusionCatalog: [{ ...entry, recoveryDisposition: 'in-progress', lastAttemptAt: '2026-10-18T12:00:00Z', notBefore: '2026-10-18T12:15:00Z' }] }] })
+    await dialog.get('footer > button').trigger('click')
+    await flushPromises()
+    expect(query.mock.calls.at(-1)![0]).toEqual(current.query)
+    expect(wrapper.getComponent(ReviewerPerformanceExclusionsDialog).text()).toContain('Collection in progress')
+    expect(inspectedPoint(wrapper)!.date).toBe(inspected.date)
+    expect(filters.props('scope').repositories).toEqual(['pending-edit'])
+    expect(coverage.props('point')!.coverage!.excludedPullRequests).toBe(1)
+
+    query.mockResolvedValueOnce({ ...current, views: [{ ...current.views[0], exclusionCatalog: [{ ...entry, recoveryDisposition: 'retryable', lastRefreshReason: 'ProviderReadFailed', lastAttemptAt: '2026-10-18T12:00:00Z' }] }] })
+    await wrapper.getComponent(ReviewerPerformanceExclusionsDialog).get('footer > button').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(ReviewerPerformanceExclusionsDialog).get('[data-test="retry-evidence"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('finishes a pending recovery request after its dialog closes and keeps live progress out of saved captures', async () => {
+    let acknowledge!: () => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    const entry = { id: 0, aggregateId: 'pending-recover', pullRequestId: 1, recoveryDisposition: 'repair-required', collectionEnabled: true }
+    const measured = { ...point, coverage: { candidatePullRequests: 2, coveredPullRequests: 1, excludedPullRequests: 1, recallSupported: true, meetsMinimum: false, exclusionIds: [0] } }
+    const current = { ...response, calculationVersion: 'reviewer-performance-v2', views: [{ ...view, series: [{ ...view.series[0], points: [measured] }], exclusionCatalog: [entry] }] }
+    query.mockResolvedValueOnce(current)
+    list.mockResolvedValueOnce([{ id: 'frozen-progress', name: 'Earlier capture' }])
+    open.mockResolvedValueOnce({ report: { id: 'frozen-progress', name: 'Earlier capture' }, response: current, compatibleVersion: true })
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    await wrapper.getComponent(ReviewerPerformanceCoverage).get('button').trigger('click')
+    let dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    acknowledge()
+    await flushPromises()
+    await wrapper.getComponent(ReviewerPerformanceCoverage).get('button').trigger('click')
+    dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    expect(dialog.text()).toContain('Collection queued')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    await wrapper.get('[data-test="report-select"]').setValue('frozen-progress')
+    await flushPromises()
+    await wrapper.getComponent(ReviewerPerformanceCoverage).get('button').trigger('click')
+    dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    expect(dialog.text()).toContain('Captured details')
+    expect(dialog.text()).not.toContain('Collection queued')
+    expect(dialog.text()).not.toContain('Request acknowledged')
+    expect(dialog.find('footer > button').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('clears obsolete failed command feedback after a successful current read', async () => {
+    retry.mockRejectedValueOnce(new Error('Enable collection before retrying.'))
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await flushPromises()
+    expect(dialog.get('[role="alert"]').text()).toContain('Enable collection before retrying')
+    query.mockResolvedValueOnce(collectionResponse('ready'))
+    await dialog.get('footer > button').trigger('click')
+    await flushPromises()
+    expect(dialog.text()).not.toContain('Enable collection before retrying')
+    expect(dialog.get('[data-test="retry-evidence"]').attributes('disabled')).toBeUndefined()
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    expect((await openCollectionDetails(wrapper)).text()).not.toContain('Enable collection before retrying')
+    wrapper.unmount()
+  })
+
+  it('waits for the collection acknowledgement before permitting a progress read', async () => {
+    let acknowledge!: () => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    expect(dialog.get('footer > button').attributes('disabled')).toBeDefined()
+    expect(dialog.text()).toContain('Waiting for the recovery request to finish before refreshing evidence')
+    dialog.vm.$emit('refresh')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    acknowledge()
+    await flushPromises()
+    expect(dialog.get('footer > button').attributes('disabled')).toBeUndefined()
+    query.mockResolvedValueOnce(collectionResponse('in-progress'))
+    await dialog.get('footer > button').trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(dialog.text()).toContain('Collection in progress')
+    expect(dialog.text()).toContain('Observation lease expires')
+    expect(dialog.text()).not.toContain('Collection queued')
+    wrapper.unmount()
+  })
+
+  it('prevents a retry command while its current-evidence refresh is pending', async () => {
+    let deliver!: (result: ReturnType<typeof collectionResponse>) => void
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    query.mockImplementationOnce(() => new Promise((resolve) => { deliver = resolve }))
+    await dialog.get('footer > button').trigger('click')
+    expect(dialog.get('[data-test="retry-evidence"]').attributes('disabled')).toBeDefined()
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.props('requestCollection')!('review-source')
+    expect(retry).not.toHaveBeenCalled()
+    deliver(collectionResponse('retryable'))
+    await flushPromises()
+    expect(dialog.get('[data-test="retry-evidence"]').attributes('disabled')).toBeUndefined()
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await flushPromises()
+    expect(retry).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it.each(['in-progress', 'retryable'])('reconciles queued feedback after a fresh explorer read returns %s', async (disposition) => {
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    let dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await flushPromises()
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockResolvedValueOnce(collectionResponse(disposition))
+    await wrapper.findAll('button').find((button) => button.text() === 'Explore dimensions')!.trigger('click')
+    await flushPromises()
+    wrapper.getComponent(ReviewerPerformanceExplorer).vm.$emit('close')
+    await flushPromises()
+    dialog = await openCollectionDetails(wrapper)
+    expect(dialog.text()).not.toContain('Collection queued')
+    if (disposition === 'in-progress') {
+      expect(dialog.text()).toContain('Collection in progress')
+      expect(dialog.text()).toContain('Observation lease expires')
+    } else {
+      expect(dialog.text()).toContain('Provider read failed')
+      expect(dialog.get('[data-test="retry-evidence"]').attributes('disabled')).toBeUndefined()
+    }
+    wrapper.unmount()
+  })
+
+  it('retains queued feedback when an explorer response is discarded', async () => {
+    let deliver!: (result: ReturnType<typeof collectionResponse>) => void
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await flushPromises()
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockImplementationOnce(() => new Promise((resolve) => { deliver = resolve }))
+    await wrapper.findAll('button').find((button) => button.text() === 'Explore dimensions')!.trigger('click')
+    wrapper.getComponent(ReviewerPerformanceExplorer).vm.$emit('close')
+    await flushPromises()
+    deliver(collectionResponse('retryable'))
+    await flushPromises()
+    expect((await openCollectionDetails(wrapper)).text()).toContain('Collection queued')
+    wrapper.unmount()
+  })
+
+  it.each([false, true])('preserves newer inspection after a dismissed dialog refresh resolves, comparison=%s', async (compared) => {
+    const current = collectionResponse()
+    const first = current.views[0]!.series[0]!.points[0]!
+    const later = { ...first, date: '2026-09-02' }
+    const buildResponse = (request: typeof current.query) => ({ ...current, query: request,
+      views: request.views!.map(() => ({ ...current.views[0]!, series: [{ ...current.views[0]!.series[0], points: [first, later] }] })),
+    })
+    query.mockImplementation(async (request) => buildResponse(request))
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    if (compared) {
+      await wrapper.get('[data-test="comparison"] input[type="checkbox"]').setValue(true)
+      await flushPromises()
+    }
+    await selectChartPoint(wrapper, 0, first.date)
+    const coverage = wrapper.findAllComponents(ReviewerPerformanceCoverage)[0]!
+    await coverage.get('button').trigger('click')
+    const dialog = wrapper.getComponent(ReviewerPerformanceExclusionsDialog)
+    let deliver!: () => void
+    query.mockImplementationOnce((request) => new Promise((resolve) => { deliver = () => resolve(buildResponse(request)) }))
+    await dialog.get('footer > button').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    await selectChartPoint(wrapper, compared ? 1 : 0, later.date)
+    deliver()
+    await flushPromises()
+    expect(inspectedPoint(wrapper, 0)!.date).toBe(later.date)
+    if (compared) expect(inspectedPoint(wrapper, 1)!.date).toBe(later.date)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['unavailable', null, false],
+    ['measured', 0, true],
+  ] as const)('keeps %s frozen v2 markers consistent with their retained inputs', async (_state, falseNegatives, inactive) => {
+    const version = 'reviewer-performance-v2'
+    const current = collectionResponse()
+    const captured = { ...current, calculationVersion: version, views: [{ ...current.views[0], series: [{ ...current.views[0]!.series[0], points: [{
+      ...current.views[0]!.series[0]!.points[0],
+      score: { counts: { outcomes: { unknown: 3, total: 3 } }, summary: {}, scenarios: [{ id: `${version}/captured`, falseNegatives, recall: null, f1: null }] },
+    }] }] }] }
+    list.mockResolvedValueOnce([{ id: 'marker-capture', name: 'Captured availability' }])
+    open.mockResolvedValueOnce({ report: { id: 'marker-capture', calculationVersion: version }, response: captured, compatibleVersion: true })
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    await wrapper.get('[data-test="report-select"]').setValue('marker-capture')
+    await flushPromises()
+    expect(wrapper.find('.chart-inactive').exists()).toBe(inactive)
+    expect(wrapper.find('.chart-unavailable path').exists()).toBe(!inactive)
+    const coverage = wrapper.getComponent(ReviewerPerformanceCoverage)
+    expect(coverage.text()).toContain(inactive ? 'no scored outcomes or settled human misses' : 'Inspect the evidence limitations')
+    expect(coverage.text()).not.toContain('Captured scoring minimum')
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['aggregation', 'in-progress'],
+    ['explorer', 'retryable'],
+  ] as const)('waits for a closed dialog collection acknowledgement before the %s read starts', async (entryPoint, disposition) => {
+    let acknowledge!: () => void
+    let deliver!: (result: ReturnType<typeof collectionResponse>) => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    let dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockImplementationOnce(() => new Promise((resolve) => { deliver = resolve }))
+    if (entryPoint === 'aggregation') await wrapper.get('[data-test="aggregation"]').setValue('period')
+    else await wrapper.findAll('button').find((button) => button.text() === 'Explore dimensions')!.trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+
+    acknowledge()
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(2)
+    deliver({ ...collectionResponse(disposition), query: query.mock.calls[1]![0] })
+    await flushPromises()
+    if (entryPoint === 'explorer') {
+      wrapper.getComponent(ReviewerPerformanceExplorer).vm.$emit('close')
+      await flushPromises()
+    }
+    dialog = await openCollectionDetails(wrapper)
+    expect(dialog.text()).not.toContain('Collection queued')
+    if (disposition === 'in-progress') {
+      expect(dialog.text()).toContain('Collection in progress')
+      expect(dialog.text()).toContain('Observation lease expires')
+    } else {
+      expect(dialog.text()).toContain('Provider read failed')
+      expect(dialog.get('[data-test="retry-evidence"]').attributes('disabled')).toBeUndefined()
+    }
+    expect(wrapper.getComponent(ReviewerPerformanceCoverage).props('point')!.coverage!.excludedPullRequests).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('starts only the newest control read after pending collection acknowledgements finish', async () => {
+    let acknowledge!: () => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockImplementation(async (request) => ({ ...collectionResponse('in-progress'), query: request }))
+    await wrapper.get('[data-test="aggregation"]').setValue('period')
+    await wrapper.get('[data-test="aggregation"]').setValue('cumulative')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    acknowledge()
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(2)
+    expect(query.mock.calls[1]![0].aggregation).toBe('cumulative')
+    expect((await openCollectionDetails(wrapper)).text()).toContain('Collection in progress')
+    wrapper.unmount()
+  })
+
+  it('does not start an explorer query canceled while waiting for a collection acknowledgement', async () => {
+    let acknowledge!: () => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    query.mockResolvedValueOnce(collectionResponse())
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockResolvedValueOnce(collectionResponse('retryable'))
+    await wrapper.findAll('button').find((button) => button.text() === 'Explore dimensions')!.trigger('click')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    wrapper.getComponent(ReviewerPerformanceExplorer).vm.$emit('close')
+    await flushPromises()
+    acknowledge()
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    expect((await openCollectionDetails(wrapper)).text()).toContain('Collection queued')
+    wrapper.unmount()
+  })
+
+  it('opens a frozen report independently and cancels a live read waiting for a collection acknowledgement', async () => {
+    let acknowledge!: () => void
+    retry.mockImplementationOnce(() => new Promise<void>((resolve) => { acknowledge = resolve }))
+    query.mockResolvedValueOnce(collectionResponse())
+    list.mockResolvedValueOnce([{ id: 'independent-capture', name: 'Captured while waiting' }])
+    open.mockResolvedValueOnce({ report: { id: 'independent-capture', name: 'Captured while waiting' }, response: collectionResponse(), compatibleVersion: true })
+    const wrapper = mount(ReviewerPerformanceWorkspace)
+    await flushPromises()
+    const dialog = await openCollectionDetails(wrapper)
+    await dialog.get('[data-test="retry-evidence"]').trigger('click')
+    await dialog.get('[aria-label="Close exclusions"]').trigger('click')
+    query.mockResolvedValueOnce(collectionResponse('in-progress'))
+    await wrapper.get('[data-test="aggregation"]').setValue('period')
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-test="report-select"]').setValue('independent-capture')
+    await flushPromises()
+    expect(open).toHaveBeenCalledWith('independent-capture')
+    expect(wrapper.text()).toContain('Saved: Captured while waiting')
+    acknowledge()
+    await flushPromises()
+    expect(query).toHaveBeenCalledTimes(1)
+    const captured = await openCollectionDetails(wrapper)
+    expect(captured.text()).toContain('Captured details')
+    expect(captured.text()).not.toContain('Collection queued')
+    wrapper.unmount()
+  })
+
   beforeEach(() => {
     query.mockReset()
     list.mockReset()
@@ -76,6 +508,8 @@ describe('reviewer performance workspace', () => {
     open.mockReset()
     remove.mockReset()
     clients.mockReset()
+    retry.mockReset()
+    retry.mockResolvedValue(undefined)
     clients.mockResolvedValue([])
     query.mockImplementation(async (q) => ({
       ...response,

@@ -283,6 +283,16 @@
               :frozen="frozen"
               :view-label="displayedComparison ? `View ${index === 0 ? 'A' : 'B'}` : undefined"
             />
+            <ReviewerPerformanceCoverage
+              v-if="selectedPoint(index)"
+              :point="selectedPoint(index)"
+              :policy="response?.coveragePolicy"
+              :metric="metric"
+              :disabled="loading"
+              :label="coverageLabel(index)"
+              :model-evidence="!!view.evidence?.modelEvidenceSchema && ((response?.query?.grouping === 'model') || view.scope?.models != null)"
+              @exclusions="openExclusions(index, $event)"
+            />
           </article>
         </div>
         <section
@@ -333,6 +343,17 @@
       @axes="changeAxes"
       @drill="drill"
     />
+    <ReviewerPerformanceExclusionsDialog
+      v-if="exclusions"
+      v-bind="exclusions"
+      v-model:actions="recoveryActions"
+      :frozen="frozen"
+      :refreshing="loading"
+      :refresh-error="error"
+      :request-collection="requestCollection"
+      @close="closeExclusions"
+      @refresh="refreshAfterRequeue"
+    />
   </section>
 </template>
 
@@ -353,7 +374,8 @@ import {
   type PerformancePoint,
   type PerformanceView,
 } from '@/services/reviewerPerformanceService'
-import { metricLabel, pairedDelta, type PerformanceMetric } from '../reviewerPerformanceRanges'
+import { metricLabel, metricRange, metricScenarios, pairedDelta, type PerformanceMetric } from '../reviewerPerformanceRanges'
+import { reconcileRecoveryFeedback, requestEvidenceRecovery, snapshotRecoveryFeedback, type PerformanceRecoveryActions, type ModelRecoveryTarget } from '../reviewerPerformanceRecovery'
 import type { ChartPointSelection } from '../reviewerPerformanceChartInspection'
 import { useReviewerPerformanceEvidence } from '../composables/useReviewerPerformanceEvidence'
 import { useReviewerPerformanceClients } from '../composables/useReviewerPerformanceClients'
@@ -364,6 +386,8 @@ import ReviewerPerformanceFilterPane from './ReviewerPerformanceFilterPane.vue'
 import ReviewerPerformanceRangeChart from './ReviewerPerformanceRangeChart.vue'
 import ReviewerPerformanceEvidenceStatus from './ReviewerPerformanceEvidenceStatus.vue'
 import ReviewerPerformanceExplorer from './ReviewerPerformanceExplorer.vue'
+import ReviewerPerformanceCoverage from './ReviewerPerformanceCoverage.vue'
+import ReviewerPerformanceExclusionsDialog from './ReviewerPerformanceExclusionsDialog.vue'
 
 const props = defineProps<{
   clients?: PerformanceFacets['clients']
@@ -474,6 +498,72 @@ const showSave = ref(false)
 const reportName = ref('')
 const selectedDates = ref<string[]>([])
 const selectedSeries = ref<string[]>([])
+const recoveryActions = ref<PerformanceRecoveryActions>({})
+const recoveryPending = computed(() => Object.values(recoveryActions.value).some((action) => action.state === 'pending'))
+const pendingRecoveryRequests = new Set<Promise<void>>()
+async function requestCollection(aggregateId: string, source?: ModelRecoveryTarget): Promise<void> {
+  if (frozen.value || loading.value) return
+  const request = requestEvidenceRecovery(recoveryActions, aggregateId, source)
+  pendingRecoveryRequests.add(request)
+  try {
+    await request
+  } finally {
+    pendingRecoveryRequests.delete(request)
+  }
+}
+async function waitForRecoveryAcknowledgements(): Promise<void> {
+  while (pendingRecoveryRequests.size > 0) await Promise.all([...pendingRecoveryRequests])
+}
+const exclusionContext = ref<{
+  viewIndex: number
+  date?: string
+  seriesId?: string
+  label: string
+  windowFrom?: string
+  windowTo?: string
+}>()
+const exclusions = computed(() => {
+  const context = exclusionContext.value
+  if (!context) return undefined
+  const view = response.value?.views?.[context.viewIndex]
+  const point = view?.series?.find((series) => series.id === context.seriesId)?.points?.find((point) => point.date === context.date)
+  const ids = new Set(point?.coverage?.exclusionIds ?? [])
+  return {
+    label: context.label, windowFrom: context.windowFrom, windowTo: context.windowTo,
+    entries: (view?.exclusionCatalog ?? []).filter((entry) => entry.id != null && ids.has(entry.id)),
+  }
+})
+let exclusionTrigger: HTMLElement | undefined
+let exclusionView = 0
+function openExclusions(index: number, event: MouseEvent): void {
+  const point = selectedPoint(index)
+  const view = response.value?.views?.[index]
+  const series = view?.series?.find((series) => series.id === selectedSeries.value[index])
+  exclusionTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
+  exclusionView = index
+  exclusionContext.value = {
+    viewIndex: index, date: point?.date, seriesId: series?.id ?? undefined,
+    label: `${displayedComparison.value ? `View ${index === 0 ? 'A' : 'B'} · ` : ''}${series?.label ?? 'All selected evidence'}`,
+    windowFrom: point?.windowFrom ?? point?.date,
+    windowTo: point?.windowTo ?? point?.date,
+  }
+}
+async function closeExclusions(): Promise<void> {
+  exclusionContext.value = undefined
+  await nextTick()
+  if (exclusionTrigger?.isConnected) exclusionTrigger.focus()
+  else timelines[exclusionView]?.focus()
+}
+async function refreshAfterRequeue(): Promise<void> {
+  if (frozen.value || !exclusionContext.value || recoveryPending.value || loading.value) return
+  await load(displayedQuery(), undefined, false, true)
+}
+function coverageLabel(index: number): string {
+  const view = response.value?.views?.[index]
+  const series = view?.series?.find((series) => series.id === selectedSeries.value[index]) ?? view?.series?.[0]
+  const label = selectedPoint(index)?.date === series?.points?.at(-1)?.date ? 'Window end' : 'Selected point'
+  return displayedComparison.value ? `View ${index === 0 ? 'A' : 'B'} · ${label}` : label
+}
 const displayedComparison = computed(() =>
   response.value ? (response.value.views?.length ?? 0) > 1 : comparison.value,
 )
@@ -596,11 +686,12 @@ function measurementQuery(): PerformanceQuery {
 function displayedQuery(): PerformanceQuery {
   return clone(response.value?.query ?? query())
 }
-function lastSupportedPoint(points: PerformancePoint[]): PerformancePoint | undefined {
+function initialInspectionPoint(points: PerformancePoint[]): PerformancePoint | undefined {
   const latest = [...points].reverse()
+  if (points.some((point) => point.coverage)) return latest[0]
   return (
-    latest.find((point) => point.score?.summary?.[metric.value]) ??
-    latest.find((point) => point.score?.summary?.precision) ??
+    latest.find((point) => metricRange(point, metric.value)) ??
+    latest.find((point) => metricRange(point, 'precision')) ??
     latest[0]
   )
 }
@@ -630,7 +721,7 @@ function applyResponse(result: PerformanceResponse, preserve = false): void {
       previousSeries !== series?.id ||
       !(series?.points ?? []).some((point) => point.date === selectedDates.value[index])
     )
-      selectedDates.value[index] = lastSupportedPoint(series?.points ?? [])?.date ?? ''
+      selectedDates.value[index] = initialInspectionPoint(series?.points ?? [])?.date ?? ''
   }
   if (displayedComparison.value) selectDate(anchorView, selectedDates.value[anchorView] ?? '')
 }
@@ -638,15 +729,20 @@ async function load(
   request: PerformanceQuery = measurementQuery(),
   inspection?: { viewIndex: number; date: string },
   returningToCurrent = false,
+  preserveExclusions = false,
 ): Promise<boolean> {
   if (frozen.value && !returningToCurrent) {
     return false
   }
   invalidateExplorer()
+  if (!preserveExclusions) exclusionContext.value = undefined
   const sequence = ++requestSequence
   loading.value = true
   error.value = ''
   try {
+    if (pendingRecoveryRequests.size > 0) await waitForRecoveryAcknowledgements()
+    if (sequence !== requestSequence || (frozen.value && !returningToCurrent)) return false
+    const recoveryFeedback = snapshotRecoveryFeedback(recoveryActions.value)
     const result = await queryPerformance(clone(request))
     if (sequence === requestSequence) {
       if (returningToCurrent) {
@@ -654,6 +750,7 @@ async function load(
         facetCache.value = []
       }
       applyResponse(result, true)
+      if (!frozen.value) reconcileRecoveryFeedback(recoveryActions.value, recoveryFeedback)
       if (inspection) selectDate(inspection.viewIndex, inspection.date)
       return true
     }
@@ -736,13 +833,13 @@ const delta = computed(() => {
   const b = selectedPoint(1)
   return !a || !b || (alignment.value === 'calendar' && a.date !== b.date)
     ? null
-    : pairedDelta(a.score?.scenarios ?? [], b.score?.scenarios ?? [], metric.value)
+    : pairedDelta(metricScenarios(a, metric.value), metricScenarios(b, metric.value), metric.value)
 })
 const selectSeries = (index: number, id: string) => {
   const previousSeries = selectedSeries.value[index]
   selectedSeries.value[index] = id
   const series = response.value?.views?.[index]?.series?.find((item) => item.id === id)
-  const available = lastSupportedPoint(series?.points ?? [])
+  const available = initialInspectionPoint(series?.points ?? [])
   if (available?.date) inspectDate(index, available.date)
   if (previousSeries !== id) {
     invalidateExplorer()
@@ -761,6 +858,7 @@ async function refreshReports(): Promise<void> {
   }
 }
 async function chooseReport(id: string): Promise<void> {
+  exclusionContext.value = undefined
   error.value = ''
   cancelCapture()
   const sequence = ++requestSequence
@@ -871,6 +969,9 @@ async function loadExplorer(): Promise<void> {
   explorerLoading.value = true
   explorerError.value = ''
   try {
+    if (pendingRecoveryRequests.size > 0) await waitForRecoveryAcknowledgements()
+    if (sequence !== explorerSequence || navigation !== requestSequence || frozen.value) return
+    const recoveryFeedback = snapshotRecoveryFeedback(recoveryActions.value)
     const request = {
       ...displayedQuery(),
       breakdown: {
@@ -881,8 +982,9 @@ async function loadExplorer(): Promise<void> {
       },
     }
     const result = await queryPerformance(request)
-    if (sequence === explorerSequence && navigation === requestSequence) {
+    if (sequence === explorerSequence && navigation === requestSequence && !frozen.value) {
       applyResponse(result, true)
+      reconcileRecoveryFeedback(recoveryActions.value, recoveryFeedback)
       if (date) selectDate(index, date)
       explorerCells.value = result.views?.[index]?.breakdown ?? []
     }
@@ -956,6 +1058,10 @@ watch(comparison, (enabled) => {
   void load()
 })
 watch(alignment, () => inspectDate(0, selectedDates.value[0] ?? ''))
+watch(
+  [metric, () => selectedSeries.value.join('\u0000'), () => selectedDates.value.join('\u0000')],
+  () => { exclusionContext.value = undefined },
+)
 onMounted(async () => {
   mounted = true
   await Promise.allSettled([

@@ -13,6 +13,7 @@ namespace MeisterDev.ProPR.Domain.Entities;
 /// </summary>
 public sealed class CodeInsightPullRequest
 {
+    /// <summary>Last local model-evidence classification retry; it does not advance source enumeration.</summary>
     /// <summary>Unique identifier for this aggregate.</summary>
     public Guid Id { get; init; }
 

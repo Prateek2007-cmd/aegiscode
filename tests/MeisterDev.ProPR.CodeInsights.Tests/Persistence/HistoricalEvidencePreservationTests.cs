@@ -16,11 +16,30 @@ using MeisterDev.ProPR.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace MeisterDev.ProPR.CodeInsights.Tests.Persistence;
 
 public sealed class HistoricalEvidencePreservationTests
 {
+    [Fact]
+    public async Task HistoricalDispositionFailuresDoNotLogProviderExceptionPayloads()
+    {
+        const string secret = "private-provider-token";
+        await using var db = Db();
+        var finding = await Finding(db);
+        var judge = Judge();
+        judge.JudgeAsync(Arg.Any<DisregardedFindingJudgementRequest>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new IOException($"https://service:{secret}@provider.test?token={secret}"));
+        var logger = new Metrics.RecoveryCapturingLogger<CodeInsightDispositionService>();
+        await Service(db, new CodeInsightFindingStore(db, Codec()), judge, logger).ObserveHistoricalAsync(Snapshot(finding), Outcome(finding));
+        var failure = Assert.Single(logger.Entries, entry => entry.Level == Microsoft.Extensions.Logging.LogLevel.Warning);
+        Assert.Null(failure.Exception);
+        Assert.DoesNotContain(secret, failure.Message, StringComparison.Ordinal);
+        Assert.Contains("ExceptionType", failure.Fields.Keys);
+        Assert.All(failure.Fields, field => Assert.DoesNotContain(secret, field.Value?.ToString() ?? "", StringComparison.Ordinal));
+    }
+
     private const string Scope = "AzureDevOps:https://ado.example.test/collection";
     private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
 
@@ -95,6 +114,19 @@ public sealed class HistoricalEvidencePreservationTests
         });
 
         await factory.DidNotReceive().CreateDbContextAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OutcomeAcknowledgmentIdentifiesAnUnretainedWrite()
+    {
+        await using var db = Db();
+        var finding = await Finding(db);
+        var result = await new CodeInsightPerformanceEvidenceStore(db).AcknowledgeOutcomeAsync(
+            finding.Id,
+            new CodeInsightPublicationReceipt(Scope, "own", "1"), "Closed", "missing-write", Now);
+        Assert.False(result.Retained);
+        Assert.Equal(CodeInsightObservationUnavailableReason.EvidenceRetentionFailed, result.Reason);
+        Assert.Equal(CodeInsightObservationStage.OutcomeAcknowledgment, result.Stage);
     }
 
     [Fact]
@@ -541,11 +573,13 @@ public sealed class HistoricalEvidencePreservationTests
         }
     }
 
-    private static CodeInsightDispositionService Service(MeisterProPRDbContext db, CodeInsightFindingStore store, IDisregardedFindingClassifier judge)
+    private static CodeInsightDispositionService Service(
+        MeisterProPRDbContext db, CodeInsightFindingStore store, IDisregardedFindingClassifier judge,
+        Microsoft.Extensions.Logging.ILogger<CodeInsightDispositionService>? logger = null)
     {
         return new CodeInsightDispositionService(
             LocalScmPolicies.Registry.CompatibilityCodec, store, store, judge, Gate(),
-            NullLogger<CodeInsightDispositionService>.Instance, performanceEvidence: new CodeInsightPerformanceEvidenceStore(db));
+            logger ?? NullLogger<CodeInsightDispositionService>.Instance, performanceEvidence: new CodeInsightPerformanceEvidenceStore(db));
     }
 
     private static CodeInsightMissHarvester Harvester(MeisterProPRDbContext db, CodeInsightMissStore misses, IHumanMissClassifier human)

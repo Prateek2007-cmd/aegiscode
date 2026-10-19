@@ -30,7 +30,8 @@ public sealed record PrCommentThread(
     bool IsDeleted = false,
     string? SourceAnchor = null,
     ThreadAnchorCodeChange CodeChangedSinceRaised = ThreadAnchorCodeChange.Unknown,
-    DateTimeOffset? LastUpdatedAt = null);
+    DateTimeOffset? LastUpdatedAt = null,
+    ReviewConcernAnchor? ConcernAnchor = null);
 
 /// <summary>
 ///     Represents a single comment within a <see cref="PrCommentThread" />.

@@ -24,7 +24,7 @@ internal sealed class CodeInsightProviderFeedbackReader(
         ct.ThrowIfCancellationRequested();
         if (target.Provider == ScmProvider.Forgejo && mode == CodeInsightObservationMode.HistoricalBackfill)
         {
-            throw new CodeInsightProviderIdentityException();
+            throw new CodeInsightHistoricalCapabilityUnavailableException();
         }
 
         if (snapshotReader is not null)

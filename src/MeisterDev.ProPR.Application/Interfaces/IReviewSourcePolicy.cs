@@ -14,6 +14,9 @@ public interface IReviewSourcePolicy
     /// <summary>Gets the provider family implemented by this policy.</summary>
     ScmProvider Provider { get; }
 
+    /// <summary>Builds a browser link from validated immutable review coordinates without provider requests.</summary>
+    string? CreateCapturedReviewUrl(CapturedReviewUrlCoordinates coordinates) => null;
+
     /// <summary>Selects the source captured for namespace identity without consulting current configuration.</summary>
     string SelectCapturedSource(string scope, string? host);
 
@@ -117,6 +120,16 @@ public interface IReviewSourcePolicy
 
 /// <summary>Contains the provider-normalized fields used in repository metadata cache identity.</summary>
 public sealed record ReviewSourceCacheCoordinates(string Authority, string ScopePath, string ProjectKey);
+
+/// <summary>Retained non-secret coordinates used to identify a native review page.</summary>
+public sealed record CapturedReviewUrlCoordinates(
+    ScmProvider Provider,
+    string SourcePath,
+    string? HostBaseUrl,
+    string ProjectId,
+    string RepositoryId,
+    string? RepositoryProjectPath,
+    int PullRequestId);
 
 /// <summary>Selects saved scope coverage or a connection host using the native coordinate predicate.</summary>
 public sealed record ReviewMentionScopeSelection(string? ScopeType, Func<string, bool> MatchesScope);

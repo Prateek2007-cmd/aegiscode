@@ -83,6 +83,20 @@ public class ReviewFileResult
     /// <summary>Findings withheld from publication, retained with the checkpoint for evidence collection.</summary>
     public IReadOnlyList<WithheldReviewFinding>? WithheldFindings { get; private set; }
 
+    /// <summary>Optional bounded generation proof, independent of review and publication success.</summary>
+    public ModelReviewEvidence? ModelEvidence { get; private set; }
+
+    /// <summary>Checkpoints generation evidence without changing the review outcome.</summary>
+    public void RecordModelEvidence(ModelReviewEvidence evidence)
+    {
+        ArgumentNullException.ThrowIfNull(evidence);
+        this.ModelEvidence = this.ModelEvidence is { } retained ? retained.Merge(evidence) : evidence.BoundedOrUnknown();
+        if (evidence.JobId != this.JobId || evidence.FilePath != this.FilePath)
+        {
+            this.ModelEvidence = new() { JobId = this.JobId, FilePath = this.FilePath, UnavailableReason = "model-proof-identity-unavailable" };
+        }
+    }
+
     /// <summary>
     ///     How pre-flight context-window budgeting treated this file: reviewed normally, degraded to
     ///     diff-only, or skipped because even the minimal payload exceeded the model window.
@@ -108,7 +122,7 @@ public class ReviewFileResult
     /// </summary>
     /// <param name="jobId">The ID of the new review job that owns this carried-forward result.</param>
     /// <param name="prior">The completed result from the prior iteration to copy from.</param>
-    public static ReviewFileResult CreateCarriedForward(Guid jobId, ReviewFileResult prior)
+    public static ReviewFileResult CreateCarriedForward(Guid jobId, ReviewFileResult prior, string? currentInputFingerprint = null)
     {
         var result = new ReviewFileResult(jobId, prior.FilePath);
         result.IsComplete = true;
@@ -116,6 +130,13 @@ public class ReviewFileResult
         result.PerFileSummary = prior.PerFileSummary;
         result.Comments = prior.Comments;
         result.WithheldFindings = prior.WithheldFindings;
+        result.ModelEvidence = prior.ModelEvidence is { } evidence
+            ? evidence with
+            {
+                JobId = jobId, OriginJobId = evidence.OriginJobId ?? prior.JobId, OriginFileResultId = evidence.OriginFileResultId ?? prior.Id,
+                UnchangedInputProven = !string.IsNullOrEmpty(currentInputFingerprint) && currentInputFingerprint == evidence.InputFingerprint,
+            }
+            : null;
         return result;
     }
 
@@ -134,6 +155,13 @@ public class ReviewFileResult
         result.ResumedFromJobId = prior.JobId;
         result.ResumedFromFileResultId = prior.Id;
         result._reviewedPassKeys = [.. prior._reviewedPassKeys];
+        result.ModelEvidence = prior.ModelEvidence is { } evidence
+            ? evidence with
+            {
+                JobId = jobId, OriginJobId = evidence.OriginJobId ?? prior.JobId, OriginFileResultId = evidence.OriginFileResultId ?? prior.Id,
+                UnchangedInputProven = true,
+            }
+            : null;
         return result;
     }
 

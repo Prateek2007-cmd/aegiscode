@@ -41,18 +41,62 @@ public sealed record ReviewerPerformanceFacets(
     IReadOnlyList<ReviewerPerformanceFacet> Types,
     IReadOnlyList<ReviewerPerformanceFacet> Qualifiers);
 
+/// <summary>A covered-population score with independently supported overall precision.</summary>
 public sealed record ReviewerPerformancePoint(
     DateOnly Date,
     ReviewerPerformanceScore Score,
     IReadOnlyList<string> UnavailableReasons,
     DateOnly? WindowFrom = null,
-    DateOnly? WindowTo = null);
+    DateOnly? WindowTo = null,
+    ReviewerPerformancePrecisionScore? OverallPrecision = null,
+    ReviewerPerformanceCoverage? Coverage = null);
+
+/// <summary>Advisory coverage and sample minimums captured with the measurement response.</summary>
+public sealed record ReviewerPerformanceCoveragePolicy(int MinimumCoveragePercentage, int MinimumCoveredPullRequests);
+
+/// <summary>Distinct excluded source pull requests carrying one evidence limitation.</summary>
+public sealed record ReviewerPerformanceExclusionReasonCount(string Reason, int PullRequests);
+
+/// <summary>Source pull-request coverage before contribution filters remove incompatible misses.</summary>
+public sealed record ReviewerPerformanceCoverage(
+    int CandidatePullRequests,
+    int CoveredPullRequests,
+    int ExcludedPullRequests,
+    double? Percentage,
+    bool MeetsMinimum,
+    bool RecallSupported,
+    IReadOnlyList<ReviewerPerformanceExclusionReasonCount> Reasons,
+    IReadOnlyList<int> ExclusionIds);
+
+/// <summary>Captured exclusion identity and bounded recovery metadata, including queued, active and completed collection; source URLs may be unavailable.</summary>
+public sealed record ReviewerPerformanceExclusion(
+    int Id,
+    Guid AggregateId,
+    Guid ClientId,
+    string ClientName,
+    string RepositoryId,
+    string? RepositoryName,
+    long PullRequestId,
+    string ProviderScope,
+    IReadOnlyList<string> Reasons,
+    DateTimeOffset? LastAttemptAt,
+    DateTimeOffset? NotBefore,
+    DateTimeOffset? LastCompletedAt,
+    string? LastRefreshReason,
+    string RecoveryDisposition,
+    bool? CollectionEnabled,
+    string? SourceUrl = null,
+    string? RecoveryAction = null,
+    DateTimeOffset? LastModelRetryAt = null,
+    DateTimeOffset? ModelRetryNotBefore = null,
+    Guid? SourceConnectionId = null);
 
 public sealed record ReviewerPerformanceEvidenceMetadata(
     DateTimeOffset? OldestProjectionAt,
     DateTimeOffset? NewestProjectionAt,
     int ProjectionVersion,
-    int PendingSourceAggregates);
+    int PendingSourceAggregates,
+    string? ModelEvidenceSchema = null);
 
 public sealed record ReviewerPerformanceSeries(string Id, string Label, IReadOnlyList<ReviewerPerformancePoint> Points);
 
@@ -64,7 +108,8 @@ public sealed record ReviewerPerformanceViewResponse(
     IReadOnlyList<ReviewerPerformanceSeries> Series,
     IReadOnlyList<ReviewerPerformanceMatrixCell> Breakdown,
     long AggregateCells,
-    ReviewerPerformanceEvidenceMetadata Evidence);
+    ReviewerPerformanceEvidenceMetadata Evidence,
+    IReadOnlyList<ReviewerPerformanceExclusion>? ExclusionCatalog = null);
 
 /// <summary>Complete versioned response suitable for immutable capture.</summary>
 public sealed record ReviewerPerformanceRangeResponse(
@@ -73,9 +118,13 @@ public sealed record ReviewerPerformanceRangeResponse(
     ReviewerPerformanceQuery Query,
     IReadOnlyList<string> PremiseIds,
     IReadOnlyList<ReviewerPerformanceViewResponse> Views,
-    string? EvidenceRevision = null);
+    string? EvidenceRevision = null,
+    ReviewerPerformanceCoveragePolicy? CoveragePolicy = null);
 
 public sealed record ReviewerPerformanceSaveReportRequest(Guid Id, string Name, ReviewerPerformanceQuery Query);
+
+/// <summary>Captured source identity for a bounded retained-classification retry.</summary>
+public sealed record ReviewerPerformanceRetryModelRequest(string ProviderScope, Guid ConnectionId);
 
 public sealed record ReviewerPerformanceReportSummary(Guid Id, string Name, string CalculationVersion, DateTimeOffset CapturedAt, DateTimeOffset ExpiresAt);
 

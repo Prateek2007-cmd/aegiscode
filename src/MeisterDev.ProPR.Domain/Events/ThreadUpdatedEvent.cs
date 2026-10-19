@@ -1,6 +1,8 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using MeisterDev.ProPR.Domain.ValueObjects;
+
 namespace MeisterDev.ProPR.Domain.Events;
 
 /// <summary>
@@ -34,7 +36,8 @@ public sealed record ThreadUpdatedEvent(
     IReadOnlyList<ThreadUpdatedComment> Comments,
     DateTimeOffset? ObservedAt = null,
     string? ProviderScope = null,
-    bool IsDeleted = false);
+    bool IsDeleted = false,
+    ReviewConcernAnchor? ConcernAnchor = null);
 
 /// <summary>
 ///     A single comment within a <see cref="ThreadUpdatedEvent" />. Authorship is decided once by the

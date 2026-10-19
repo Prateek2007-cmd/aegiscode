@@ -73,6 +73,7 @@
     <ItemGroup>
         <InternalsVisibleTo Include="MeisterDev.ProPR.Infrastructure"/>
         <InternalsVisibleTo Include="MeisterDev.ProPR.Infrastructure.Tests"/>
+        <InternalsVisibleTo Include="MeisterDev.ProPR.CodeInsights.Tests"/>
         <InternalsVisibleTo Include="MeisterDev.ProPR.Reviewing.Tests"/>
         <InternalsVisibleTo Include="MeisterDev.ProPR.Runner"/>
         <InternalsVisibleTo Include="MeisterDev.ProPR.Runner.Tests"/>

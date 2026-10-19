@@ -14414,7 +14414,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Returns versioned interpretation ranges from retained counts for one or two consistently read views. */
+        /** Returns covered-population scoring ranges, independent overall precision and source exclusions under one database snapshot. */
         post: {
             parameters: {
                 query?: never;
@@ -14431,7 +14431,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Counts, coherent scenario tuples, summaries, evidence limits and authorized facets. */
+                /** @description Versioned covered counts and coherent scenarios, advisory coverage policy and counts, overall precision, captured exclusion collection progress and authorized facets. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -14753,6 +14753,189 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviewer-performance/evidence/{aggregateId}/retry-model": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retries classification of bounded retained model concerns without provider reads or review execution. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Source aggregate within the administered client scope. */
+                    aggregateId: string;
+                };
+                cookie?: never;
+            };
+            /** @description Captured provider namespace and connection for this source. */
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["ReviewerPerformanceRetryModelRequest"];
+                    "text/json": components["schemas"]["ReviewerPerformanceRetryModelRequest"];
+                    "application/*+json": components["schemas"]["ReviewerPerformanceRetryModelRequest"];
+                };
+            };
+            responses: {
+                /** @description A bounded local classification retry completed; refresh the measurement to inspect its result. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid credentials. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Tenant administration or the Code Insights capability is missing. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The source is absent or outside the administered client scope. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Collection is disabled, the source is busy or cooling down, or retained proof cannot support this action. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Database analytics services are unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reviewer-performance/evidence/{aggregateId}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queues retained provider evidence for the next background sweep after source or configuration repair. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Retained pull-request aggregate within an administered tenant. */
+                    aggregateId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Evidence is queued; provider collection runs during a subsequent bounded sweep. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid credentials. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Missing tenant administration or the commercial Code Insights capability. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description The aggregate is absent or outside the authorized client scope. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Collection is disabled or an unexpired observation claim is active. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Database analytics services are unavailable. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -16242,7 +16425,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Applies trace events, per-file checkpoints with optional withheld evidence, and spend. */
+        /**
+         * Applies trace events, per-file checkpoints with bounded optional model proof or proof fragments, frozen model manifests, and spend.
+         * @description Nested and split model proofs require dispatched source, revision, pass scope, actual runtime and current lease bindings. Rejected analytics preserve ordinary file outcomes.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -23655,6 +23841,159 @@ export interface components {
             modelCount?: number;
         };
         /**
+         * @description The observed disposition of a finding-producing model pass.
+         * @enum {string}
+         */
+        ModelGenerationDisposition: "unknown" | "completed" | "notApplicable" | "skipped" | "failed" | "cancelled" | "invalidOutput";
+        /** @description A stable, attributed candidate retained before verification and publication. */
+        ModelReviewCandidate: {
+            id?: string | null;
+            filePath?: string | null;
+            /** Format: int32 */
+            lineNumber?: number | null;
+            message?: string | null;
+        };
+        /** @description Versioned source, input and pass inventory retained with a review checkpoint. */
+        ModelReviewEvidence: {
+            schema?: string | null;
+            /** Format: uuid */
+            jobId?: string;
+            /** Format: int32 */
+            attempt?: number;
+            /** Format: int32 */
+            leaseGeneration?: number | null;
+            /** Format: uuid */
+            clientId?: string;
+            repositoryId?: string | null;
+            /** Format: int64 */
+            pullRequestId?: number;
+            providerScope?: string | null;
+            /** Format: uuid */
+            sourceConnectionId?: string | null;
+            revisionKey?: string | null;
+            headSha?: string | null;
+            baseSha?: string | null;
+            filePath?: string | null;
+            inputFingerprint?: string | null;
+            assignedRanges?: components["schemas"]["ModelReviewRange"][] | null;
+            inventoryComplete?: boolean;
+            inputComplete?: boolean;
+            passes?: components["schemas"]["ModelReviewPassEvidence"][] | null;
+            /** Format: date-time */
+            capturedAt?: string;
+            /** Format: date-time */
+            acceptedAt?: string | null;
+            /** Format: uuid */
+            originJobId?: string | null;
+            /** Format: uuid */
+            originFileResultId?: string | null;
+            unchangedInputProven?: boolean;
+            unavailableReason?: string | null;
+            pendingFragments?: components["schemas"]["ModelReviewProofFragment"][] | null;
+            retainedTransportDigests?: string[] | null;
+            readonly isBounded?: boolean;
+        };
+        /** @description The frozen file inventory and PR-wide generation proof of one execution. */
+        ModelReviewManifest: {
+            schema?: string | null;
+            /** Format: uuid */
+            jobId?: string;
+            /** Format: int32 */
+            attempt?: number;
+            /** Format: int32 */
+            leaseGeneration?: number | null;
+            files?: string[] | null;
+            allowedModels?: components["schemas"]["ModelReviewModelBinding"][] | null;
+            providerScope?: string | null;
+            /** Format: uuid */
+            sourceConnectionId?: string | null;
+            inventoryComplete?: boolean;
+            pullRequestPasses?: components["schemas"]["ModelReviewEvidence"][] | null;
+            /** Format: date-time */
+            capturedAt?: string;
+            /** Format: date-time */
+            acceptedAt?: string | null;
+            unavailableReason?: string | null;
+            readonly isBounded?: boolean;
+        };
+        /** @description A server-dispatched model assignment with optional typed scope and pass identity. */
+        ModelReviewModelBinding: {
+            /** @description Resolved remote model identity. */
+            modelId?: string | null;
+            /** @description Logical role used by the actual pass. */
+            logicalModelName?: string | null;
+            /**
+             * Format: uuid
+             * @description Resolved AI runtime connection, independent of the source-provider connection.
+             */
+            connectionId?: string | null;
+            /**
+             * Format: uuid
+             * @description Resolved configured model identity.
+             */
+            configuredModelId?: string | null;
+            /**
+             * Format: int32
+             * @description Actual generation pass ordinal; missing legacy metadata cannot authorize a certificate.
+             */
+            ordinal?: number | null;
+            /** @description The assigned per_file or pr_wide scope. */
+            scope?: string | null;
+            /** @description Configured per-file lens when applicable. */
+            lens?: string | null;
+            /** @description Whether the assignment suppresses publication. */
+            shadow?: boolean | null;
+        };
+        /** @description Positive completion evidence for one generation pass, including a valid empty candidate set. */
+        ModelReviewPassEvidence: {
+            /** Format: uuid */
+            jobId?: string;
+            passKey?: string | null;
+            modelId?: string | null;
+            logicalModelName?: string | null;
+            /** Format: uuid */
+            connectionId?: string | null;
+            /** Format: uuid */
+            configuredModelId?: string | null;
+            /** Format: int32 */
+            ordinal?: number;
+            /** Format: int32 */
+            attempt?: number;
+            /** Format: int32 */
+            leaseGeneration?: number | null;
+            kind?: string | null;
+            lens?: string | null;
+            shadow?: boolean;
+            disposition?: components["schemas"]["ModelGenerationDisposition"];
+            candidateSetComplete?: boolean;
+            /** Format: date-time */
+            startedAt?: string | null;
+            /** Format: date-time */
+            completedAt?: string | null;
+            /** Format: date-time */
+            acceptedAt?: string | null;
+            candidates?: components["schemas"]["ModelReviewCandidate"][] | null;
+            readonly isCertified?: boolean;
+        };
+        /** @description A bounded transport fragment retained until its complete proof checksum can be verified. */
+        ModelReviewProofFragment: {
+            digest?: string | null;
+            /** Format: int32 */
+            offset?: number;
+            /** Format: int32 */
+            totalBytes?: number;
+            data?: string | null;
+            readonly isBounded?: boolean;
+        };
+        /** @description A closed range assigned to the generation pass, independent of its tool reads. */
+        ModelReviewRange: {
+            /** Format: int32 */
+            start?: number;
+            /** Format: int32 */
+            end?: number;
+            side?: string | null;
+        };
+        /**
          * @description Request body for patching an admin-managed crawl configuration.
          *     Omit a field to leave it unchanged. Set `reviewTemperature` to null to clear the override.
          */
@@ -25686,6 +26025,28 @@ export interface components {
             /** Format: int64 */
             failedMissJudgements?: number;
         };
+        /** @description Source pull-request coverage before contribution filters remove incompatible misses. */
+        ReviewerPerformanceCoverage: {
+            /** Format: int32 */
+            candidatePullRequests?: number;
+            /** Format: int32 */
+            coveredPullRequests?: number;
+            /** Format: int32 */
+            excludedPullRequests?: number;
+            /** Format: double */
+            percentage?: number | null;
+            meetsMinimum?: boolean;
+            recallSupported?: boolean;
+            reasons?: components["schemas"]["ReviewerPerformanceExclusionReasonCount"][] | null;
+            exclusionIds?: number[] | null;
+        };
+        /** @description Advisory coverage and sample minimums captured with the measurement response. */
+        ReviewerPerformanceCoveragePolicy: {
+            /** Format: int32 */
+            minimumCoveragePercentage?: number;
+            /** Format: int32 */
+            minimumCoveredPullRequests?: number;
+        };
         ReviewerPerformanceEvidenceMetadata: {
             /** Format: date-time */
             oldestProjectionAt?: string | null;
@@ -25695,6 +26056,46 @@ export interface components {
             projectionVersion?: number;
             /** Format: int32 */
             pendingSourceAggregates?: number;
+            modelEvidenceSchema?: string | null;
+        };
+        /** @description Captured exclusion identity and bounded recovery metadata, including queued, active and completed collection; source URLs may be unavailable. */
+        ReviewerPerformanceExclusion: {
+            /** Format: int32 */
+            id?: number;
+            /** Format: uuid */
+            aggregateId?: string;
+            /** Format: uuid */
+            clientId?: string;
+            clientName?: string | null;
+            repositoryId?: string | null;
+            repositoryName?: string | null;
+            /** Format: int64 */
+            pullRequestId?: number;
+            providerScope?: string | null;
+            reasons?: string[] | null;
+            /** Format: date-time */
+            lastAttemptAt?: string | null;
+            /** Format: date-time */
+            notBefore?: string | null;
+            /** Format: date-time */
+            lastCompletedAt?: string | null;
+            lastRefreshReason?: string | null;
+            recoveryDisposition?: string | null;
+            collectionEnabled?: boolean | null;
+            sourceUrl?: string | null;
+            recoveryAction?: string | null;
+            /** Format: date-time */
+            lastModelRetryAt?: string | null;
+            /** Format: date-time */
+            modelRetryNotBefore?: string | null;
+            /** Format: uuid */
+            sourceConnectionId?: string | null;
+        };
+        /** @description Distinct excluded source pull requests carrying one evidence limitation. */
+        ReviewerPerformanceExclusionReasonCount: {
+            reason?: string | null;
+            /** Format: int32 */
+            pullRequests?: number;
         };
         /** @description Stable metadata identifier and display label. */
         ReviewerPerformanceFacet: {
@@ -25737,6 +26138,7 @@ export interface components {
              */
             readonly total?: number;
         };
+        /** @description A covered-population score with independently supported overall precision. */
         ReviewerPerformancePoint: {
             /** Format: date */
             date?: string;
@@ -25746,6 +26148,26 @@ export interface components {
             windowFrom?: string | null;
             /** Format: date */
             windowTo?: string | null;
+            overallPrecision?: components["schemas"]["ReviewerPerformancePrecisionScore"];
+            coverage?: components["schemas"]["ReviewerPerformanceCoverage"];
+        };
+        /** @description One scoring premise applied to the overall published-outcome population. */
+        ReviewerPerformancePrecisionScenario: {
+            id?: string | null;
+            /** Format: int64 */
+            truePositives?: number;
+            /** Format: int64 */
+            falsePositives?: number;
+            /** Format: int64 */
+            excluded?: number;
+            /** Format: double */
+            precision?: number | null;
+        };
+        /** @description Overall precision and raw selected inputs, independent of recall coverage. */
+        ReviewerPerformancePrecisionScore: {
+            counts?: components["schemas"]["ReviewerPerformanceCounts"];
+            scenarios?: components["schemas"]["ReviewerPerformancePrecisionScenario"][] | null;
+            summary?: components["schemas"]["ReviewerPerformanceRange"];
         };
         /** @description A bounded query for one or two views of retained evidence. */
         ReviewerPerformanceQuery: {
@@ -25779,6 +26201,7 @@ export interface components {
             premiseIds?: string[] | null;
             views?: components["schemas"]["ReviewerPerformanceViewResponse"][] | null;
             evidenceRevision?: string | null;
+            coveragePolicy?: components["schemas"]["ReviewerPerformanceCoveragePolicy"];
         };
         ReviewerPerformanceReportSummary: {
             /** Format: uuid */
@@ -25789,6 +26212,12 @@ export interface components {
             capturedAt?: string;
             /** Format: date-time */
             expiresAt?: string;
+        };
+        /** @description Captured source identity for a bounded retained-classification retry. */
+        ReviewerPerformanceRetryModelRequest: {
+            providerScope?: string | null;
+            /** Format: uuid */
+            connectionId?: string;
         };
         ReviewerPerformanceSaveReportRequest: {
             /** Format: uuid */
@@ -25864,6 +26293,7 @@ export interface components {
             /** Format: int64 */
             aggregateCells?: number;
             evidence?: components["schemas"]["ReviewerPerformanceEvidenceMetadata"];
+            exclusionCatalog?: components["schemas"]["ReviewerPerformanceExclusion"][] | null;
         };
         /**
          * @description The portable slice of a relayed completion's options.
@@ -26056,6 +26486,8 @@ export interface components {
             exclusionReason?: string | null;
             /** @description Generated findings excluded from publication and retained with the checkpoint. */
             withheldFindings?: components["schemas"]["WithheldReviewFinding"][] | null;
+            modelEvidence?: components["schemas"]["ModelReviewEvidence"];
+            modelEvidenceFragment?: components["schemas"]["ModelReviewProofFragment"];
         };
         /** @description One chunk of a findings submission. */
         RunnerFindingsRequest: {
@@ -26125,6 +26557,8 @@ export interface components {
              * @description The contract version the caller speaks.
              */
             contractVersion?: number;
+            /** @description Optional bounded model inventories. Invalid analytics metadata remains unavailable without discarding file outcomes. */
+            modelManifests?: components["schemas"]["ModelReviewManifest"][] | null;
             /**
              * Format: int32
              * @description Position in this job's stream, starting at 1.
@@ -26261,6 +26695,8 @@ export interface components {
              *     older control plane reads as licensed, which is how the review behaved before the field existed.
              */
             parallelReviewExecutionLicensed?: boolean | null;
+            /** Format: int32 */
+            attemptNumber?: number;
         };
         /** @description A knowledge question. */
         RunnerKnowledgeRequest: {
@@ -26451,6 +26887,10 @@ export interface components {
             supportsStructuredOutput?: boolean;
             /** @description Whether the resolved model and transport support low reasoning effort. */
             supportsLowReasoningEffort?: boolean;
+            /** Format: uuid */
+            connectionId?: string | null;
+            /** Format: uuid */
+            configuredModelId?: string | null;
         };
         /** @description One file this job has already had reviewed, reduced to what the pipeline reads back. */
         RunnerPriorFileResult: {
@@ -26482,6 +26922,7 @@ export interface components {
             isCarriedForward?: boolean;
             /** @description Generated findings retained for internal evidence collection. */
             withheldFindings?: components["schemas"]["WithheldReviewFinding"][] | null;
+            modelEvidence?: components["schemas"]["ModelReviewEvidence"];
         };
         /** @description Per-file checkpoints returned to a runner, with their availability state. */
         RunnerPriorResultsResponse: {
@@ -26767,6 +27208,10 @@ export interface components {
              *     addressed.
              */
             existingThreads?: components["schemas"]["RunnerReviewThread"][] | null;
+            providerScope?: string | null;
+            /** Format: uuid */
+            sourceConnectionId?: string | null;
+            revisionKey?: string | null;
         };
         /**
          * @description One conversation thread on the review, reduced to what a reviewer reads: where it sits, whether it

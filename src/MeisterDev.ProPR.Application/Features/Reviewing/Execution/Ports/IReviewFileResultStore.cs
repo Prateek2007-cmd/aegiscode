@@ -2,6 +2,8 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Domain.Entities;
+using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 
 namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 
@@ -47,4 +49,12 @@ public interface IReviewFileResultStore
     /// <param name="count">The in-scope changed-file count.</param>
     /// <param name="ct">The cancellation token.</param>
     Task UpdateInScopeChangedFileCountAsync(Guid id, int count, CancellationToken ct = default);
+
+    /// <summary>Retains the frozen execution inventory under the current attempt.</summary>
+    Task RecordModelManifestAsync(Guid id, int attempt, ModelReviewManifest manifest, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Retains runner proof while atomically fencing its lease owner and generation.</summary>
+    Task<bool> RetainRunnerModelEvidenceAsync(
+        RunnerCallContext call, IReadOnlyList<RunnerFileOutcome> files,
+        IReadOnlyList<ModelReviewManifest> manifests, CancellationToken ct = default) => Task.FromResult(false);
 }

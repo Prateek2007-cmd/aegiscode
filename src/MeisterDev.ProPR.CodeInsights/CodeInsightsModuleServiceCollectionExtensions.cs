@@ -102,6 +102,9 @@ public static class CodeInsightsModuleServiceCollectionExtensions
         // Miss harvesting: the false-negative side, without which only precision is measurable.
         services.AddScoped<IHumanMissClassifier, AiHumanMissClassifier>();
         services.AddScoped<ICodeInsightMissHarvester, CodeInsightMissHarvester>();
+        services.AddScoped<IHumanConcernModelMatcher, AiHumanConcernModelMatcher>();
+        services.AddScoped<ICodeInsightModelConcernObserver, CodeInsightModelConcernObserver>();
+        services.AddScoped<IModelEvidenceMaintenance, ModelEvidenceMaintenance>();
 
         // Roll-ups: one stored grain, day-bucketed, with the five reporting grains and the wider buckets
         // derived on read. The projector recomputes rather than increments, so it is safe to call repeatedly.
@@ -152,6 +155,10 @@ public static class CodeInsightsModuleServiceCollectionExtensions
     /// </summary>
     public static void BindOptions(CodeInsightsOptions options, IConfiguration configuration)
     {
+        options.ModelEvidenceRetryCooldownMinutes = configuration.GetValue(
+            "CODE_INSIGHTS_MODEL_EVIDENCE_RETRY_COOLDOWN_MINUTES", options.ModelEvidenceRetryCooldownMinutes);
+        options.MinimumCoveragePercentage = configuration.GetValue("CODE_INSIGHTS_MIN_COVERAGE_PERCENTAGE", options.MinimumCoveragePercentage);
+        options.MinimumCoveredPullRequests = configuration.GetValue("CODE_INSIGHTS_MIN_COVERED_PULL_REQUESTS", options.MinimumCoveredPullRequests);
         options.ClassificationIntervalSeconds = configuration.GetValue(
             "CODE_INSIGHTS_CLASSIFICATION_INTERVAL_SECONDS",
             options.ClassificationIntervalSeconds);
@@ -173,6 +180,9 @@ public static class CodeInsightsModuleServiceCollectionExtensions
             "CODE_INSIGHTS_PROVIDER_EVIDENCE_BACKFILL_MAX_PULL_REQUESTS", options.ProviderEvidenceBackfillMaxPullRequests);
         options.ProviderEvidenceSweepBudgetSeconds = configuration.GetValue(
             "CODE_INSIGHTS_PROVIDER_EVIDENCE_SWEEP_BUDGET_SECONDS", options.ProviderEvidenceSweepBudgetSeconds);
+        options.ProviderEvidenceLeaseMinutes = configuration.GetValue("CODE_INSIGHTS_PROVIDER_EVIDENCE_LEASE_MINUTES", options.ProviderEvidenceLeaseMinutes);
+        options.ProviderEvidenceRetryCooldownMinutes = configuration.GetValue(
+            "CODE_INSIGHTS_PROVIDER_EVIDENCE_RETRY_COOLDOWN_MINUTES", options.ProviderEvidenceRetryCooldownMinutes);
         options.SealSweepMaxPullRequests = configuration.GetValue(
             "CODE_INSIGHTS_SEAL_SWEEP_MAX_PULL_REQUESTS",
             options.SealSweepMaxPullRequests);

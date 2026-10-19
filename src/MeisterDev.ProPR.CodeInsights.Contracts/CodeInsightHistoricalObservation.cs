@@ -35,13 +35,36 @@ public enum CodeInsightObservationUnavailableReason
     ClassificationUnavailable,
     ProcessingDeadlineExceeded,
     SourceCoordinatesUnavailable,
+    HistoricalCapabilityUnsupported,
+    ObserverUnavailable,
+}
+
+/// <summary>Identifies the bounded operation that could not retain historical evidence.</summary>
+public enum CodeInsightObservationStage
+{
+    SourceLookup,
+    ObserverDependencies,
+    CapturedCoordinates,
+    ConnectionLookup,
+    OwnershipLookup,
+    ProviderRead,
+    ThreadCorrelation,
+    HumanClassification,
+    HumanEvidenceRetention,
+    OutcomeEvidenceRetention,
+    OutcomeAcknowledgment,
+    CoverageRetention,
+    ObservationAcknowledgment,
+    ProcessingDeadline,
+    Completion,
 }
 
 /// <summary>Reports whether every required observation was positively retained.</summary>
 public sealed record CodeInsightObservationResult(
     CodeInsightObservationStatus Status,
     DateTimeOffset? ObservedAt = null,
-    CodeInsightObservationUnavailableReason? UnavailableReason = null);
+    CodeInsightObservationUnavailableReason? UnavailableReason = null,
+    CodeInsightObservationStage? Stage = null);
 
 /// <summary>Retains current observation behavior and supports preservation during historical collection.</summary>
 public enum CodeInsightObservationMode
@@ -51,7 +74,11 @@ public enum CodeInsightObservationMode
 }
 
 /// <summary>Acknowledges evidence retention independently of changes to score inputs.</summary>
-public sealed record CodeInsightEvidenceAcknowledgment(bool Retained, bool Changed = false, CodeInsightObservationUnavailableReason? Reason = null);
+public sealed record CodeInsightEvidenceAcknowledgment(
+    bool Retained,
+    bool Changed = false,
+    CodeInsightObservationUnavailableReason? Reason = null,
+    CodeInsightObservationStage? Stage = null);
 
 /// <summary>Collects provider evidence for a captured historical source without modifying review output.</summary>
 public interface ICodeInsightHistoricalObserver

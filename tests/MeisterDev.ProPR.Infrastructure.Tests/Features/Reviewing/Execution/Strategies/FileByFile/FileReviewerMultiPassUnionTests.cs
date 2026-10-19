@@ -21,6 +21,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Reviewing.Execution.Strategies.FileByFile;
 
@@ -31,6 +32,25 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Reviewing.Execution.Str
 /// </summary>
 public sealed class FileReviewerMultiPassUnionTests
 {
+    [Fact]
+    public async Task SoftCapAnalyticsFailurePreservesTheSkipWithoutCreatingAnOrdinaryCheckpoint()
+    {
+        var reviewer = this.CreateReviewer();
+        var file = FileForTier(FileComplexityTier.Medium);
+        var (job, pr) = Fixture(file);
+        this._jobRepository.AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("retention unavailable"));
+        this._jobRepository.RecordModelManifestAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Any<ModelReviewManifest>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("retention unavailable"));
+        var planner = new FileReviewDispatchPlanner(
+            this._jobRepository, this._recorder, reviewer, new AiReviewOptions(),
+            NullLogger<FileByFileReviewOrchestrator>.Instance, budgetExhaustedSignal: () => true);
+        var result = await planner.ExecuteAsync(job, pr, MultiPassContext(1), Substitute.For<IChatClient>(), CancellationToken.None);
+        Assert.Empty(result.Exceptions);
+        await this._jobRepository.DidNotReceive().AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
+        await this._aiCore.DidNotReceive().ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>());
+    }
+
     // Each AI call returns a distinct concrete finding so the union across passes is observable and nothing
     // is dropped by the per-file filters (Warning severity, no hedge/vague/info phrasing).
     private static readonly IReadOnlyList<ReviewComment> PassComments =
@@ -227,6 +247,83 @@ public sealed class FileReviewerMultiPassUnionTests
         runtime.ChatClient.Returns(Substitute.For<IChatClient>());
         runtime.Model.Returns(ConfiguredModel(remoteModelId));
         return runtime;
+    }
+
+    [Fact]
+    public async Task ClosedInventoryRetainsAProvenOutOfScopeModelAssignmentWithoutCallingIt()
+    {
+        var modelId = Guid.NewGuid();
+        var resolver = Substitute.For<IAiRuntimeResolver>();
+        var runtime = RuntimeForModel("model-b");
+        resolver.ResolveChatRuntimeForModelAsync(Arg.Any<Guid>(), modelId, Arg.Any<CancellationToken>()).Returns(runtime);
+        var reviewer = this.CreateReviewer(aiRuntimeResolver: resolver);
+        var file = FileForTier(FileComplexityTier.Low);
+        var (job, pr) = Fixture(file);
+
+        await reviewer.ReviewAsync(job, pr, file, 1, 1, ProductionContext("model-a", modelId), null, Substitute.For<IChatClient>(), CancellationToken.None);
+
+        Assert.NotNull(this._persistedResult!.ModelEvidence);
+        Assert.True(this._persistedResult.ModelEvidence.InventoryComplete);
+        Assert.Contains(
+            this._persistedResult.ModelEvidence.Passes, pass => pass.ModelId == "model-b" && pass.Disposition == ModelGenerationDisposition.NotApplicable);
+        await this._aiCore.Received(1).ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CompletedBaselineIsCheckpointedBeforeAnAdditionalModelFails()
+    {
+        var reviewer = this.CreateReviewer();
+        var calls = 0;
+        this._aiCore.ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>())
+            .Returns(_ => ++calls == 1
+                ? Task.FromResult(
+                    new ReviewResult("zero", [])
+                        { GenerationDisposition = ModelGenerationDisposition.Completed })
+                : Task.FromException<ReviewResult>(new InvalidOperationException("failed")));
+        var file = FileForTier(FileComplexityTier.Medium);
+        var (job, pr) = Fixture(file);
+        var context = MultiPassContext(2);
+        context.ModelId = "model-a";
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => reviewer.ReviewAsync(
+            job, pr, file, 1, 1, context, null, Substitute.For<IChatClient>(), CancellationToken.None));
+
+        var checkpoint = this._jobRepository.ReceivedCalls().Where(call => call.GetMethodInfo().Name == "UpdateFileResultAsync")
+            .Select(call => (ReviewFileResult)call.GetArguments()[0]!).Last();
+        Assert.NotNull(checkpoint.ModelEvidence);
+        Assert.Contains(checkpoint.ModelEvidence.Passes, pass => pass.ModelId == "model-a" && pass.IsCertified && pass.Candidates.Count == 0);
+        Assert.Contains(checkpoint.ModelEvidence.Passes, pass => pass.ModelId == "gpt-5.4" && pass.Disposition == ModelGenerationDisposition.Failed);
+    }
+
+    [Fact]
+    public async Task EqualCohortLabelsKeepEachActualConfiguredRuntimeIdentity()
+    {
+        var baseline = RuntimeForModel("same-remote");
+        var additional = RuntimeForModel("same-remote");
+        var resolver = Substitute.For<IAiRuntimeResolver>();
+        resolver.ResolveChatRuntimeAsync(Arg.Any<Guid>(), Arg.Any<AiPurpose>(), Arg.Any<CancellationToken>()).Returns(baseline);
+        resolver.ResolveChatRuntimeForModelAsync(Arg.Any<Guid>(), additional.Model.Id, Arg.Any<CancellationToken>()).Returns(additional);
+        var reviewer = this.CreateReviewer(aiRuntimeResolver: resolver);
+        var checkpoints = new List<ModelReviewEvidence>();
+        this._jobRepository.When(store => store.UpdateFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>())).Do(call =>
+        {
+            if (call.Arg<ReviewFileResult>().ModelEvidence is { } proof)
+            {
+                checkpoints.Add(proof);
+            }
+        });
+        this._aiCore.ReviewAsync(Arg.Any<PullRequest>(), Arg.Any<ReviewSystemContext>(), Arg.Any<CancellationToken>())
+            .Returns(new ReviewResult("zero", []) { GenerationDisposition = ModelGenerationDisposition.Completed });
+        var file = FileForTier(FileComplexityTier.Medium);
+        var (job, pr) = Fixture(file);
+        await reviewer.ReviewAsync(
+            job, pr, file, 1, 1, ProductionContext("same-remote", additional.Model.Id), null, baseline.ChatClient, CancellationToken.None);
+        var passes = this._persistedResult!.ModelEvidence!.Passes.Where(pass => pass.IsCertified).OrderBy(pass => pass.Ordinal).ToArray();
+        Assert.Equal(2, passes.Length);
+        Assert.NotEqual(baseline.Model.Id, additional.Model.Id);
+        Assert.Equal(baseline.Model.Id, passes[0].ConfiguredModelId);
+        Assert.Equal(additional.Model.Id, passes[1].ConfiguredModelId);
+        Assert.All(checkpoints.Where(proof => proof.InventoryComplete), proof => Assert.Contains(proof.Passes, pass => pass.Ordinal == 1));
     }
 
     [Fact]

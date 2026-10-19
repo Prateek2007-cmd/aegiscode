@@ -77,10 +77,10 @@ public sealed class WithheldFindingEvidenceTests
             DateOnly.FromDateTime(evt.ObservedAt.UtcDateTime), cells, cells,
             new ReviewerPerformanceViewQuery(), "overall");
 
-        Assert.Equal(3, measurement.Score.Counts.Generated);
-        Assert.Equal(1, measurement.Score.Counts.Withheld);
-        Assert.Equal(2, measurement.Score.Counts.Outcomes.Positive);
-        Assert.Equal(2, measurement.Score.Counts.Outcomes.Total);
+        Assert.Equal(3, measurement.OverallPrecision!.Counts.Generated);
+        Assert.Equal(1, measurement.OverallPrecision!.Counts.Withheld);
+        Assert.Equal(2, measurement.OverallPrecision!.Counts.Outcomes.Positive);
+        Assert.Equal(2, measurement.OverallPrecision!.Counts.Outcomes.Total);
         Assert.Contains("miss-collection-coverage-unavailable", measurement.UnavailableReasons);
         Assert.Null(measurement.Score.Summary.Recall);
     }

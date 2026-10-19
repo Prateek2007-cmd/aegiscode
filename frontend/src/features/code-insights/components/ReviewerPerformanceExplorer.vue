@@ -124,7 +124,7 @@
       </div>
       <p class="explorer-note">
         Ranges describe interpretation choices, without a statistical confidence meaning. Model
-        recall / F1 remains unavailable without compatible human-miss attribution.
+        recall / F1 uses verified review opportunities and human concerns. Models can cover different workloads.
         {{
           frozen
             ? 'Saved filters cannot change. The matrix shows the captured ranges.'

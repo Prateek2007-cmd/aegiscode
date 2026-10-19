@@ -17,11 +17,34 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace MeisterDev.ProPR.Application.Tests.Services;
 
 public sealed class ReviewOrchestrationServiceDiffRetentionTests
 {
+    [Fact]
+    public async Task OptionalModelSourceLookupFailureStillExecutesAndRecordsTheReview()
+    {
+        var harness = new Harness(false);
+        harness.Connections.GetByClientIdAsync(ClientId, Arg.Any<CancellationToken>()).ThrowsAsync(new InvalidOperationException("unavailable"));
+        await harness.RunAsync();
+        Assert.NotNull(harness.CapturedContext);
+        Assert.Null(harness.CapturedContext.SourceConnectionId);
+        await harness.Jobs.Received(1).SetResultAsync(Arg.Any<Guid>(), Arg.Any<ReviewResult>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task DefaultFallbackKeepsTheActualConfiguredModelIdentity()
+    {
+        var harness = new Harness(false);
+        var runtime = await harness.RuntimeResolver.ResolveChatRuntimeAsync(ClientId, AiPurpose.ReviewDefault);
+        await harness.RunAsync();
+        Assert.NotNull(harness.CapturedContext);
+        Assert.Equal(runtime.Model.Id, harness.CapturedContext.ConfiguredModelId);
+        Assert.Equal(runtime.Connection.Id, harness.CapturedContext.RuntimeConnectionId);
+    }
+
     private const string OrganizationUrl = "https://dev.azure.com/org";
     private static readonly Guid ClientId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid ConnectionId = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -69,6 +92,10 @@ public sealed class ReviewOrchestrationServiceDiffRetentionTests
 
     private sealed class Harness
     {
+        public IClientScmConnectionRepository Connections { get; private set; } = null!;
+        public IReviewJobExecutionStore Jobs { get; private set; } = null!;
+        public IAiRuntimeResolver RuntimeResolver { get; private set; } = null!;
+        public ReviewSystemContext? CapturedContext;
         private readonly ReviewJob _job;
         private readonly ReviewOrchestrationService _sut;
 
@@ -76,6 +103,7 @@ public sealed class ReviewOrchestrationServiceDiffRetentionTests
         {
             this.IngestionService = Substitute.For<IReviewArchiveIngestionService>();
             var scmConnectionRepository = Substitute.For<IClientScmConnectionRepository>();
+            this.Connections = scmConnectionRepository;
             scmConnectionRepository.GetByClientIdAsync(ClientId, Arg.Any<CancellationToken>())
                 .Returns([CreateConnection(storeDiffs)]);
 
@@ -83,6 +111,7 @@ public sealed class ReviewOrchestrationServiceDiffRetentionTests
             this._job.SetReviewRevision(new ReviewRevision("head-sha", "base-sha", null, "1", null));
 
             var jobs = Substitute.For<IReviewJobExecutionStore>();
+            this.Jobs = jobs;
 
             var pr = CreatePullRequest();
             var prFetcher = Substitute.For<IPullRequestFetcher>();
@@ -120,10 +149,15 @@ public sealed class ReviewOrchestrationServiceDiffRetentionTests
                     Arg.Any<ReviewSystemContext>(),
                     Arg.Any<CancellationToken>(),
                     Arg.Any<IChatClient?>())
-                .Returns(new ReviewResult("Summary", new List<ReviewComment>().AsReadOnly()));
+                .Returns(call =>
+                {
+                    this.CapturedContext = call.Arg<ReviewSystemContext>();
+                    return new ReviewResult("Summary", new List<ReviewComment>().AsReadOnly());
+                });
 
             var providerRegistry = CreateProviderRegistry();
 
+            this.RuntimeResolver = AiConnectionTestFactory.CreateChatRuntimeResolver();
             this._sut = new ReviewOrchestrationService(
                 jobs,
                 prFetcher,
@@ -137,7 +171,7 @@ public sealed class ReviewOrchestrationServiceDiffRetentionTests
                 CreateInstructionEvaluator(),
                 Substitute.For<IOptions<AiReviewOptions>>(),
                 NullLogger<ReviewOrchestrationService>.Instance,
-                AiConnectionTestFactory.CreateChatRuntimeResolver(),
+                this.RuntimeResolver,
                 fileByFileReviewOrchestrator,
                 workspaceManager: CreateWorkspaceManager(),
                 scmConnectionRepository: scmConnectionRepository,

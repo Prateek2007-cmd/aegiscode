@@ -700,18 +700,73 @@ displays the clipped measurement window.
 
 Null selections include all authorized values; empty arrays include none. Use returned facet IDs for
 repository and model selections because they include retained identity scope. The query permits 1–366 days
-per view, years 1900–9998, at most 128 selections per dimension, 100,000 grouped joint cells per view, 24
-series, 2,000 timeline points and 12 values per matrix axis. Exceeded limits return 400 without truncating
-counts. Unauthorized selected clients return 403.
+per view, years 1900–9998, at most 128 selections per dimension, 100,000 retained joint cells per view, 24
+series, 2,000 timeline points and 12 values per matrix axis. Source identity remains attached to cells.
+Each view permits 100,000 distinct retained source coordinates for optional link resolution, 100,000
+exclusion catalog entries and 1,000,000 exclusion references across timeline and matrix points. Exceeded
+limits return 400 without truncating counts or exclusions. Unauthorized selected clients return 403.
 
 Each response includes calculation version, capture time, database evidence revision, authorized display
 facets, counts, all premise tuples, summaries, measurement windows and evidence limits. Projection timestamps
 describe source freshness separately from capture time. Cumulative measurements retain earlier evidence
 through the selected window; per-period measurements require activity in their own bucket. Scenario
-`falseNegatives` is null when its compatible FN population is unavailable; recorded raw counts remain in
-`counts`. Model-specific recall/F1 remains unavailable until
-compatible human-miss model membership exists. [Reviewer performance](../concepts/reviewer-performance.md)
+`falseNegatives` is null when its compatible FN population is unavailable. Model-specific recall/F1 requires
+complete compatible model opportunities and independent original human-concern evidence. Selected models
+use union detection and canonical misses, without summing singleton misses or PR coverage. [Reviewer performance](../concepts/reviewer-performance.md)
 defines these scores and their evidence requirements.
+
+Calculation version `reviewer-performance-v2` captures the following populations and diagnostics:
+
+| Field | Meaning |
+|---|---|
+| `point.score` | Covered counts and coherent scenarios using covered TP, FP and FN for recall and F1. Its precision describes that covered population. |
+| `point.overallPrecision` | All selected raw counts and independent publication precision. `summary` is the precision range directly; compact scenarios contain precision and its inputs. |
+| `coveragePolicy` | Advisory coverage percentage and covered source pull-request minimums, defaulting to 80 and 1. |
+| `point.coverage` | Distinct candidate, covered and excluded source PR counts, percentage on a 0–100 scale, minimum/support flags, overlapping reason counts and exclusion IDs. |
+| `view.exclusionCatalog` | Captured source identities, evidence reasons, attempt/completion/retry timestamps, last refresh reason, collection policy, recovery disposition, action, nullable source connection and URL. |
+| `view.evidence.modelEvidenceSchema` | Optional `model-opportunity-v1` for measurements that loaded model execution/concern proof. |
+
+Catalog IDs are zero-based and local to a view. A point's `exclusionIds` selects its exact membership;
+the catalog can contain entries used only by other dates or intersections. Recovery dispositions are
+`repair-required`, `retryable`, `collection-disabled`, `queued`, `in-progress`, `complete`, `ready`,
+`cooldown` or `unreconstructable-history`. Optional `recoveryAction` is `recollect-source`,
+`retry-model-evidence` or `none`; an absent field retains the saved legacy collection interpretation.
+`sourceConnectionId`, `lastModelRetryAt` and `modelRetryNotBefore` capture the exact model source and local
+classification retry policy. No command runs when opening a saved report.
+For `queued`, `notBefore` records when the request becomes eligible for a sweep. For `in-progress`, it
+records the observation lease expiry. `lastAttemptAt` records the observation start, and `lastCompletedAt`
+records the latest successful completion. A retry timestamp does not schedule automatic work for a
+repair-required source. Optional source URLs use validated captured
+coordinates without provider requests. Successful open-thread judgments remain informational. Exclusion
+reasons and advisory minimums do not suppress supported recall/F1. At least one covered source is
+required; missing compatible model attribution still prevents those metrics. Empty denominators remain
+unavailable. Saved v1 and v2 responses preserve their captured values and availability policy.
+
+`POST /api/reviewer-performance/evidence/{aggregateId}/retry` has no body and queues an authorized retained
+aggregate for a subsequent background sweep. It clears the old attempt token without changing evidence,
+scores or retention timestamps. It requires tenant administration and the licensed capability.
+
+| Status | Meaning |
+|---|---|
+| `202` | Queued; collection does not run in the request. |
+| `401` / `403` | Authentication, tenant administration or the licensed capability is missing. |
+| `404` | Aggregate absent or outside the administered client scope. |
+| `409` | Collection disabled or an active lease; `ProblemDetails.detail` states the next action. |
+| `503` | Database analytics services unavailable. |
+
+`POST /api/reviewer-performance/evidence/{aggregateId}/retry-model` takes
+`{"providerScope":"<captured namespace>","connectionId":"<captured connection guid>"}`. It retries bounded
+retained classification for that authorized source only, under the discussion lease and captured cooldown.
+It performs no provider reads or review execution and preserves original source cutoffs. `200` means the
+bounded attempt completed; refresh to inspect its result. `404` protects missing or foreign aggregates.
+`409` describes disabled collection, an active observation, cooldown, or unreconstructable retained proof;
+`503` indicates unavailable analytics services. Authentication and capability requirements match collection
+requeue. Wrong or ambiguous source identities cannot reset or replay another source's concerns.
+
+Model proof loading permits 4,096 jobs, 100,000 checkpoints and concern/decision rows, and 32 MiB each for
+execution proof and concern metadata. Before evaluating any series or matrix, model queries permit at
+most 8,192 concern/model evaluations, 1,000,000 candidate references and 1,000,000 pass references. An
+oversized evaluation returns `400` consistently across grouping and matrix traversal.
 
 `POST /api/reviewer-performance/reports` takes `{"id":"<guid>","name":"<name>","query":{...}}` and
 captures the complete server response. Reuse the same ID and identical body for an idempotent retry; a
@@ -720,6 +775,9 @@ least one authorized client. `GET /api/reviewer-performance/reports` lists up to
 `GET /api/reviewer-performance/reports/{id}` opens the stored response without live recalculation;
 `DELETE` on that path removes the complete report. Every report operation requires access to all contained
 clients, including idempotent capture retries. Missing, expired or unauthorized reports return 404.
+Capture refuses payloads above 32 MiB without truncation. Stored v1 reports keep their original scores;
+absent overall-precision or coverage fields are not reconstructed. Stored v2 reports retain their captured
+coverage policy and exclusion catalog even after source repair or configuration changes.
 
 The misses browse response includes `judgementFailed`. When true, its three judgement flags are
 unavailable decisions, and the thread does not supply an eligible FN verdict.

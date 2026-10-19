@@ -52,6 +52,11 @@ internal sealed partial class AiHumanMissClassifier(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.IndependentConcern && request.Discussion.Length > MaxDiscussionChars)
+        {
+            return new(null, false);
+        }
+
         IResolvedAiChatRuntime runtime;
         try
         {
@@ -65,12 +70,28 @@ internal sealed partial class AiHumanMissClassifier(
         }
         catch (AiPurposeBindingNotConfiguredException ex)
         {
-            LogBindingUnavailable(logger, request.ProviderThreadId, ex);
+            if (request.IndependentConcern)
+            {
+                logger.LogWarning("Human concern judgement unavailable at {Stage}: {FailureType}", "runtime-binding", ex.GetType().Name);
+            }
+            else
+            {
+                LogBindingUnavailable(logger, request.ProviderThreadId, ex);
+            }
+
             return new HumanMissJudgementResult(null, ModelWasAsked: false);
         }
         catch (Exception ex)
         {
-            LogResolutionFailed(logger, request.ProviderThreadId, ex);
+            if (request.IndependentConcern)
+            {
+                logger.LogWarning("Human concern judgement unavailable at {Stage}: {FailureType}", "runtime-resolution", ex.GetType().Name);
+            }
+            else
+            {
+                LogResolutionFailed(logger, request.ProviderThreadId, ex);
+            }
+
             return new HumanMissJudgementResult(null, ModelWasAsked: false);
         }
 
@@ -80,17 +101,17 @@ internal sealed partial class AiHumanMissClassifier(
             var chatClient = runtime.ChatClient ?? throw new InvalidOperationException("The resolved runtime has no chat client.");
             ChatMessage[] messages =
             [
-                new(ChatRole.System, BuildSystemPrompt()),
+                new(ChatRole.System, request.IndependentConcern ? InsightPrompts.HumanConcernSystem() : BuildSystemPrompt()),
                 new(ChatRole.User, BuildUserMessage(request)),
             ];
-            var options = new ChatOptions();
+            var options = new ChatOptions { MaxOutputTokens = request.IndependentConcern ? 1024 : null };
             modelWasAsked = true;
             var response = await chatClient.GetResponseAsync(messages, options, ct).ConfigureAwait(false);
 
             // Recorded before the response is judged usable: the tokens are spent either way.
             await usageRecorder.RecordAsync(request.ClientId, runtime, response, ct).ConfigureAwait(false);
 
-            var judgement = TryParse(response.Text);
+            var judgement = TryParse(response.Text, request.IndependentConcern);
             if (judgement is null)
             {
                 LogUnusableResponse(logger, request.ProviderThreadId);
@@ -104,7 +125,15 @@ internal sealed partial class AiHumanMissClassifier(
         }
         catch (Exception ex)
         {
-            LogCallFailed(logger, request.ProviderThreadId, ex);
+            if (request.IndependentConcern)
+            {
+                logger.LogWarning("Human concern judgement unavailable at {Stage}: {FailureType}", "model-call", ex.GetType().Name);
+            }
+            else
+            {
+                LogCallFailed(logger, request.ProviderThreadId, ex);
+            }
+
             return new HumanMissJudgementResult(null, modelWasAsked);
         }
     }
@@ -116,15 +145,25 @@ internal sealed partial class AiHumanMissClassifier(
 
     private static string BuildUserMessage(HumanMissJudgementRequest request)
     {
-        return InsightPrompts.HumanMissUser(
+        var root = request.IndependentConcern
+            ? (request.ReviewerOwnedRoot
+                ? "The root is an automated finding. Human confirmation must come from the human replies.\n"
+                : "The root is not attributed to ProPR. Determine human participation from the discussion.\n")
+            : string.Empty;
+        return root + InsightPrompts.HumanMissUser(
             new InsightPromptModels.HumanMissUserModel(
                 request.FilePath ?? "the pull request as a whole",
                 request.ThreadResolved ? "resolved" : "still open",
                 Truncate(request.Discussion, MaxDiscussionChars)));
     }
 
-    private static HumanMissJudgement? TryParse(string? responseText)
+    private static HumanMissJudgement? TryParse(string? responseText, bool independent = false)
     {
+        if (independent && responseText?.Length > 8192)
+        {
+            return null;
+        }
+
         var json = ExtractJsonObject(responseText);
         if (json is null)
         {
@@ -149,6 +188,17 @@ internal sealed partial class AiHumanMissClassifier(
                 return null;
             }
 
+            var confirmed = true;
+            var single = true;
+            if (independent && (!TryReadBool(root, "isHumanConfirmed", out confirmed) || !TryReadBool(root, "isSingleConcern", out single)
+                                                                                      || !root.TryGetProperty("confidence", out var requiredConfidence) ||
+                                                                                      requiredConfidence.ValueKind != JsonValueKind.Number ||
+                                                                                      !requiredConfidence.TryGetDouble(out var strictConfidence)
+                                                                                      || !double.IsFinite(strictConfidence) || strictConfidence is < 0 or > 1))
+            {
+                return null;
+            }
+
             var confidence = root.TryGetProperty("confidence", out var confidenceElement)
                              && confidenceElement.ValueKind == JsonValueKind.Number
                              && confidenceElement.TryGetDouble(out var parsed)
@@ -160,7 +210,7 @@ internal sealed partial class AiHumanMissClassifier(
                 ? Truncate(rationaleElement.GetString() ?? string.Empty, MaxRationaleChars)
                 : string.Empty;
 
-            return new HumanMissJudgement(isSubstantive, wasActedOn, isInScope, confidence, rationale);
+            return new HumanMissJudgement(isSubstantive, wasActedOn, isInScope, confidence, rationale, confirmed, single);
         }
         catch (JsonException)
         {

@@ -104,7 +104,12 @@ internal sealed class ForgejoReviewThreadStatusProvider(
                     AuthorNativeId: item.Comment.User?.Id.ToString(CultureInfo.InvariantCulture))).ToArray(),
                 DetermineStatus(comments, ownership),
                 SourceAnchor: JsonSerializer.Serialize(new { comments[0].Comment.Position, comments[0].Comment.OriginalPosition }),
-                CodeChangedSinceRaised: DetermineCodeChange(comments));
+                CodeChangedSinceRaised: DetermineCodeChange(comments),
+                ConcernAnchor: new()
+                {
+                    RootCommentId = comments[0].Comment.Id > 0 ? comments[0].Comment.Id.ToString(CultureInfo.InvariantCulture) : null,
+                    OriginAt = comments[0].Comment.CreatedAt, FilePath = comments[0].Comment.Path, OriginalScopeProven = false
+                });
         }).ToArray();
         return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
     }

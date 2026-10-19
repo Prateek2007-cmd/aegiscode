@@ -19,6 +19,44 @@ public sealed class GitLabReviewThreadStatusOwnershipTests
 {
     private const string AuthenticatedUsername = "meister-dev";
 
+    [Theory]
+    [InlineData(7, null, "RIGHT", "head")]
+    [InlineData(null, 5, "LEFT", "base")]
+    public async Task ConcernAnchorRetainsTheRootDiffRevisionInsteadOfAReplyPosition(int? newLine, int? oldLine, string side, string commit)
+    {
+        var origin = DateTimeOffset.Parse("2026-10-01T12:00:00Z");
+        var sut = BuildSut(
+            out var client, new
+            {
+                id = "discussion-abc", individual_note = false, notes = new object[]
+                {
+                    new
+                    {
+                        id = 501, body = "Concern", system = false, resolved = true, created_at = origin, author = new { id = 1, username = "human" },
+                        position = new
+                        {
+                            new_path = "new.cs", old_path = "old.cs", new_line = newLine, old_line = oldLine,
+                            head_sha = "head", base_sha = "base", start_sha = "start", position_type = "text"
+                        }
+                    },
+                    new
+                    {
+                        id = 502, body = "Done", system = false, resolved = true, created_at = origin.AddDays(1), author = new { id = 2, username = "other" },
+                        position = new { new_path = "later.cs", new_line = 99, head_sha = "later-head" }
+                    },
+                }
+            });
+        var snapshot = await sut.ReadSnapshotAsync("https://gitlab.example.com", "acme/platform", "101", 42, ThreadOwnershipResolver.None, client);
+        var anchor = Assert.Single(snapshot.Threads).ConcernAnchor;
+        Assert.NotNull(anchor);
+        Assert.True(anchor.IsKnown);
+        Assert.Equal(origin, anchor.OriginAt);
+        Assert.Equal(commit, anchor.CommitSha);
+        Assert.Equal(side, anchor.Side);
+        Assert.Equal(newLine ?? oldLine, anchor.StartLine);
+        Assert.Equal(newLine.HasValue ? "new.cs" : "old.cs", anchor.FilePath);
+    }
+
     [Fact]
     public async Task GetReviewerThreadStatusesAsync_ProvenanceRecordsTheFirstNote_IncludesTheDiscussion()
     {

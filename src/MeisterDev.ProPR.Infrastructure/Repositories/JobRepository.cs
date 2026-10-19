@@ -905,9 +905,20 @@ public sealed partial class JobRepository(
     public async Task AddFileResultAsync(ReviewFileResult result, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await using var transaction = result.ModelEvidence is not null && db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
+        if (result.ModelEvidence is not null && db.Database.IsNpgsql())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM review_jobs WHERE id={result.JobId} FOR UPDATE", ct);
+        }
+
+        await this.FenceModelEvidenceAsync(db, result, ct);
         db.ReviewFileResults.Add(result);
         await db.SaveChangesAsync(ct);
         await RefreshReviewedFileCountAsync(db, result.JobId, ct).ConfigureAwait(false);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
     }
 
     /// <inheritdoc />
@@ -918,9 +929,20 @@ public sealed partial class JobRepository(
     public async Task UpdateFileResultAsync(ReviewFileResult result, CancellationToken ct = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(ct);
+        await using var transaction = result.ModelEvidence is not null && db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
+        if (result.ModelEvidence is not null && db.Database.IsNpgsql())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM review_jobs WHERE id={result.JobId} FOR UPDATE", ct);
+        }
+
+        await this.FenceModelEvidenceAsync(db, result, ct);
         db.ReviewFileResults.Update(result);
         await db.SaveChangesAsync(ct);
         await RefreshReviewedFileCountAsync(db, result.JobId, ct).ConfigureAwait(false);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
     }
 
     /// <summary>

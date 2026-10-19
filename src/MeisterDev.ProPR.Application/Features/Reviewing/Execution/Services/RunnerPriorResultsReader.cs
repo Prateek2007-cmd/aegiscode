@@ -54,7 +54,7 @@ public sealed class RunnerPriorResultsReader(
                 // The flag survives the wire so synthesis suppresses carried candidates and labels the
                 // carried files exactly as it would in process.
                 result.IsCarriedForward,
-                result.WithheldFindings))
+                result.WithheldFindings, result.ModelEvidence is { } proof ? proof with { PendingFragments = [], RetainedTransportDigests = [] } : null))
         ]);
     }
 }

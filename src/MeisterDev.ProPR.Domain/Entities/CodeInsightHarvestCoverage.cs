@@ -13,4 +13,10 @@ public sealed class CodeInsightHarvestCoverage
     public DateTimeOffset ObservedAt { get; set; }
     public bool AllHumanThreadsResolved { get; set; }
     public bool EnumerationComplete { get; set; }
+
+    /// <summary>Independent retention of all human concerns for model attribution.</summary>
+    public bool? ModelConcernEnumerationComplete { get; set; }
+
+    public DateTimeOffset? ModelConcernObservedAt { get; set; }
+    public Guid? ModelConcernConnectionId { get; set; }
 }

@@ -13,6 +13,8 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitLab.Support;
 internal sealed class GitLabReviewSourcePolicy : ReviewSourcePolicyBase, IReviewSourcePolicy
 {
     public override ScmProvider Provider => ScmProvider.GitLab;
+
+    public string? CreateCapturedReviewUrl(CapturedReviewUrlCoordinates coordinates) => CapturedReviewWebUrls.Repository(coordinates, "-/merge_requests");
     public bool RequiresOrganizationScope => false;
 
     public bool IsSelectedScopeCompatible(string connectionHost, string scope) =>

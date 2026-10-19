@@ -78,7 +78,8 @@ public sealed record RunnerJobManifest(
     RunnerReviewBehaviour? Behaviour = null,
     IReadOnlyList<RunnerLinkedItem>? LinkedItems = null,
     string? ServedBy = null,
-    bool? ParallelReviewExecutionLicensed = null);
+    bool? ParallelReviewExecutionLicensed = null,
+    int AttemptNumber = 1);
 
 /// <summary>
 ///     One work item linked to the review, reduced to the provider-neutral summary the prompt is built
@@ -205,7 +206,10 @@ public sealed record RunnerReviewTarget(
     string HeadSha,
     string BaseSha,
     IReadOnlyList<string> ChangedPaths,
-    IReadOnlyList<RunnerReviewThread> ExistingThreads);
+    IReadOnlyList<RunnerReviewThread> ExistingThreads,
+    string? ProviderScope = null,
+    Guid? SourceConnectionId = null,
+    string? RevisionKey = null);
 
 /// <summary>
 ///     One conversation thread on the review, reduced to what a reviewer reads: where it sits, whether it
@@ -295,7 +299,9 @@ public sealed record RunnerModelBinding(
     bool SupportsPromptCaching,
     bool SupportsToolUse,
     bool SupportsStructuredOutput,
-    bool SupportsLowReasoningEffort = false);
+    bool SupportsLowReasoningEffort = false,
+    Guid? ConnectionId = null,
+    Guid? ConfiguredModelId = null);
 
 /// <summary>Prompt configuration for this review, resolved from client configuration at dispatch.</summary>
 /// <param name="Language">The output language contract for findings, when the client sets one.</param>

@@ -27,6 +27,81 @@ namespace MeisterDev.ProPR.Application.Tests.Features.Crawling.Execution;
 
 public sealed class DiscussionSynchronizationServiceTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ThrownModelPreparationOrFinalizationDoesNotBlockLegacyConsumers(bool preparation)
+    {
+        var harness = new Harness();
+        var models = Substitute.For<ICodeInsightModelConcernObserver>();
+        models.PrepareAsync(Arg.Any<CodeInsightDiscussionBatch>(), Arg.Any<CancellationToken>()).Returns("models");
+        models.ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(new ModelConcernAcknowledgment(true, true));
+        models.CompleteEnumerationAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+            Arg.Any<bool>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>()).Returns(true);
+        if (preparation)
+        {
+            models.PrepareAsync(Arg.Any<CodeInsightDiscussionBatch>(), Arg.Any<CancellationToken>())
+                .ThrowsAsync(new InvalidOperationException("proof reader unavailable"));
+        }
+        else
+        {
+            models.CompleteEnumerationAsync(
+                    Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+                    Arg.Any<bool>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+                .ThrowsAsync(new InvalidOperationException("proof finalization unavailable"));
+        }
+
+        harness.Models = models;
+        var snapshot = await harness.ObserveAsync();
+        Assert.True(snapshot.CurrentConsumersRetained);
+        await harness.Misses.Received(2).ObserveCurrentAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task FailedModelAttributionKeepsLegacyCoverageAndRetriesOnlyItsOwnConsumer()
+    {
+        var harness = new Harness();
+        var models = Substitute.For<ICodeInsightModelConcernObserver>();
+        models.PrepareAsync(Arg.Any<CodeInsightDiscussionBatch>(), Arg.Any<CancellationToken>()).Returns("model-dependencies-v1");
+        models.ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(new ModelConcernAcknowledgment(true, false));
+        models.CompleteEnumerationAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+            Arg.Any<bool>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>()).Returns(true);
+        harness.Models = models;
+        var service = harness.CreateService();
+        var observed = await service.ObserveAsync(harness.Request);
+        await models.Received(2).ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+        Assert.True(observed.CurrentConsumersRetained);
+        Assert.True(harness.State.CompletedGeneration < harness.State.RequestedGeneration || harness.State.LastFullReconciledAt is null);
+        harness.Misses.ClearReceivedCalls();
+        models.ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(new ModelConcernAcknowledgment(true, true));
+        await service.ObserveAsync(harness.Request);
+        await harness.Misses.DidNotReceive().ObserveCurrentAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+        await models.Received(4).ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ChangedModelDependencyReplaysOnlyModelConsumerEvenWithUnchangedThreads()
+    {
+        var harness = new Harness();
+        var models = Substitute.For<ICodeInsightModelConcernObserver>();
+        var version = "one";
+        models.PrepareAsync(Arg.Any<CodeInsightDiscussionBatch>(), Arg.Any<CancellationToken>()).Returns(_ => version);
+        models.ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(new ModelConcernAcknowledgment(true, true));
+        models.CompleteEnumerationAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+            Arg.Any<bool>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>()).Returns(true);
+        harness.Models = models;
+        var service = harness.CreateService();
+        await service.ObserveAsync(harness.Request);
+        harness.Misses.ClearReceivedCalls();
+        version = "two";
+        await service.ObserveAsync(harness.Request);
+        await models.Received(4).ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+        await harness.Misses.DidNotReceive().ObserveCurrentAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task UnchangedContentSkipsThreadConsumersAndStillRecordsPrFreshness()
     {
@@ -935,6 +1010,7 @@ public sealed class DiscussionSynchronizationServiceTests
         public CodeInsightFindingView[] Findings = [];
         public bool EnableMemory, ProjectReviewerOwnership, LeaseUnavailable;
         public readonly ICodeInsightMissHarvester Misses = Substitute.For<ICodeInsightMissHarvester>();
+        public ICodeInsightModelConcernObserver? Models;
 
         public readonly PullRequestSynchronizationRequest Request = new()
         {
@@ -1049,7 +1125,8 @@ public sealed class DiscussionSynchronizationServiceTests
                 store, reader, connections, registry ?? LocalScmPolicies.Registry,
                 NullLogger<DiscussionSynchronizationService>.Instance, Microsoft.Extensions.Options.Options.Create(new DiscussionSynchronizationOptions()),
                 origins: this.Origins, archive: this.Archive, batches: batches, misses: this.Misses, coverage: this.Coverage, dispositions: this.Dispositions,
-                memory: this.EnableMemory ? this.Memory : null, scans: this.EnableMemory ? this.Scans : null, timeProvider: timeProvider);
+                memory: this.EnableMemory ? this.Memory : null, scans: this.EnableMemory ? this.Scans : null, timeProvider: timeProvider,
+                modelConcerns: this.Models);
             return service;
         }
     }

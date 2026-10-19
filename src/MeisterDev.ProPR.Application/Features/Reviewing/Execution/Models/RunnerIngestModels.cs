@@ -3,6 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using MeisterDev.ProPR.Domain.ValueObjects;
+using System.Text.Json.Serialization;
 
 namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 
@@ -23,10 +24,12 @@ public sealed record RunnerIngestBatch(
     string IdempotencyKey,
     IReadOnlyList<RunnerTraceEvent> Events,
     IReadOnlyList<RunnerFileOutcome> FileResults,
-    IReadOnlyList<RunnerSpendRecord> Spend)
+    IReadOnlyList<RunnerSpendRecord> Spend,
+    [property: JsonConverter(typeof(ModelReviewManifestListJsonConverter))]
+    IReadOnlyList<ModelReviewManifest>? ModelManifests = null)
 {
     /// <summary>How many individual items the batch carries.</summary>
-    public int ItemCount => this.Events.Count + this.FileResults.Count + this.Spend.Count;
+    public int ItemCount => this.Events.Count + this.FileResults.Count + this.Spend.Count + (this.ModelManifests?.Count ?? 0);
 }
 
 /// <summary>One trace event produced by a remote execution.</summary>
@@ -60,7 +63,11 @@ public sealed record RunnerFileOutcome(
     IReadOnlyList<ReviewComment>? Comments = null,
     bool IsExcluded = false,
     string? ExclusionReason = null,
-    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null);
+    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null,
+    [property: JsonConverter(typeof(ModelReviewEvidenceJsonConverter))]
+    ModelReviewEvidence? ModelEvidence = null,
+    [property: JsonConverter(typeof(ModelReviewProofFragmentJsonConverter))]
+    ModelReviewProofFragment? ModelEvidenceFragment = null);
 
 /// <summary>What one relayed completion cost.</summary>
 /// <remarks>

@@ -20,6 +20,67 @@ namespace MeisterDev.ProPR.CodeInsights.Tests.Metrics;
 
 public sealed class CodeInsightProviderEvidenceBackfillTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task RepairRequiredSourceFailuresDetermineTheAggregateRegardlessOfOrder(bool repairFirst, bool missingCoordinates)
+    {
+        await using var h = new Harness();
+        var other = new ReviewJob(Guid.NewGuid(), h.Job.ClientId, "https://ado.example.test/other", "project", "repo", 1, 1);
+        h.Db.Add(other);
+        await h.Db.SaveChangesAsync();
+        var repair = new CodeInsightHistoricalRefreshSource(
+            "AzureDevOps:https://ado.example.test/other",
+            missingCoordinates ? null : other.Id, CodeInsightHistoricalGap.None);
+        h.Claims(h.Claim with { Sources = repairFirst ? [repair, h.Claim.Sources[0]] : [h.Claim.Sources[0], repair] });
+        h.Observer.RefreshAsync(Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<CancellationToken>()).Returns(call =>
+            call.ArgAt<CodeInsightProviderEvidenceTarget>(0).ProviderScope == repair.ProviderScope
+                ? new CodeInsightObservationResult(
+                    CodeInsightObservationStatus.Unavailable,
+                    UnavailableReason: CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable,
+                    Stage: CodeInsightObservationStage.ConnectionLookup)
+                : new CodeInsightObservationResult(
+                    CodeInsightObservationStatus.Unavailable,
+                    UnavailableReason: CodeInsightObservationUnavailableReason.ProviderReadFailed, Stage: CodeInsightObservationStage.ProviderRead));
+
+        Assert.Equal(new CodeInsightProviderEvidenceBackfillResult(1, 0, 1, 0), await h.Sut.SweepAsync(1));
+
+        var reason = missingCoordinates
+            ? CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable
+            : CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable;
+        await h.Store.Received(1).RecordResultAsync(
+            h.Claim.AggregateId, h.Claim.AttemptId,
+            Arg.Is<CodeInsightObservationResult>(result => result.UnavailableReason == reason),
+            Arg.Any<DateTimeOffset>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+        await h.Observer.Received(missingCoordinates ? 1 : 2).RefreshAsync(Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ObservationWithoutTimestampLogsItsAcknowledgmentFailure()
+    {
+        await using var h = new Harness();
+        h.Claims(h.Claim);
+        h.Observer.RefreshAsync(Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<CancellationToken>())
+            .Returns(new CodeInsightObservationResult(CodeInsightObservationStatus.Observed));
+        var logger = new RecoveryCapturingLogger<CodeInsightProviderEvidenceBackfill>();
+        using var services = new ServiceCollection().AddSingleton(h.Store).AddSingleton(h.Db).AddSingleton(h.Gate).AddSingleton(h.Observer)
+            .AddSingleton(LocalScmPolicies.Registry).AddSingleton(Monitor(new CodeInsightsOptions()))
+            .AddSingleton<Microsoft.Extensions.Logging.ILogger<CodeInsightProviderEvidenceBackfill>>(logger).BuildServiceProvider();
+        var sut = ActivatorUtilities.CreateInstance<CodeInsightProviderEvidenceBackfill>(services);
+        Assert.Equal(new CodeInsightProviderEvidenceBackfillResult(1, 0, 1, 0), await sut.SweepAsync(1));
+        var log = Assert.Single(logger.Entries, entry => entry.Fields.ContainsKey("ProviderScope"));
+        Assert.Equal(CodeInsightObservationStage.ObservationAcknowledgment, log.Fields["Stage"]);
+        Assert.Equal(CodeInsightObservationUnavailableReason.EvidenceRetentionFailed, log.Fields["Reason"]);
+        Assert.Equal(h.Claim.Key.PullRequestId, log.Fields["PullRequestId"]);
+        Assert.Null(log.Exception);
+        await h.Store.Received(1).RecordResultAsync(
+            h.Claim.AggregateId, h.Claim.AttemptId,
+            Arg.Is<CodeInsightObservationResult>(result => result.Stage == CodeInsightObservationStage.ObservationAcknowledgment),
+            Arg.Any<DateTimeOffset>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task WholeSweepDeadlineCancelsObservationAndWaitsForCleanupWithoutAnotherClaim()
     {
@@ -160,8 +221,10 @@ public sealed class CodeInsightProviderEvidenceBackfillTests
         Assert.Equal(2, claims);
     }
 
-    [Fact]
-    public async Task CapturedJobsObserveEveryScopeAndOnlyThenCompleteTheClaim()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CapturedJobsObserveEveryScopeAndOnlyThenCompleteTheClaim(bool noAutomaticGaps)
     {
         await using var h = new Harness();
         var other = new ReviewJob(Guid.NewGuid(), h.Job.ClientId, "https://ado.example.test/other", "project", "repo", 1, 1);
@@ -169,10 +232,13 @@ public sealed class CodeInsightProviderEvidenceBackfillTests
         await h.Db.SaveChangesAsync();
         var claim = h.Claim with
         {
+            Gaps = noAutomaticGaps ? CodeInsightHistoricalGap.None : h.Claim.Gaps,
             Sources =
             [
-                h.Claim.Sources[0],
-                new CodeInsightHistoricalRefreshSource("AzureDevOps:https://ado.example.test/other", other.Id, CodeInsightHistoricalGap.HarvestCoverage),
+                h.Claim.Sources[0] with { Gaps = noAutomaticGaps ? CodeInsightHistoricalGap.None : h.Claim.Sources[0].Gaps },
+                new CodeInsightHistoricalRefreshSource(
+                    "AzureDevOps:https://ado.example.test/other", other.Id,
+                    noAutomaticGaps ? CodeInsightHistoricalGap.None : CodeInsightHistoricalGap.HarvestCoverage),
             ],
         };
         h.Claims(claim);

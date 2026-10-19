@@ -38,4 +38,16 @@ public interface ICodeInsightHistoricalRefreshStore
     Task<bool> RecordResultAsync(
         Guid aggregateId, Guid attemptId, CodeInsightObservationResult observation,
         DateTimeOffset completedAt, TimeSpan retryCooldown, CancellationToken ct = default);
+
+    /// <summary>Queues an authorized retained aggregate without changing evidence or an active claim.</summary>
+    Task<CodeInsightHistoricalRequeueResult> RequeueAsync(
+        Guid aggregateId, IReadOnlyCollection<Guid> authorizedClients, DateTimeOffset now, CancellationToken ct = default);
+}
+
+public enum CodeInsightHistoricalRequeueResult
+{
+    Queued,
+    NotFound,
+    InProgress,
+    CollectionDisabled,
 }

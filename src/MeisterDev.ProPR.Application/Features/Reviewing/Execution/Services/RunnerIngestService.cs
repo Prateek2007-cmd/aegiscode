@@ -53,6 +53,16 @@ public sealed class RunnerIngestService(
 
         var expected = await ledger.GetExpectedSequenceAsync(call.JobId, ct);
 
+        if (batch.Sequence <= expected && (batch.FileResults.Any(file => file.ModelEvidence is not null || file.ModelEvidenceFragment is not null) ||
+                                           batch.ModelManifests?.Count > 0))
+        {
+            // Proof writes are idempotent and precede the receipt. Replaying a receipt retries proof retention.
+            if (!await writer.WriteModelEvidenceAsync(call, batch.FileResults, batch.ModelManifests ?? [], ct))
+            {
+                return new(RunnerIngestOutcome.NotAuthorized, expected, RunnerCallRefusal.SupersededGeneration);
+            }
+        }
+
         // Already applied. Answered as success, not as an error: a resend after a network failure is
         // ordinary, and an executor that had to special-case it would be carrying error-handling for the
         // most common thing that happens to it.

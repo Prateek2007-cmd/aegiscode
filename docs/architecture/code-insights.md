@@ -28,7 +28,7 @@ flowchart LR
 |---|---|
 | Reviewer findings | ProPR records the producing model, finding type and kind, publication, outcome and duplicate evidence. |
 | Human concerns | ProPR records the discussion, substantive and acted-on judgments, scope, classification and collection coverage. |
-| File reviews | ProPR records which model reviewed a file. This does not establish which human concerns that model missed. |
+| Model opportunities | Versioned checkpoints retain source, revision, assigned file/range, actual model/pass, candidate completeness, terminal disposition and first durable server acceptance. |
 
 Evidence is associated with its client, provider host or organization, repository and pull request.
 Repeated observations of one publication count once; suppressed repeats receive no additional publication
@@ -52,9 +52,12 @@ their identities. They are `PolicyWithheld` observations without provider thread
 to withheld coverage counts. They receive no publication or settled precision credit. Capability and
 client collection-policy checks apply to this evidence through the existing collection path.
 
-Thread observations update current outcomes, including reopened threads. A human concern that matches a
-reviewer finding or contains an AI-authored comment is excluded from miss counts; its recorded judgments
-remain available.
+Thread observations update current outcomes, including reopened threads. Unfiltered Combined retains its
+global reviewer-finding overlap exclusions. A separate consumer retains encrypted independent human
+concerns before those exclusions, including substantive human confirmation in reviewer-owned threads.
+Native original anchors propagate through live collection, historical collection and optional archives.
+Its retention and enumeration acknowledgments are independent of legacy misses and outcomes; an optional
+consumer failure cannot suppress successful legacy coverage.
 
 Current thread observations receive neutral resolution intent from provider policies. Providerless
 stored discussion text uses an explicit compatibility decoder for the historical
@@ -77,9 +80,12 @@ pending-update status separately from the response capture time.
 
 The catch-up worker projects findings and seals eligible pull requests before refreshing retained
 provider evidence, including closed pull requests and reviews with no findings. Durable claims and
-leases prevent stale completion; unavailable evidence retries after a cooldown. Cancellation and lease
-expiry prevent completion, and the worker waits for active operation cleanup. Attempt metadata does not
-extend retention or change scores. [Configuration](../operate/configuration.md#code-insights) lists the
+leases prevent stale completion. Retryable failures use a configured cooldown; missing usable connections,
+source coordinates or provider identity, unsupported historical collection and missing observer dependencies
+require repair and explicit requeue. Both database selection paths remove repair-required sources before
+applying claim limits. Cancellation and lease expiry prevent completion, and the worker waits for active
+operation cleanup. Attempt metadata does not extend retention or change scores.
+[Configuration](../operate/configuration.md#code-insights) lists the
 batch and time limits.
 
 Candidate selection and managed gap qualification use the same whitespace rules for missing evidence
@@ -96,6 +102,16 @@ Source observation timestamps mark the read start; completion timestamps are sto
 This orders concurrent observations so a delayed response cannot replace newer retained evidence.
 Unexpected historical failures log the unavailable stage, exception type and numeric diagnostic code
 without exception messages, stack traces or payloads.
+Each sweep logs attempted, observed, unavailable and disabled totals. Failed sources log their bounded
+reason, stage and recovery disposition, including failures to acknowledge retained evidence.
+
+Tenant administrators can requeue an authorized aggregate for a subsequent bounded sweep. Requeue clears
+the previous attempt token, preserves evidence and retention timestamps, and rejects disabled collection
+or an active lease. A cleared attempt token, a retained eligibility time and no failure reason identify an
+explicit queued request. Captured recovery metadata distinguishes queued, active and completed attempts.
+The live exclusions dialog refreshes progress within its inspected measurement. A queued request performs no provider collection. Missing usable local configuration
+requires repair; a connection lookup exception remains retryable. Generic provider errors do not establish
+remote repository deletion.
 
 Each publication, human concern and source requires acknowledged retention before a claim completes.
 Partial enumeration or missing identity keeps collection unavailable. Infrastructure selects ordinary
@@ -108,19 +124,75 @@ dimensions and judged discussion. Changed evidence uses bounded classification. 
 populations consume no further provider or model calls. Live projections refresh; initial dispositions,
 sealed measurements and saved reports retain their stored values.
 
-Precision, recall and F1 are unavailable when their required evidence or denominator is missing. Incomplete
-collection prevents supported recall. Model-specific precision is supported; model-specific recall and F1
-lack compatible human-miss attribution. Recall and F1 by type or kind require compatible miss classification.
-The API retains raw counts and scoring premises. The user interface presents metric ranges and evidence
-limitations.
+The range calculation retains the identity of each source pull request before coalescing counts or applying finding
+dimensions. Complete enumeration, successful human judgments and compatible attribution determine the
+covered population. Unsupported sources are excluded from all TP, FP and FN inputs for recall and F1.
+An unsuccessful refresh does not invalidate sufficient retained evidence. Successfully judged open
+threads remain provisional and informational.
+
+The default advisory minimums are 80% covered source pull requests and one covered pull request. Both are
+configurable and captured with each response. Measurements below either advisory retain their supported
+scores and display the coverage warning. Recall and F1 require at least one covered source and a nonempty
+metric denominator. Zero misses is valid. Model recall and F1 qualify each effective selected model set
+against original native concerns and complete applicable opportunities. Selected-model Combined uses any
+compatible selected detector and requires known non-detection from every applicable selected opportunity.
+Canonical concerns and source PR coverage are distinct unions, never sums of per-model populations.
+Type or kind restrictions exclude sources with incompatible settled-miss classification before filtering
+can remove those misses.
+
+Calculation version `reviewer-performance-v2` returns coherent covered scenarios in `score` and independent
+overall publication precision in `overallPrecision`. Each view captures a deduplicated exclusion catalog;
+point references identify its excluded sources, reasons and recovery metadata. Optional browser links use
+validated, unambiguous captured coordinates within the same database snapshot. Metric reads perform no
+provider or model calls. The user interface distinguishes inactive periods from unsupported scores and
+shows coverage for the inspected point or window end.
+
+Capture schema `model-opportunity-v1` is independent of calculation version. Shared generation records
+valid empty output and raw candidates before verification and publication. Per-file assignments close
+atomically; partial preparation cannot establish non-assignment. A complete per-file checkpoint cannot
+establish non-detection when the global file inventory is incomplete. Each actual configured runtime retains
+its own connection/model IDs even when cohort labels coincide. Local checkpoints and the runner use the
+existing result stores. Server acceptance validates dispatched identity, revision, attempt and current
+lease generation. Optional proof failures preserve ordinary results. Bounded proof fragments assemble
+only after complete checksum validation; the complete durable assembly establishes acceptance. Retry
+batches stay immutable until acknowledged so new ordinary outcomes cannot be lost to replay.
+
+The catch-up worker reconciles positively retained generation proof, including zero-result reviews,
+through existing exposure and projection paths. Historical configuration, protocol silence and absent
+findings cannot reconstruct missing certificates. PR-wide generation retains positive candidates but
+currently lacks a complete assigned line-level scope for negative proof. Cross-revision reuse without
+complete relevant-context proof remains informational. Metric reads invoke no collection or matching.
+
+Independent concern matching uses bounded explicit candidate identities, allowlisted structured decisions,
+classifier versions and exact source/candidate fingerprints. A negative requires a complete evaluated set.
+Native concern identity includes both thread and root-comment identity within the source. Editing a
+concern invalidates its equivalence links and cached inverse links; bounded graph overflow excludes the
+affected source. Equivalence in one candidate chunk does not stop later detection matching.
+Successful A survives unrelated B failures. Provider enumeration and concern classification have separate
+completeness. A newer failed enumeration revokes model completeness without changing retained native
+cutoffs or legacy coverage. Earlier failed applicable passes remain unknown beside a completed pass;
+only positively later executions are ignored for the earlier concern. Retained retries use the original encrypted source and observation cutoff under the existing
+discussion lease, exact provider namespace/connection and captured cooldown. They do not rerun reviews or
+advance human enumeration time. Retry attempts are capped automatically; an authorized explicit retry can
+reset failed attempts after repair. Missing original proof is nonretryable.
+Permanent classifier input or equivalence limits offer no unchanged retry. Catch-up excludes unindexable
+paths before its job limit and checks whole-source replay eligibility before consuming retry slots.
+
+Model queries bound raw execution and concern metadata to 32 MiB each, 4,096 jobs and 100,000 checkpoints
+and concern/decision rows. Deterministic preflight permits at most 8,192 concern/model evaluations and
+1,000,000 candidate or pass references per snapshot; exceeding this budget rejects the query before
+series or matrix traversal. Immutable candidate signatures are shared across concern evaluations.
 
 The [API reference](../reference/api.md#reviewer-performance) defines query limits and request fields.
 
 ## Saved reports and deletion
 
-A saved report captures its scope, counts, scoring premises, results and evidence cutoff. Opening the report
-uses that captured response without recalculation. Its evidence update time and pending-update status
-describe the capture. Every report operation requires access to all included clients.
+A saved report captures its scope, counts, scoring premises, results, coverage policy, exclusion catalog and
+evidence cutoff. Opening the report uses that captured response without recalculation. Its evidence update
+time and pending-update status
+describe the capture. Older reports retain their stored scoring version and identify absent coverage
+metadata. Recovery actions are available only for current evidence. Every report operation requires access
+to all included clients.
 
 | Event | Effect on saved reports |
 |---|---|

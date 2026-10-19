@@ -45,7 +45,9 @@ public sealed partial class ReviewerPerformanceController(
     ICodeInsightHistoryReader? historyReader = null,
     ICodeInsightHistoryImporter? historyImporter = null,
     ReviewerPerformanceRangeReader? rangeReader = null,
-    MeisterDev.ProPR.CodeInsights.Persistence.ReviewerPerformanceReportStore? reportStore = null) : ControllerBase
+    MeisterDev.ProPR.CodeInsights.Persistence.ReviewerPerformanceReportStore? reportStore = null,
+    ICodeInsightHistoricalRefreshStore? historicalRefreshStore = null,
+    IModelEvidenceMaintenance? modelEvidenceMaintenance = null) : ControllerBase
 {
     /// <summary>
     ///     Sealed pull requests a correctness metric needs before a caller should present it as precise.

@@ -59,6 +59,130 @@ public sealed class CodeInsightHistoricalRefreshStoreTests(PostgresContainerFixt
     }
 
     [Fact]
+    public async Task RequeueRacingAClaimCannotInvalidateTheNewActiveAttempt()
+    {
+        var pr = this.Seed(3002);
+        await this._db.SaveChangesAsync();
+        await using var claimDb = new MeisterProPRDbContext(this._options);
+        await using var retryDb = new MeisterProPRDbContext(this._options);
+        var claim = this.Store(claimDb).ClaimAsync(1, this._now, TimeSpan.FromMinutes(15));
+        var retry = this.Store(retryDb).RequeueAsync(pr.Id, [this._client], this._now);
+        await Task.WhenAll(claim, retry);
+        var claims = await claim;
+        if (claims.Count == 0)
+        {
+            Assert.Equal(CodeInsightHistoricalRequeueResult.Queued, await retry);
+            claims = await this.Store(this._db).ClaimAsync(1, this._now.AddSeconds(1), TimeSpan.FromMinutes(15));
+        }
+
+        var active = Assert.Single(claims);
+        Assert.Contains(await retry, new[] { CodeInsightHistoricalRequeueResult.Queued, CodeInsightHistoricalRequeueResult.InProgress });
+        await this._db.Entry(pr).ReloadAsync();
+        Assert.Equal(active.AttemptId, pr.LastHistoricalRefreshAttemptId);
+        Assert.Equal(
+            CodeInsightHistoricalRequeueResult.InProgress,
+            await this.Store(this._db).RequeueAsync(pr.Id, [this._client], this._now.AddSeconds(2)));
+    }
+
+    [Theory]
+    [InlineData("SourceCoordinatesUnavailable", false)]
+    [InlineData("ProviderConnectionUnavailable", false)]
+    [InlineData("ProviderIdentityUnavailable", false)]
+    [InlineData("HistoricalCapabilityUnsupported", false)]
+    [InlineData("ObserverUnavailable", false)]
+    [InlineData("OwnershipUnavailable", true)]
+    [InlineData("ProviderReadFailed", true)]
+    [InlineData("ProcessingDeadlineExceeded", true)]
+    [InlineData("FutureFailure", true)]
+    public async Task StoredFailureReasonsUseTheSharedAutomaticRetryPolicy(string reason, bool retryable)
+    {
+        var pr = this.Seed(3003);
+        pr.LastHistoricalRefreshReason = reason;
+        await this._db.SaveChangesAsync();
+        var claimed = await this.Store(this._db).ClaimAsync(1, this._now, TimeSpan.FromMinutes(15));
+        Assert.Equal(retryable ? 1 : 0, claimed.Count);
+    }
+
+    [Fact]
+    public async Task RequeuePreservesEvidenceAndFencesThePreviousAttempt()
+    {
+        var pr = this.Seed(3000);
+        pr.LastHistoricalRefreshCompletedAt = this._now.AddDays(-10);
+        await this._db.SaveChangesAsync();
+        var claim = Assert.Single(await this.Store(this._db).ClaimAsync(1, this._now, TimeSpan.FromMinutes(15)));
+        Assert.True(
+            await this.Store(this._db).RecordResultAsync(
+                pr.Id, claim.AttemptId,
+                new(CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable),
+                this._now.AddSeconds(1), TimeSpan.FromHours(6)));
+        var before = await this._db.CodeInsightPullRequests.AsNoTracking().SingleAsync(p => p.Id == pr.Id);
+        var findings = await this._db.CodeInsightFindings.CountAsync(f => f.CodeInsightPullRequestId == pr.Id);
+        var dirty = await this._db.CodeInsightPerformanceDirty.CountAsync(d => d.CodeInsightPullRequestId == pr.Id);
+        Assert.Equal(
+            CodeInsightHistoricalRequeueResult.NotFound,
+            await this.Store(this._db).RequeueAsync(pr.Id, [Guid.NewGuid()], this._now.AddSeconds(2)));
+        Assert.Equal(
+            CodeInsightHistoricalRequeueResult.Queued,
+            await this.Store(this._db).RequeueAsync(pr.Id, [this._client], this._now.AddSeconds(2)));
+        var after = await this._db.CodeInsightPullRequests.AsNoTracking().SingleAsync(p => p.Id == pr.Id);
+        Assert.Null(after.LastHistoricalRefreshAttemptId);
+        Assert.Null(after.LastHistoricalRefreshReason);
+        Assert.Equal(before.LastHistoricalRefreshAttemptAt, after.LastHistoricalRefreshAttemptAt);
+        Assert.Equal(before.LastHistoricalRefreshCompletedAt, after.LastHistoricalRefreshCompletedAt);
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
+        Assert.Equal(before.LastActivityAt, after.LastActivityAt);
+        Assert.Equal(findings, await this._db.CodeInsightFindings.CountAsync(f => f.CodeInsightPullRequestId == pr.Id));
+        Assert.Equal(dirty, await this._db.CodeInsightPerformanceDirty.CountAsync(d => d.CodeInsightPullRequestId == pr.Id));
+        Assert.False(
+            await this.Store(this._db).RecordResultAsync(
+                pr.Id, claim.AttemptId,
+                new(CodeInsightObservationStatus.Observed, this._now), this._now.AddSeconds(1), TimeSpan.FromHours(6)));
+        Assert.Equal(pr.Id, Assert.Single(await this.Store(this._db).ClaimAsync(1, this._now.AddSeconds(3), TimeSpan.FromMinutes(15))).AggregateId);
+    }
+
+    [Fact]
+    public async Task RequeueRejectsActiveClaimsAndDisabledClients()
+    {
+        var pr = this.Seed(3001);
+        await this._db.SaveChangesAsync();
+        var claim = Assert.Single(await this.Store(this._db).ClaimAsync(1, this._now, TimeSpan.FromMinutes(15)));
+        Assert.Equal(
+            CodeInsightHistoricalRequeueResult.InProgress,
+            await this.Store(this._db).RequeueAsync(pr.Id, [this._client], this._now.AddSeconds(1)));
+        this._gate.IsCollectionEnabledAsync(this._client, Arg.Any<CancellationToken>()).Returns(false);
+        Assert.Equal(
+            CodeInsightHistoricalRequeueResult.CollectionDisabled,
+            await this.Store(this._db).RequeueAsync(pr.Id, [this._client], this._now.AddHours(1)));
+        await this._db.Entry(pr).ReloadAsync();
+        Assert.Equal(claim.AttemptId, pr.LastHistoricalRefreshAttemptId);
+    }
+
+    [Theory]
+    [InlineData("SourceCoordinatesUnavailable")]
+    [InlineData("ProviderConnectionUnavailable")]
+    public async Task RepairRequiredSourcesDoNotConsumeTheBoundedClaimScan(string reason)
+    {
+        foreach (var number in Enumerable.Range(1000, 251))
+        {
+            var blocked = this.Seed(number);
+            blocked.LastHistoricalRefreshReason = reason;
+        }
+
+        var retryable = this.Seed(2000);
+        retryable.LastHistoricalRefreshAttemptAt = this._now.AddDays(-1);
+        retryable.LastHistoricalRefreshReason = "ProviderReadFailed";
+        await this._db.SaveChangesAsync();
+        var claimed = Assert.Single(await this.Store(this._db).ClaimAsync(1, this._now, TimeSpan.FromMinutes(15)));
+        Assert.Equal(retryable.Id, claimed.AggregateId);
+        Assert.True(
+            await this.Store(this._db).RecordResultAsync(
+                claimed.AggregateId, claimed.AttemptId,
+                new(CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProviderReadFailed),
+                this._now.AddSeconds(1), TimeSpan.FromHours(6)));
+        Assert.Empty(await this.Store(this._db).ClaimAsync(250, this._now.AddHours(2), TimeSpan.FromMinutes(15)));
+    }
+
+    [Fact]
     public async Task BoundedClaimsIncludeSealedHistoryAndPersistBeforeExternalWork()
     {
         var rows = Enumerable.Range(1, 4).Select(i => this.Seed(i)).ToList();

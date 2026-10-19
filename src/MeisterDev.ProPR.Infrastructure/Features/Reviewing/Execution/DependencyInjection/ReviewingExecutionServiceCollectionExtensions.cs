@@ -43,6 +43,7 @@ public static class ReviewingExecutionServiceCollectionExtensions
         // The pipeline asks for the narrow store; on the control plane the repository is it. A runner
         // registers a buffering implementation of the same four methods instead.
         services.AddScoped<IReviewFileResultStore>(sp => sp.GetRequiredService<IJobRepository>());
+        services.AddScoped<IModelReviewEvidenceReader, MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Persistence.ModelReviewEvidenceReader>();
         // TryAdd so the offline harness, which has no database, can register its own in-memory claiming.
         services.TryAddScoped<IReviewJobLeaseStore>(sp => new ReviewJobLeaseStore(
             sp.GetRequiredService<MeisterProPRDbContext>(),

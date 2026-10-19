@@ -17,7 +17,9 @@ internal static class ReviewerPerformanceViewBuilder
         ReviewerPerformanceViewQuery scope,
         int viewIndex,
         Guid[] clients,
-        ReviewerPerformanceViewSnapshot snapshot)
+        ReviewerPerformanceViewSnapshot snapshot,
+        ReviewerPerformanceCoveragePolicy policy,
+        DateTimeOffset capturedAt)
     {
         var raw = snapshot.Cells;
         var repositoryMatcher = new ReviewerPerformanceRepositoryMatcher();
@@ -27,18 +29,18 @@ internal static class ReviewerPerformanceViewBuilder
         var selected = viewPopulation.Selected;
         var labels = new ReviewerPerformanceLabelResolver(snapshot.ClientNames, snapshot.RepositoryNames, raw);
         var facets = labels.Apply(ReviewerPerformanceDimensions.Facets(raw));
-        var preserveScope = RequiresRepositoryOrClientScope(query);
-        var measurementPopulation = ReviewerPerformanceDimensions.Coalesce(population, preserveScope);
-        var measurementSelected = ReviewerPerformanceDimensions.Coalesce(selected, preserveScope);
+        var measurementPopulation = ReviewerPerformanceCoverageContext.CompactPopulation(population, query.Aggregation == "cumulative");
+        var measurementSelected = ReviewerPerformanceDimensions.Coalesce(selected);
+        var coverage = new ReviewerPerformanceCoverageContext(policy, snapshot, capturedAt);
         var dates = ReviewerPerformanceBuckets.Dates(scope.From, scope.To, query.Bucket).ToList();
-        var series = BuildSeries(query, scope, selected, measurementSelected, measurementPopulation, dates, labels, repositoryMatcher);
-        var matrix = BuildMatrix(query, scope, viewIndex, measurementSelected, measurementPopulation, dates, labels, repositoryMatcher);
+        var series = BuildSeries(query, scope, selected, measurementSelected, measurementPopulation, dates, labels, repositoryMatcher, coverage);
+        var matrix = BuildMatrix(query, scope, viewIndex, measurementSelected, measurementPopulation, dates, labels, repositoryMatcher, coverage);
         var freshness = new ReviewerPerformanceEvidenceMetadata(
             raw.Count == 0 ? null : raw.Min(row => row.UpdatedAt),
             snapshot.NewestProjection,
             Rollups.ReviewerPerformanceCountProjector.ProjectionVersion,
-            snapshot.Pending);
-        return new(scope with { ClientIds = clients }, facets, series, matrix, raw.Count, freshness);
+            snapshot.Pending, snapshot.ModelEvidence is null ? null : "model-opportunity-v1");
+        return new(scope with { ClientIds = clients }, facets, series, matrix, raw.Count, freshness, coverage.Catalog);
     }
 
     private static MeasurementPopulation SelectViewPopulation(
@@ -48,6 +50,11 @@ internal static class ReviewerPerformanceViewBuilder
     {
         var selected = new List<ReviewerPerformanceDailyCount>();
         var population = new List<ReviewerPerformanceDailyCount>();
+        if (scope.Models?.Count == 0 || scope.Types?.Count == 0 || scope.Qualifiers?.Count == 0)
+        {
+            return new(selected, population);
+        }
+
         foreach (var row in cells)
         {
             var match = repositories.Match(row);
@@ -66,13 +73,6 @@ internal static class ReviewerPerformanceViewBuilder
         return new(selected, population);
     }
 
-    private static bool RequiresRepositoryOrClientScope(ReviewerPerformanceQuery query)
-    {
-        return query.Grouping is "client" or "repository"
-               || query.Breakdown?.Rows is "client" or "repository"
-               || query.Breakdown?.Columns is "client" or "repository";
-    }
-
     private static List<ReviewerPerformanceSeries> BuildSeries(
         ReviewerPerformanceQuery query,
         ReviewerPerformanceViewQuery scope,
@@ -81,7 +81,8 @@ internal static class ReviewerPerformanceViewBuilder
         List<ReviewerPerformanceDailyCount> measurementPopulation,
         List<DateOnly> dates,
         ReviewerPerformanceLabelResolver labels,
-        ReviewerPerformanceRepositoryMatcher repositoryMatcher)
+        ReviewerPerformanceRepositoryMatcher repositoryMatcher,
+        ReviewerPerformanceCoverageContext coverage)
     {
         var keys = SeriesKeys(selected, query.Grouping);
         ValidateSeriesSize(keys.Length, dates.Count);
@@ -89,11 +90,18 @@ internal static class ReviewerPerformanceViewBuilder
         foreach (var key in keys)
         {
             var group = SelectSeriesPopulation(measurementSelected, measurementPopulation, query.Grouping, key.Id, repositoryMatcher);
+            var effectiveScope = query.Grouping switch
+            {
+                "model" => scope with { Models = [key.Id] },
+                "type" => scope with { Types = [key.Id] },
+                "qualifier" => scope with { Qualifiers = [key.Id] },
+                _ => scope,
+            };
             var points = new List<ReviewerPerformancePoint>();
             foreach (var date in dates)
             {
                 var window = SeriesWindow(query, scope, date);
-                points.Add(MeasureWindow(query, scope, group, date, window, query.Grouping));
+                points.Add(MeasureWindow(query, effectiveScope, group, date, window, query.Grouping, coverage));
             }
 
             series.Add(new(key.Id, labels.Label(key, query.Grouping).Label, points));
@@ -150,8 +158,8 @@ internal static class ReviewerPerformanceViewBuilder
             ? grouped.Select(row => (row.ClientId, row.RepositoryId)).ToHashSet()
             : null;
         var broader = population.Where(row => InGroup(row) ||
-                                              (grouping == "repository" && row.IsMiss && row.ProviderScope.Length == 0
-                                               && groupedRepositories!.Contains((row.ClientId, row.RepositoryId)))).ToList();
+                                              (grouping == "repository" && row.ProviderScope.Length == 0
+                                                                        && groupedRepositories!.Contains((row.ClientId, row.RepositoryId)))).ToList();
         return new(grouped, broader);
     }
 
@@ -167,16 +175,19 @@ internal static class ReviewerPerformanceViewBuilder
         MeasurementPopulation population,
         DateOnly date,
         MeasurementWindow window,
-        string grouping)
+        string grouping,
+        ReviewerPerformanceCoverageContext coverage)
     {
-        var evidence = WithinWindow(population.Selected, window);
         var broader = WithinWindow(population.Broader, window);
-        var measurement = ReviewerPerformanceMeasurement.Measure(date, evidence, broader, scope, grouping) with
-        {
-            WindowFrom = window.From < scope.From ? scope.From : window.From,
-            WindowTo = window.To > scope.To ? scope.To : window.To
-        };
-        if (query.Aggregation == "period" && !HasPeriodObservation(population.Selected, date, window.To))
+        var measurement = ReviewerPerformanceMeasurement.Measure(
+                date, population.Selected, broader, scope, grouping, coverage,
+                population.Contributions, window.From, window.To) with
+            {
+                WindowFrom = window.From < scope.From ? scope.From : window.From,
+                WindowTo = window.To > scope.To ? scope.To : window.To
+            };
+        if (query.Aggregation == "period" && !population.Contributions.HasObservation(window.From, window.To)
+                                          && measurement.Score.Counts.ActedMisses + measurement.Score.Counts.UnactedMisses == 0)
         {
             return ReviewerPerformanceMeasurement.WithoutPeriodObservation(measurement);
         }
@@ -192,7 +203,8 @@ internal static class ReviewerPerformanceViewBuilder
         List<ReviewerPerformanceDailyCount> population,
         List<DateOnly> dates,
         ReviewerPerformanceLabelResolver labels,
-        ReviewerPerformanceRepositoryMatcher repositoryMatcher)
+        ReviewerPerformanceRepositoryMatcher repositoryMatcher,
+        ReviewerPerformanceCoverageContext coverage)
     {
         var matrix = new List<ReviewerPerformanceMatrixCell>();
         if (query.Breakdown is not { } breakdown || breakdown.ViewIndex != viewIndex)
@@ -217,16 +229,7 @@ internal static class ReviewerPerformanceViewBuilder
                     matrixSelected, matrixPopulation, breakdown, row.Id, column.Id,
                     rowRepositories?.GetValueOrDefault(row.Id), columnRepositories?.GetValueOrDefault(column.Id));
                 var dimensionalScope = DimensionalScope(scope, breakdown, row.Id, column.Id);
-                // Matrix populations have already been restricted to the intersecting view window.
-                var measurement = ReviewerPerformanceMeasurement.Measure(date, intersection.Selected, intersection.Broader, dimensionalScope, "none") with
-                {
-                    WindowFrom = window.From,
-                    WindowTo = window.To
-                };
-                if (query.Aggregation == "period" && !HasPeriodObservation(intersection.Selected, date, window.To))
-                {
-                    measurement = ReviewerPerformanceMeasurement.WithoutPeriodObservation(measurement);
-                }
+                var measurement = MeasureWindow(query, dimensionalScope, intersection, date, window, "none", coverage);
 
                 matrix.Add(
                     new(
@@ -270,7 +273,9 @@ internal static class ReviewerPerformanceViewBuilder
 
     private static IEnumerable<ReviewerPerformanceDailyCount> DimensionEvidence(List<ReviewerPerformanceDailyCount> cells, string dimension)
     {
-        return cells.Where(row => !ReviewerPerformanceMeasurement.IsCoverage(row) && (dimension != "model" || !row.IsMiss));
+        return cells.Where(row =>
+            (dimension is "client" or "repository" || !ReviewerPerformanceMeasurement.IsCoverage(row) || row.Outcome == "collectionModelOpportunity")
+            && (dimension != "model" || !row.IsMiss));
     }
 
     private static void ValidateMatrixSize(int rows, int columns)
@@ -359,12 +364,11 @@ internal static class ReviewerPerformanceViewBuilder
         return cells.Where(row => row.BucketDate >= window.From && row.BucketDate <= window.To).ToList();
     }
 
-    private static bool HasPeriodObservation(List<ReviewerPerformanceDailyCount> cells, DateOnly from, DateOnly to)
+    private sealed record MeasurementPopulation(List<ReviewerPerformanceDailyCount> Selected, List<ReviewerPerformanceDailyCount> Broader)
     {
-        return cells.Any(row => !ReviewerPerformanceMeasurement.IsCoverage(row) && row.BucketDate >= from && row.BucketDate <= to);
+        private ReviewerPerformanceContributions? _contributions;
+        internal ReviewerPerformanceContributions Contributions => this._contributions ??= new(this.Selected);
     }
-
-    private sealed record MeasurementPopulation(List<ReviewerPerformanceDailyCount> Selected, List<ReviewerPerformanceDailyCount> Broader);
 
     private readonly record struct MeasurementWindow(DateOnly From, DateOnly To);
 }

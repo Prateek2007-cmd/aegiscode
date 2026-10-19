@@ -58,7 +58,7 @@ public sealed class CodeInsightProviderFeedbackReaderTests
         statuses.Provider.Returns(ScmProvider.Forgejo);
         var reader = new CodeInsightProviderFeedbackReader([threads], [statuses]);
 
-        await Assert.ThrowsAsync<MeisterDev.ProPR.Application.Interfaces.CodeInsightProviderIdentityException>(() =>
+        await Assert.ThrowsAsync<MeisterDev.ProPR.Application.Interfaces.CodeInsightHistoricalCapabilityUnavailableException>(() =>
             reader.ReadAsync(Target(ScmProvider.Forgejo), ThreadOwnershipResolver.None));
 
         await threads.DidNotReceiveWithAnyArgs().FetchThreadsAsync(default!, default!, default!, 0);

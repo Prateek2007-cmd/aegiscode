@@ -2,6 +2,9 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Data;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
+using MeisterDev.ProPR.CodeInsights.Tests.Metrics;
 using System.Data.Common;
 using System.Diagnostics;
 using MeisterDev.ProPR.Application.Interfaces;
@@ -28,12 +31,313 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using NSubstitute;
 using FactAttribute = Xunit.SkippableFactAttribute;
+using TheoryAttribute = Xunit.SkippableTheoryAttribute;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
+using MeisterDev.ProPR.Application.ValueObjects;
+using MeisterDev.ProPR.Application.Options;
+using MeisterDev.ProPR.Application.DTOs;
+using MeisterDev.ProPR.Application.Features.Providers.Identity;
+using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Strategies.FileByFile;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Diagnostics.Persistence;
+using MeisterDev.ProPR.Infrastructure.AI;
+using MeisterDev.ProPR.Infrastructure.Repositories;
+using MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Persistence;
+using MeisterDev.ProPR.Domain.ValueObjects;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
+using MeisterDev.Ai.Providers.Declaration;
+using MeisterDev.Ai.Providers.Enums;
 
 namespace MeisterDev.ProPR.CodeInsights.Tests.Persistence;
 
 [Collection("PostgresIntegration")]
 public sealed class ReviewerPerformancePostgresIntegrationTests(PostgresContainerFixture fixture) : IAsyncLifetime
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task SharedGeneratedZeroSurvivesLocalOrRunnerAcceptanceReconciliationAndModelScoring(bool runner, bool tier)
+    {
+        var client = await this._db.Clients.SingleAsync(row => row.Id == this._a);
+        client.CodeInsightsCollectionEnabled = true;
+        var job = new ReviewJob(Guid.NewGuid(), this._a, "https://dev.azure.com/org", "project", "generated-zero", 42, 1);
+        job.SetReviewRevision(new("original-head", "base", null, "revision", null));
+        if (runner)
+        {
+            job.Status = JobStatus.Processing;
+            job.ApplyLease("runner", 1, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow);
+        }
+
+        var sourceConnection = Guid.NewGuid();
+        var scope = ProviderSourceIdentity.FromReviewJob(job, ScmLocalPolicyFactory.CreateSourcePolicies().Single(policy => policy.Provider == job.Provider))
+            .Value;
+        var chat = Substitute.For<IChatClient>();
+        chat.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"summary\":\"Done\",\"comments\":[],\"loop_complete\":true}")));
+        var modelId = Guid.NewGuid();
+        var runtime = Substitute.For<IResolvedAiChatRuntime>();
+        runtime.ChatClient.Returns(chat);
+        var configured = new AiConfiguredModelDto(modelId, "tier-remote", "Tier", [AiOperationKind.Chat], [ProviderDeclaredProtocolModes.Auto]);
+        runtime.Model.Returns(configured);
+        runtime.Connection.Returns(
+            new AiConnectionDto(
+                Guid.NewGuid(), this._a, "Tier connection", "openai", "https://model.example", "api-key",
+                default, true, [configured], [], default!, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+        runtime.LogicalModelName.Returns("tier-reviewer");
+        var resolver = Substitute.For<IAiRuntimeResolver>();
+        if (tier)
+        {
+            resolver.ResolveChatRuntimeAsync(job.ClientId, Arg.Any<AiPurpose>(), Arg.Any<CancellationToken>()).Returns(runtime);
+        }
+
+        var core = new ToolAwareAiReviewCore(chat, Options.Create(new AiReviewOptions { MaxIterations = 1 }), NullLogger<ToolAwareAiReviewCore>.Instance);
+        var captureStore = Substitute.For<IReviewFileResultStore>();
+        ReviewFileResult? generated = null;
+        captureStore.When(store => store.UpdateFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>()))
+            .Do(call => generated = call.Arg<ReviewFileResult>());
+        var reviewer = new FileReviewer(
+            null, core, Substitute.For<IProtocolRecorder>(), captureStore, new AiReviewOptions(),
+            NullLogger<FileByFileReviewOrchestrator>.Instance, null, null, tier ? resolver : null, null, null, null, null);
+        var file = new ChangedFile("a.cs", ChangeType.Edit, "one\ntwo\nthree", "@@ -1,3 +1,3 @@\n one\n-two\n+updated\n three");
+        var pr = new PullRequest(job.OrganizationUrl, job.ProjectId, job.RepositoryId, "Repository", 42, 1, "Review", null, "feature", "main", [file]);
+        var context = new ReviewSystemContext(null, [], null)
+        {
+            ModelId = "default-remote", DefaultReviewModelId = "default-remote",
+            LogicalModelName = "default-reviewer", ConfiguredModelId = Guid.NewGuid(), RuntimeConnectionId = Guid.NewGuid(),
+            SourceConnectionId = sourceConnection, ProviderScope = scope,
+            CapturedLeaseGeneration = runner ? 1 : null, DefaultReviewChatClient = chat
+        };
+        await reviewer.ReviewAsync(job, pr, file, 1, 1, context, null, chat, CancellationToken.None);
+        Assert.NotNull(generated?.ModelEvidence);
+        var pass = Assert.Single(generated.ModelEvidence.Passes.Where(pass => pass.IsCertified));
+        Assert.Equal(tier ? "tier-remote" : "default-remote", pass.ModelId);
+        Assert.Equal(tier ? modelId : context.ConfiguredModelId, pass.ConfiguredModelId);
+        Assert.Equal(tier ? runtime.LogicalModelName : context.LogicalModelName, pass.LogicalModelName);
+        Assert.Equal(tier ? runtime.Connection.Id : context.RuntimeConnectionId, pass.ConnectionId);
+        Assert.Empty(pass.Candidates);
+        job.RecordModelEvidenceManifest(
+            new()
+            {
+                JobId = job.Id, Attempt = 1, LeaseGeneration = runner ? 1 : null,
+                ProviderScope = scope, SourceConnectionId = sourceConnection, Files = [file.Path], InventoryComplete = true,
+                AllowedModels =
+                [
+                    new(
+                        tier ? runtime.Model.RemoteModelId : context.ModelId!, tier ? runtime.LogicalModelName! : context.LogicalModelName!,
+                        tier ? runtime.Connection.Id : context.RuntimeConnectionId, tier ? runtime.Model.Id : context.ConfiguredModelId,
+                        1, ReviewPassScope.PerFile, Shadow: false)
+                ]
+            });
+        var repository = new JobRepository(this._db, new TestDbContextFactory(this._options), NullLogger<JobRepository>.Instance);
+        await repository.AddAsync(job);
+        if (runner)
+        {
+            Assert.True(
+                await repository.RetainRunnerModelEvidenceAsync(
+                    new(job.Id, 1, "runner"),
+                    [new(file.Path, true, false, "Done", null, [], ModelEvidence: generated.ModelEvidence)], []));
+        }
+        else
+        {
+            await repository.AddFileResultAsync(generated);
+        }
+
+        this._db.ChangeTracker.Clear();
+        var gate = Substitute.For<ICodeInsightsCollectionGate>();
+        gate.IsCollectionEnabledAsync(this._a, Arg.Any<CancellationToken>()).Returns(true);
+        var collector = new CodeInsightReviewExposureCollector(this._db, gate, NullLogger<CodeInsightReviewExposureCollector>.Instance);
+        Assert.Equal(1, await new ModelEvidenceMaintenance(this._db, gate, collector).SweepAsync(1));
+        Assert.Equal(0, await new ModelEvidenceMaintenance(this._db, gate, collector).SweepAsync(1));
+        var snapshot = await new ModelReviewEvidenceReader(this._db).ReadAsync(
+            [new(this._a, job.RepositoryId, 42, scope, sourceConnection)], DateTimeOffset.UtcNow);
+        var accepted = Assert.Single(Assert.Single(snapshot.Executions).Files).Passes.Single(pass => pass.IsCertified);
+        Assert.NotNull(accepted.AcceptedAt);
+        var aggregate = await this._db.CodeInsightPullRequests.SingleAsync(row =>
+            row.ClientId == this._a && row.RepositoryId == job.RepositoryId && row.PullRequestId == 42);
+        var truth = Substitute.For<IHumanMissClassifier>();
+        truth.ClassifierVersion.Returns("truth");
+        truth.JudgeAsync(Arg.Any<HumanMissJudgementRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new HumanMissJudgement(true, true, true, .9, "Confirmed", true, true));
+        var codec = Substitute.For<ISecretProtectionCodec>();
+        codec.Protect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        codec.Unprotect(Arg.Any<string>(), Arg.Any<string>()).Returns(call => call.ArgAt<string>(0));
+        var matcher = Substitute.For<IHumanConcernModelMatcher>();
+        matcher.ClassifierVersion.Returns("bounded-match-v1");
+        var observer = new CodeInsightModelConcernObserver(
+            this._db, truth, matcher, codec, gate,
+            NullLogger<CodeInsightModelConcernObserver>.Instance, evidenceReader: new ModelReviewEvidenceReader(this._db));
+        var key = new CodeInsightPullRequestKey(this._a, job.RepositoryId, 42);
+        Assert.True(await observer.CompleteEnumerationAsync(key, scope, sourceConnection, DateTimeOffset.UtcNow, true, []));
+        var projector = new ReviewerPerformanceCountProjector(this._db, gate, NullLogger<ReviewerPerformanceCountProjector>.Instance);
+        await projector.ProjectPullRequestAsync(aggregate.Id);
+        var day = DateOnly.FromDateTime(DateTime.UtcNow);
+        var modelKey = ReviewerPerformanceRangeReader.ModelKey(new() { ModelId = pass.ModelId, LogicalModelName = pass.LogicalModelName });
+        var query = new ReviewerPerformanceQuery
+        {
+            Grouping = "model", Views = [new() { From = day, To = day, Models = [modelKey] }],
+            Breakdown = new("model", "client", day)
+        };
+        var inactive = (await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a])).Views[0];
+        Assert.Contains(inactive.Facets.Models, model => model.Id == modelKey);
+        Assert.Null(Assert.Single(inactive.Series).Points[0].Score.Summary.F1);
+        var origin = new DateTimeOffset(DateTimeOffset.UtcNow.Ticks / 10 * 10, TimeSpan.Zero);
+        var observed = DateTimeOffset.UtcNow;
+        var observation = new ThreadUpdatedEvent(
+            this._a, sourceConnection, job.RepositoryId, 42, "native-thread", file.Path, 2, "Fixed", origin,
+            [new("native-root", "human", false, origin, "Confirmed: the new null input throws. This has been fixed.")], observed, scope,
+            ConcernAnchor: new()
+            {
+                RootCommentId = "native-root", OriginAt = origin, FilePath = file.Path, Side = "RIGHT", StartLine = 2, EndLine = 2,
+                CommitSha = "original-head", HeadSha = "original-head", BaseSha = "base", NativeRevisionId = "revision", OriginalScopeProven = true
+            });
+        Assert.True((await observer.ObserveAsync(observation)).ConcernRetained);
+        var concern = await this._db.CodeInsightHumanConcerns.SingleAsync(row => row.CodeInsightPullRequestId == aggregate.Id);
+        Assert.True(await observer.CompleteEnumerationAsync(key, scope, sourceConnection, DateTimeOffset.UtcNow, true, [concern.NativeIdentity]));
+        await projector.ProjectPullRequestAsync(aggregate.Id);
+        var view = (await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a])).Views[0];
+        var point = Assert.Single(view.Series).Points[0];
+        Assert.True(
+            point.Coverage!.CoveredPullRequests == 1, string.Join(",", point.UnavailableReasons) + " | "
+                                                                                                 + string.Join(
+                                                                                                     ",",
+                                                                                                     view.ExclusionCatalog!.SelectMany(exclusion =>
+                                                                                                         exclusion.Reasons)));
+        Assert.Null(point.Score.Summary.Precision);
+        Assert.Equal(0, point.Score.Summary.Recall!.Median);
+        Assert.Equal(0, point.Score.Summary.F1!.Median);
+        var matrix = Assert.Single(view.Breakdown).Measurement;
+        Assert.Equal(point.Score.Counts, matrix.Score.Counts);
+        Assert.Equal(point.Score.Summary, matrix.Score.Summary);
+        Assert.Equal(point.Score.Scenarios, matrix.Score.Scenarios);
+    }
+
+    [Theory]
+    [InlineData("long-path")]
+    [InlineData("too-many-concerns")]
+    [InlineData("incomplete-source")]
+    public async Task ModelMaintenanceSkipsIneligibleSourcesBeforePostgresBatchLimits(string boundary)
+    {
+        var client = await this._db.Clients.SingleAsync(row => row.Id == this._a);
+        client.CodeInsightsCollectionEnabled = true;
+        const string scope = "AzureDevOps:https://dev.azure.com";
+        var prefix = Guid.NewGuid().ToString("N")[..10];
+        var connection = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow.AddHours(-1);
+
+        (ReviewJob Job, CodeInsightPullRequest Aggregate, CodeInsightHumanConcern[] Concerns) Seed(int ordinal, string path, int count)
+        {
+            var id = Guid.Parse($"00000000-0000-0000-0000-{prefix}{ordinal:D2}");
+            var job = new ReviewJob(id, this._a, "https://dev.azure.com/org", "project", "maintenance-" + id.ToString("N"), 42, 1);
+            var aggregate = new CodeInsightPullRequest { Id = id, ClientId = this._a, RepositoryId = job.RepositoryId, PullRequestId = 42 };
+            var file = new ReviewFileResult(id, path);
+            file.RecordModelEvidence(
+                new()
+                {
+                    JobId = id, Attempt = 1, ClientId = this._a, RepositoryId = job.RepositoryId, PullRequestId = 42,
+                    ProviderScope = scope, SourceConnectionId = connection, RevisionKey = "1", FilePath = path,
+                    InventoryComplete = true, InputComplete = true, AcceptedAt = now,
+                    Passes =
+                    [
+                        new()
+                        {
+                            JobId = id, Attempt = 1, PassKey = "A", ModelId = "A", LogicalModelName = "a", CandidateSetComplete = true,
+                            Disposition = ModelGenerationDisposition.Completed, StartedAt = now.AddMinutes(-1), CompletedAt = now, AcceptedAt = now,
+                        }
+                    ],
+                });
+            var concerns = Enumerable.Range(0, count).Select(index => new CodeInsightHumanConcern
+            {
+                Id = Guid.NewGuid(), CodeInsightPullRequestId = id, ProviderScope = scope, ConnectionId = connection,
+                NativeIdentity = $"{id:N}{index:D32}", ProviderThreadId = "thread-" + index,
+                RetainedSourceComplete = true, HarvestedAt = now, ObservedAt = now,
+                JudgementFailed = true, UnavailableReason = "model-concern-judgement-failed",
+            }).ToArray();
+            this._db.AddRange(job, aggregate, file);
+            this._db.AddRange(concerns);
+            return (job, aggregate, concerns);
+        }
+
+        var bad = Seed(1, boundary == "long-path" ? new string('x', 513) : "bad.cs", boundary == "too-many-concerns" ? 101 : 2);
+        if (boundary == "incomplete-source")
+        {
+            bad.Concerns[1].RetainedSourceComplete = false;
+        }
+
+        var good = Seed(2, "good.cs", 1);
+        await this._db.SaveChangesAsync();
+        var observer = Substitute.For<ICodeInsightModelConcernObserver>();
+        observer.ReplayRetainedAsync(Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        var store = Substitute.For<IDiscussionSynchronizationStore>();
+        var lease = Substitute.For<IDiscussionSynchronizationLease>();
+        lease.BeginWrites().Returns(Substitute.For<IDisposable>());
+        store.TryAcquireRetainedReplayAsync(Arg.Any<PullRequestThreadSnapshotTarget>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(lease);
+        var gate = OpenGate();
+        var maintenance = new ModelEvidenceMaintenance(
+            this._db, gate,
+            new CodeInsightReviewExposureCollector(this._db, gate, NullLogger<CodeInsightReviewExposureCollector>.Instance), observer, store);
+        try
+        {
+            if (boundary == "long-path")
+            {
+                Assert.Equal(
+                    1, await new ModelEvidenceMaintenance(
+                        this._db, gate,
+                        new CodeInsightReviewExposureCollector(this._db, gate, NullLogger<CodeInsightReviewExposureCollector>.Instance)).SweepAsync(1));
+                Assert.True(await this._db.CodeInsightReviewExposures.AnyAsync(row => row.JobId == good.Job.Id));
+            }
+            else
+            {
+                await maintenance.SweepAsync(1);
+                await observer.Received(1).ReplayRetainedAsync(new(this._a, good.Job.RepositoryId, 42), scope, connection, Arg.Any<CancellationToken>());
+                await observer.DidNotReceive().ReplayRetainedAsync(new(this._a, bad.Job.RepositoryId, 42), scope, connection, Arg.Any<CancellationToken>());
+            }
+        }
+        finally
+        {
+            await this._db.CodeInsightHumanConcerns
+                .Where(row => row.CodeInsightPullRequestId == bad.Aggregate.Id || row.CodeInsightPullRequestId == good.Aggregate.Id)
+                .ExecuteDeleteAsync();
+        }
+    }
+
+    [Fact]
+    public async Task NewFailedModelEnumerationIsDurableAndFencesOlderPositiveCoverageInPostgres()
+    {
+        const string scope = "AzureDevOps:https://dev.azure.com";
+        var key = new CodeInsightPullRequestKey(this._a, "enumeration-" + Guid.NewGuid(), 42);
+        var connection = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow.AddHours(-3);
+        var identity = new string('a', 64);
+        var observer = new CodeInsightModelConcernObserver(
+            this._db, Substitute.For<IHumanMissClassifier>(),
+            Substitute.For<IHumanConcernModelMatcher>(), Substitute.For<ISecretProtectionCodec>(), OpenGate(),
+            NullLogger<CodeInsightModelConcernObserver>.Instance);
+        Assert.True(await observer.CompleteEnumerationAsync(key, scope, connection, now, true, [identity]));
+        var aggregate = await this._db.CodeInsightPullRequests.SingleAsync(row => row.ClientId == this._a && row.RepositoryId == key.RepositoryId);
+        var coverage = await this._db.CodeInsightHarvestCoverage.SingleAsync(row => row.CodeInsightPullRequestId == aggregate.Id);
+        coverage.EnumerationComplete = true;
+        var concern = new CodeInsightHumanConcern
+        {
+            Id = Guid.NewGuid(), CodeInsightPullRequestId = aggregate.Id, ProviderScope = scope, ConnectionId = connection,
+            NativeIdentity = identity, ProviderThreadId = "thread", ObservedAt = now, HarvestedAt = now,
+        };
+        this._db.Add(concern);
+        await this._db.SaveChangesAsync();
+        Assert.False(await observer.CompleteEnumerationAsync(key, scope, connection, now.AddHours(2), false, []));
+        await observer.CompleteEnumerationAsync(key, scope, connection, now.AddHours(1), true, []);
+        this._db.ChangeTracker.Clear();
+        var retained = await this._db.CodeInsightHarvestCoverage.SingleAsync(row => row.Id == coverage.Id);
+        Assert.False(retained.ModelConcernEnumerationComplete);
+        Assert.True(retained.EnumerationComplete);
+        Assert.Equal(now.AddHours(2).ToUnixTimeMilliseconds(), retained.ModelConcernObservedAt!.Value.ToUnixTimeMilliseconds());
+        var retainedConcern = await this._db.CodeInsightHumanConcerns.SingleAsync(row => row.Id == concern.Id);
+        Assert.False(retainedConcern.IsDeleted);
+        Assert.Equal(now.ToUnixTimeMilliseconds(), retainedConcern.ObservedAt.ToUnixTimeMilliseconds());
+    }
+
     private readonly Guid _a = Guid.NewGuid();
     private readonly Guid _b = Guid.NewGuid();
     private MeisterProPRDbContext _db = null!;
@@ -60,6 +364,148 @@ public sealed class ReviewerPerformancePostgresIntegrationTests(PostgresContaine
         {
             await this._db.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task RepositorySourceCoverageMatchesCombinedForUnknownScopeEvidenceInPostgres()
+    {
+        var date = new DateOnly(2026, 9, 18);
+        var pr = new CodeInsightPullRequest { Id = Guid.NewGuid(), ClientId = this._a, RepositoryId = "unknown-scope", PullRequestId = 1 };
+        var other = new CodeInsightPullRequest { Id = Guid.NewGuid(), ClientId = this._b, RepositoryId = pr.RepositoryId, PullRequestId = 1 };
+
+        ReviewerPerformanceDailyCount Cell(CodeInsightPullRequest source, string outcome, string providerScope) => new()
+        {
+            Id = Guid.NewGuid(), CellKey = Guid.NewGuid().ToString("N"), CodeInsightPullRequestId = source.Id,
+            ClientId = source.ClientId, RepositoryId = source.RepositoryId, PullRequestId = source.PullRequestId,
+            ProviderScope = providerScope, BucketDate = date, Outcome = outcome, Count = 1,
+            IsMiss = outcome.StartsWith("miss", StringComparison.Ordinal), IsClassified = true, TypeMembership = "concurrency", Qualifier = "Missing",
+            PublicationState = CodeInsightPublicationState.Published, DuplicateState = CodeInsightDuplicateState.CheckedNonduplicate,
+        };
+
+        var positive = Cell(pr, "positive", "AzureDevOps:https://dev.azure.com/test");
+        var unknown = Cell(pr, "missActed", "\u00A0\u2003");
+        this._db.AddRange(
+            pr, other, positive, Cell(pr, "collectionComplete", positive.ProviderScope), unknown,
+            Cell(other, "collectionUnknown", "\u00A0\u2003"));
+        await this._db.SaveChangesAsync();
+        var repository = ReviewerPerformanceIdentity.RepositoryKey(positive);
+
+        async Task Verify(bool covered, bool provisional)
+        {
+            foreach (var mode in new[] { "combined", "filter", "series", "matrix" })
+            {
+                var query = new ReviewerPerformanceQuery
+                {
+                    Views =
+                    [
+                        new()
+                        {
+                            From = date, To = date, ClientIds = mode == "combined" ? [this._a] : null,
+                            Repositories = mode == "filter" ? [repository] : null
+                        }
+                    ],
+                    Grouping = mode == "series" ? "repository" : "none",
+                    Breakdown = mode == "matrix" ? new("repository", "type", date) : null,
+                };
+                var response = await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a, this._b]);
+                var view = response.Views[0];
+                var point = mode switch
+                {
+                    "series" => Assert.Single(view.Series, series => series.Id == repository).Points[0],
+                    "matrix" => Assert.Single(view.Breakdown, cell => cell.RowId == repository && cell.ColumnId == "concurrency").Measurement,
+                    _ => view.Series[0].Points[0],
+                };
+                Assert.Equal(1, point.Coverage!.CandidatePullRequests);
+                Assert.Equal(covered ? 1 : 0, point.Coverage.CoveredPullRequests);
+                Assert.Equal(covered, point.Score.Summary.F1 is not null);
+                Assert.Equal(provisional, point.UnavailableReasons.Contains("miss-observation-provisional", StringComparer.Ordinal));
+                if (!covered)
+                {
+                    var exclusionId = Assert.Single(point.Coverage.ExclusionIds);
+                    Assert.Equal(pr.Id, Assert.Single(view.ExclusionCatalog!, item => item.Id == exclusionId).AggregateId);
+                }
+            }
+        }
+
+        await Verify(covered: false, provisional: false);
+        unknown.Outcome = "missProvisional";
+        await this._db.SaveChangesAsync();
+        await Verify(covered: true, provisional: true);
+        this._db.Add(Cell(pr, "collectionUnknown", " \t"));
+        await this._db.SaveChangesAsync();
+        await Verify(covered: false, provisional: true);
+    }
+
+    [Fact]
+    public async Task ReviewerPerformanceSourceUrlUsesCapturedJobsInThePostgresSnapshot()
+    {
+        var pr = new CodeInsightPullRequest { Id = Guid.NewGuid(), ClientId = this._a, RepositoryId = "source-link", PullRequestId = 17 };
+        var job = new ReviewJob(Guid.NewGuid(), this._a, "https://dev.azure.com/test", "Team Project", pr.RepositoryId, 17, 1);
+        var capturedScope = MeisterDev.ProPR.Application.Features.Providers.Identity.ProviderSourceIdentity.FromReviewJob(
+            job, LocalScmPolicies.Registry.GetSourceIdentityPolicy(job.Provider)).Value;
+        this._db.AddRange(
+            pr, job,
+            new ReviewerPerformanceDailyCount
+            {
+                Id = Guid.NewGuid(), CellKey = "source-link", CodeInsightPullRequestId = pr.Id, ClientId = this._a,
+                RepositoryId = pr.RepositoryId, PullRequestId = 17, ProviderScope = capturedScope,
+                BucketDate = new(2026, 9, 18), Outcome = "collectionUnknown", Count = 1,
+            });
+        await this._db.SaveChangesAsync();
+        var result = await new ReviewerPerformanceRangeReader(this._db, providerRegistry: LocalScmPolicies.Registry).QueryAsync(
+            new() { Views = [new() { From = new(2026, 9, 18), To = new(2026, 9, 18) }] }, [this._a]);
+        Assert.Equal(
+            "https://dev.azure.com/test/Team%20Project/_git/source-link/pullrequest/17",
+            Assert.Single(result.Views[0].ExclusionCatalog!).SourceUrl);
+        Assert.NotNull(result.EvidenceRevision);
+    }
+
+    [Fact]
+    public async Task SourcePullRequestPartitionPreservesCoveredAndOverallInputsInPostgres()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var date = new DateOnly(2026, 9, 18);
+        for (var number = 1; number <= 5; number++)
+        {
+            var pr = new CodeInsightPullRequest
+            {
+                Id = Guid.NewGuid(), ClientId = this._a, RepositoryId = "covered-partition", PullRequestId = number,
+                CreatedAt = now, UpdatedAt = now,
+            };
+            this._db.Add(pr);
+            foreach (var (outcome, count, miss) in new[]
+                     {
+                         (number == 5 ? "collectionUnknown" : "collectionComplete", 1L, false),
+                         ("positive", number == 5 ? 0L : 4L, false),
+                         ("wrong", number == 5 ? 80L : 2L, false),
+                         ("missActed", number == 5 ? 0L : 2L, true),
+                     })
+            {
+                if (count == 0)
+                {
+                    continue;
+                }
+
+                this._db.Add(
+                    new ReviewerPerformanceDailyCount
+                    {
+                        Id = Guid.NewGuid(), CellKey = outcome, ClientId = this._a, CodeInsightPullRequestId = pr.Id,
+                        RepositoryId = pr.RepositoryId, PullRequestId = number, ProviderScope = "AzureDevOps:https://dev.azure.com/test",
+                        BucketDate = date, Outcome = outcome, Count = count, IsMiss = miss, UpdatedAt = now,
+                        PublicationState = CodeInsightPublicationState.Published, DuplicateState = CodeInsightDuplicateState.CheckedNonduplicate,
+                    });
+            }
+        }
+
+        await this._db.SaveChangesAsync();
+        var query = new ReviewerPerformanceQuery { Views = [new() { From = date, To = date, ClientIds = [this._a] }] };
+        var result = await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a]);
+        var point = result.Views[0].Series[0].Points[0];
+        Assert.Equal(80, point.Coverage!.Percentage);
+        Assert.Equal(4, point.Coverage.CoveredPullRequests);
+        Assert.Equal(2d / 3, point.Score.Summary.F1!.Median);
+        Assert.Equal(16d / 104, point.OverallPrecision!.Summary!.Median);
+        Assert.Equal(5, Assert.Single(result.Views[0].ExclusionCatalog!).PullRequestId);
     }
 
     [Fact]
@@ -107,11 +553,11 @@ public sealed class ReviewerPerformancePostgresIntegrationTests(PostgresContaine
         var query = new ReviewerPerformanceQuery
             { Views = [new ReviewerPerformanceViewQuery { From = new DateOnly(2026, 9, 1), To = new DateOnly(2026, 9, 1), ClientIds = [this._a] }] };
         var timer = Stopwatch.StartNew();
-        var result = await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a]);
+        var result = await new ReviewerPerformanceRangeReader(this._db, providerRegistry: LocalScmPolicies.Registry).QueryAsync(query, [this._a]);
         timer.Stop();
         Assert.Equal(6000, result.Views[0].Facets.Repositories.Count);
         Assert.All(result.Views[0].Facets.Repositories, facet => Assert.StartsWith("Repository ", facet.Label, StringComparison.Ordinal));
-        Assert.Equal(36_000, result.Views[0].Series[0].Points[0].Score.Counts.Outcomes.Positive);
+        Assert.Equal(36_000, result.Views[0].Series[0].Points[0].OverallPrecision!.Counts.Outcomes.Positive);
         Console.WriteLine($"Repository facets: 6000 repositories, 36000 joint cells, {timer.Elapsed.TotalMilliseconds:F0} ms; target <5000 ms.");
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), $"Repository facets took {timer.Elapsed.TotalMilliseconds:F0} ms.");
     }
@@ -307,7 +753,20 @@ public sealed class ReviewerPerformancePostgresIntegrationTests(PostgresContaine
         var result = await new ReviewerPerformanceRangeReader(this._db).QueryAsync(query, [this._a]);
         timer.Stop();
         Assert.Equal(97_200, result.Views[0].AggregateCells);
-        Assert.Equal(194_400, result.Views[0].Series.Sum(series => series.Points[^1].Score.Counts.Outcomes.Total));
+        Assert.Equal(194_400, result.Views[0].Series.Sum(series => series.Points[^1].OverallPrecision!.Counts.Outcomes.Total));
+        Assert.All(
+            result.Views[0].Series, series =>
+            {
+                var point = series.Points[^1];
+                Assert.Equal(0, point.Score.Counts.Outcomes.Total);
+                Assert.Null(point.Score.Summary.F1);
+                Assert.NotNull(point.OverallPrecision!.Summary);
+                Assert.Equal(30, point.Coverage!.CandidatePullRequests);
+                Assert.Equal(0, point.Coverage.CoveredPullRequests);
+                Assert.Equal(30, point.Coverage.ExcludedPullRequests);
+                Assert.True(point.Coverage.RecallSupported);
+                Assert.Contains(point.Coverage.Reasons, reason => reason.Reason == "model-proof-unavailable");
+            });
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(5), $"90-day query over 97,200 joint cells took {timer.Elapsed.TotalMilliseconds:F0} ms.");
         Console.WriteLine(
             $"Reviewer performance benchmark: 97,200 retained cells, 90 days, 3 series, {timer.Elapsed.TotalMilliseconds:F0} ms, target <5000 ms.");

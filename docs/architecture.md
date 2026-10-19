@@ -5,6 +5,11 @@ review and crawl evidence; Domain owns durable state and evidence enums; Infrast
 mapping, migrations and SCM adapters. Review execution remains separate from analytics collection and
 queries. ProCursor is accessed through its bounded gateway contract.
 
+Shared review execution retains bounded model-opportunity proof in existing checkpoints before publication.
+Independent human-concern collection qualifies model recall and F1 from compatible original source and
+revision evidence. Analytics failures preserve review results; queries reuse retained proof without
+provider or model calls. [Code Insights](architecture/code-insights.md) defines coverage and recovery.
+
 | Ownership | Reference |
 |---|---|
 | Review intake, execution, publication and diagnostics | [Reviews](concepts/reviews.md), [runner architecture](reference/runner-architecture.md) |

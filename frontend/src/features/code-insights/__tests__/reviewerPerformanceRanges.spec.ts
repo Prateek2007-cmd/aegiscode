@@ -22,17 +22,16 @@ describe('retained reviewer performance presentation', () => {
       ...query,
       aggregation: 'period',
     }).views?.[0]?.series?.find((series) => series.label === 'review-large')
-    expect(cumulative?.points?.at(-1)?.score?.summary?.precision).toBeDefined()
-    expect(cumulative?.points?.at(-1)?.score?.counts?.outcomes?.positive).toBeGreaterThan(0)
-    expect(period?.points?.at(-1)?.score?.summary?.precision).toBeUndefined()
+    expect(cumulative?.points?.at(-1)?.overallPrecision?.summary).toBeDefined()
+    expect(cumulative?.points?.at(-1)?.overallPrecision?.counts?.outcomes?.positive).toBeGreaterThan(0)
+    expect(period?.points?.at(-1)?.overallPrecision?.summary).toBeUndefined()
   })
   it('keeps mock model miss verdicts unavailable while retaining supported precision', () => {
     const from = new Date(Date.now() - 9 * 86400000).toISOString().slice(0, 10)
     const to = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10)
     const response = mockPerformanceResponse({ grouping: 'model', views: [{ from, to }] })
-    const point = response.views
-      ?.flatMap((view) => view.series?.flatMap((series) => series.points ?? []) ?? [])
-      .find((point) => point.score?.summary?.precision)
+    const point = response.views?.[0]?.series?.find((series) => series.label === 'review-large')?.points
+      ?.find((point) => point.overallPrecision?.summary)
     expect(point).toBeDefined()
     expect(
       point?.score?.scenarios?.every(
@@ -40,8 +39,8 @@ describe('retained reviewer performance presentation', () => {
           scenario.falseNegatives == null && scenario.recall == null && scenario.f1 == null,
       ),
     ).toBe(true)
-    expect(point?.score?.scenarios?.some((scenario) => scenario.precision != null)).toBe(true)
-    expect(response.views?.[0]?.evidence?.projectionVersion).toBe(3)
+    expect(point?.overallPrecision?.scenarios?.some((scenario) => scenario.precision != null)).toBe(true)
+    expect(response.views?.[0]?.evidence?.projectionVersion).toBe(4)
   })
   it('breaks the band at unavailable periods without joining or extending them', () => {
     const points = [

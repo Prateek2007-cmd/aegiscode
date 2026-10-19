@@ -15,6 +15,8 @@ internal sealed class AdoReviewSourcePolicy : ReviewSourcePolicyBase, IReviewSou
 {
     public override ScmProvider Provider => ScmProvider.AzureDevOps;
 
+    public string? CreateCapturedReviewUrl(CapturedReviewUrlCoordinates coordinates) => CapturedReviewWebUrls.AzureDevOps(coordinates);
+
     public override ProCursorReviewContextDto PrepareProCursorSymbolContext(
         RepositoryRef repository, string sourceBranch, int pullRequestNumber, int observationSequence) =>
         new(repository.ExternalRepositoryId, sourceBranch, pullRequestNumber, observationSequence);

@@ -814,6 +814,15 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.Property<bool>("EnumerationComplete")
                         .HasColumnType("boolean");
 
+                    b.Property<Guid?>("ModelConcernConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool?>("ModelConcernEnumerationComplete")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("ModelConcernObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset>("ObservedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -828,6 +837,129 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("code_insight_harvest_coverage", (string)null);
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightHumanConcern", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Anchor")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("CanonicalConcernId")
+                        .HasColumnType("uuid");
+
+                    b.Property<double?>("ClassifierConfidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("ClassifierVersion")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<Guid>("CodeInsightPullRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DimensionClassifierVersion")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<bool>("DimensionJudgementFailed")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("EncryptedDiscussion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EquivalenceProof")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("FailedDimensionAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("HarvestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("IsHumanConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsInScope")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool?>("IsSingleConcern")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSubstantive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("JudgementFailed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("LastModelEvidenceRetryAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NativeIdentity")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProviderScope")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("ProviderThreadId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<short?>("Qualifier")
+                        .HasColumnType("smallint");
+
+                    b.Property<bool>("RetainedSourceComplete")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SourceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("ThreadResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("TypeMembership")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("UnavailableReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<bool>("WasActedOn")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NativeIdentity")
+                        .IsUnique();
+
+                    b.HasIndex("CodeInsightPullRequestId", "ObservedAt");
+
+                    b.ToTable("code_insight_human_concerns", (string)null);
                 });
 
             modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightMiss", b =>
@@ -952,6 +1084,79 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasDatabaseName("uq_code_insight_misses_thread");
 
                     b.ToTable("code_insight_misses", (string)null);
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightModelConcernEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CandidateIds")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("CandidateSetFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ClassifierVersion")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<double?>("Confidence")
+                        .HasColumnType("double precision");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("EquivalentConcernIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValueSql("'[]'::jsonb");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("HumanConcernId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LogicalModelName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTimeOffset>("ObservedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Rationale")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("SourceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("UnavailableReason")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("HumanConcernId", "ModelId", "LogicalModelName")
+                        .IsUnique();
+
+                    b.ToTable("code_insight_model_concern_evidence", (string)null);
                 });
 
             modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightPerformanceDirty", b =>
@@ -2357,6 +2562,10 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("ConcernAnchor")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("concern_anchor_json");
+
                     b.Property<string>("FilePath")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
@@ -2496,6 +2705,10 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.Property<Guid>("JobId")
                         .HasColumnType("uuid")
                         .HasColumnName("job_id");
+
+                    b.Property<string>("ModelEvidence")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("model_evidence_json");
 
                     b.Property<string>("PerFileSummary")
                         .HasColumnType("text")
@@ -2670,6 +2883,10 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)")
                         .HasColumnName("lease_owner");
+
+                    b.Property<string>("ModelEvidenceManifest")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("model_evidence_manifest_json");
 
                     b.Property<string>("OrganizationUrl")
                         .IsRequired()
@@ -7163,6 +7380,15 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightHumanConcern", b =>
+                {
+                    b.HasOne("MeisterDev.ProPR.Domain.Entities.CodeInsightPullRequest", null)
+                        .WithMany()
+                        .HasForeignKey("CodeInsightPullRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightMiss", b =>
                 {
                     b.HasOne("MeisterDev.ProPR.Domain.Entities.CodeInsightPullRequest", "CodeInsightPullRequest")
@@ -7172,6 +7398,15 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("CodeInsightPullRequest");
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightModelConcernEvidence", b =>
+                {
+                    b.HasOne("MeisterDev.ProPR.Domain.Entities.CodeInsightHumanConcern", null)
+                        .WithMany()
+                        .HasForeignKey("HumanConcernId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MeisterDev.ProPR.Domain.Entities.CodeInsightPerformanceDirty", b =>

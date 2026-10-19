@@ -21,6 +21,9 @@ export type PerformanceFacets = components['schemas']['ReviewerPerformanceFacets
 export type PerformanceMatrixCell = components['schemas']['ReviewerPerformanceMatrixCell']
 export type PerformanceReport = components['schemas']['ReviewerPerformanceReportSummary']
 export type PerformanceSavedReport = components['schemas']['ReviewerPerformanceSavedReport']
+export type PerformanceCoverage = components['schemas']['ReviewerPerformanceCoverage']
+export type PerformanceCoveragePolicy = components['schemas']['ReviewerPerformanceCoveragePolicy']
+export type PerformanceExclusion = components['schemas']['ReviewerPerformanceExclusion']
 
 export interface PerformanceClient {
   id: string
@@ -61,6 +64,32 @@ export async function queryPerformance(query: PerformanceQuery): Promise<Perform
   if (error || !data)
     throw new Error(getApiErrorMessage(error, 'Reviewer performance ranges could not be loaded.'))
   return data
+}
+
+/** Queues provider evidence collection without changing the displayed measurement. */
+export async function retryPerformanceEvidence(aggregateId: string): Promise<void> {
+  const { error, response } = await createAdminClient().POST('/reviewer-performance/evidence/{aggregateId}/retry', {
+    params: { path: { aggregateId } },
+  })
+  if (error || !response.ok) {
+    const fallback = response.status === 404
+      ? 'This pull request is unavailable or outside your administered clients.'
+      : 'Evidence collection could not be queued. Refresh current evidence and try again.'
+    throw new Error(getApiErrorMessage(error, fallback))
+  }
+}
+
+/** Retries retained classification for one captured provider source. */
+export async function retryPerformanceModelEvidence(aggregateId: string, source: { providerScope: string; connectionId: string }): Promise<void> {
+  const { error, response } = await createAdminClient().POST('/reviewer-performance/evidence/{aggregateId}/retry-model', {
+    params: { path: { aggregateId } }, body: source,
+  })
+  if (error || !response.ok) {
+    const fallback = response.status === 404
+      ? 'This pull request is unavailable or outside your administered clients.'
+      : 'Retained classification could not be retried. Refresh current evidence and inspect the recorded limitation.'
+    throw new Error(getApiErrorMessage(error, fallback))
+  }
 }
 export async function listPerformanceReports(): Promise<PerformanceReport[]> {
   const { data, error } = await createAdminClient().GET('/reviewer-performance/reports')

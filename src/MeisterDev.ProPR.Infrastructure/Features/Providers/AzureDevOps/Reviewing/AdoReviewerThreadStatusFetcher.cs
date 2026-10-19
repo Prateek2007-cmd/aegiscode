@@ -189,18 +189,83 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
 
 
         var byId = results.ToDictionary(thread => thread.ThreadId!, StringComparer.Ordinal);
-        var threads = rawThreads.Select(thread => new PrCommentThread(
-            thread.Id.ToString(CultureInfo.InvariantCulture),
-            thread.ThreadContext?.FilePath, thread.ThreadContext?.RightFileStart?.Line,
-            (thread.Comments ?? []).Select(comment => AdoPrFetcher.ToThreadComment(comment) with
-            {
-                IsDeleted = comment.IsDeleted,
-                LastUpdatedAt = comment.LastUpdatedDate != default ? new DateTimeOffset(comment.LastUpdatedDate, TimeSpan.Zero) : null,
-            }).ToArray(), thread.Status.ToString(), thread.IsDeleted,
-            JsonSerializer.Serialize(new { thread.ThreadContext, thread.PullRequestThreadContext }),
-            byId.TryGetValue(thread.Id.ToString(CultureInfo.InvariantCulture), out var status) ? status.CodeChangedSinceRaised : ThreadAnchorCodeChange.Unknown,
-            thread.LastUpdatedDate != default ? new DateTimeOffset(thread.LastUpdatedDate, TimeSpan.Zero) : null)).ToArray();
+        var threads = new List<PrCommentThread>(rawThreads.Count);
+        foreach (var thread in rawThreads)
+        {
+            var anchor = await this.ResolveConcernAnchorAsync(gitClient, projectId, repositoryId, pullRequestId, thread, iterationChanges, ct);
+            threads.Add(
+                new PrCommentThread(
+                    thread.Id.ToString(CultureInfo.InvariantCulture),
+                    thread.ThreadContext?.FilePath, thread.ThreadContext?.RightFileStart?.Line,
+                    (thread.Comments ?? []).Select(comment => AdoPrFetcher.ToThreadComment(comment) with
+                    {
+                        IsDeleted = comment.IsDeleted,
+                        LastUpdatedAt = comment.LastUpdatedDate != default ? new DateTimeOffset(comment.LastUpdatedDate, TimeSpan.Zero) : null,
+                    }).ToArray(), thread.Status.ToString(), thread.IsDeleted,
+                    JsonSerializer.Serialize(new { thread.ThreadContext, thread.PullRequestThreadContext }),
+                    byId.TryGetValue(thread.Id.ToString(CultureInfo.InvariantCulture), out var status)
+                        ? status.CodeChangedSinceRaised
+                        : ThreadAnchorCodeChange.Unknown,
+                    thread.LastUpdatedDate != default ? new DateTimeOffset(thread.LastUpdatedDate, TimeSpan.Zero) : null, anchor));
+        }
+
         return new PullRequestThreadSnapshot(observedAt, threads, results.AsReadOnly()) { AuthenticatedIdentity = ownership.Identity };
+    }
+
+    private async Task<ReviewConcernAnchor> ResolveConcernAnchorAsync(
+        GitHttpClient gitClient, string projectId, string repositoryId, int pullRequestId,
+        GitPullRequestCommentThread thread, IterationChangeCache cache, CancellationToken ct)
+    {
+        var root = thread.Comments?.FirstOrDefault(comment => comment.CommentType != CommentType.System);
+        var originalContext = thread.PullRequestThreadContext?.IterationContext;
+        var tracking = thread.PullRequestThreadContext?.TrackingCriteria;
+        var tracked = tracking is not null && (tracking.FirstComparingIteration is > 0 || tracking.SecondComparingIteration is > 0);
+        var rightStart = tracked ? tracking?.OrigRightFileStart : thread.ThreadContext?.RightFileStart;
+        var rightEnd = tracked ? tracking?.OrigRightFileEnd : thread.ThreadContext?.RightFileEnd;
+        var leftStart = tracked ? tracking?.OrigLeftFileStart : thread.ThreadContext?.LeftFileStart;
+        var leftEnd = tracked ? tracking?.OrigLeftFileEnd : thread.ThreadContext?.LeftFileEnd;
+        var hasRight = rightStart?.Line is > 0;
+        var hasLeft = leftStart?.Line is > 0;
+        var side = hasRight && !hasLeft ? "RIGHT" : hasLeft && !hasRight ? "LEFT" : null;
+        var first = originalContext?.FirstComparingIteration;
+        var second = originalContext?.SecondComparingIteration;
+        var anchor = new ReviewConcernAnchor
+        {
+            RootCommentId = root is { Id: > 0 } ? root.Id.ToString(CultureInfo.InvariantCulture) : null,
+            OriginAt = root is not null && root.PublishedDate != default ? new DateTimeOffset(root.PublishedDate, TimeSpan.Zero) : null,
+            FilePath = tracked ? tracking?.OrigFilePath : thread.ThreadContext?.FilePath, Side = side,
+            StartLine = side == "RIGHT" ? rightStart?.Line : side == "LEFT" ? leftStart?.Line : null,
+            EndLine = side == "RIGHT" ? rightEnd?.Line ?? rightStart?.Line : side == "LEFT" ? leftEnd?.Line ?? leftStart?.Line : null,
+            NativeRevisionId = second is > 0 ? second.Value.ToString(CultureInfo.InvariantCulture) : null,
+        };
+        if (root is null || root.IsDeleted || second is not > 0 || side is null)
+        {
+            return anchor;
+        }
+
+        try
+        {
+            var current = await cache.GetIterationAsync(gitClient, projectId, repositoryId, pullRequestId, second.Value, ct);
+            var previous = first is > 0 && first != second
+                ? await cache.GetIterationAsync(gitClient, projectId, repositoryId, pullRequestId, first.Value, ct)
+                : null;
+            var head = current?.SourceRefCommit?.CommitId;
+            var basis = first == second ? current?.CommonRefCommit?.CommitId : previous?.SourceRefCommit?.CommitId;
+            var commit = side == "RIGHT" ? head : basis;
+            var known = anchor with { HeadSha = head, BaseSha = basis, CommitSha = commit, OriginalScopeProven = !string.IsNullOrWhiteSpace(commit) };
+            return known.IsKnown ? known : known with { OriginalScopeProven = false };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogDebug(
+                "Original concern anchor unavailable for PR {PullRequestId}, thread {ThreadId}: {FailureType}, code {FailureCode}",
+                pullRequestId, thread.Id, exception.GetType().Name, exception.HResult);
+            return anchor;
+        }
     }
 
     private async Task<(GitHttpClient GitClient, Guid? AuthorizedIdentityId)>
@@ -359,6 +424,7 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
         private const int ChangePageSize = 2000;
 
         private readonly Dictionary<int, IterationChangeSet?> _changesByFromIteration = new();
+        private Dictionary<int, GitPullRequestIteration> _iterations = [];
         private int? _latestIterationId;
         private bool _latestResolved;
 
@@ -380,6 +446,8 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
                 repositoryId,
                 pullRequestId,
                 cancellationToken: ct);
+            this._iterations = (iterations ?? []).Where(item => item.Id is > 0).GroupBy(item => item.Id!.Value)
+                .ToDictionary(group => group.Key, group => group.First());
             var maxId = iterations?
                 .Where(iteration => iteration.Id.HasValue)
                 .Select(iteration => iteration.Id!.Value)
@@ -387,6 +455,13 @@ public sealed partial class AdoReviewerThreadStatusFetcher(
                 .Max() ?? 0;
             this._latestIterationId = maxId > 0 ? maxId : null;
             return this._latestIterationId;
+        }
+
+        public async Task<GitPullRequestIteration?> GetIterationAsync(
+            GitHttpClient gitClient, string projectId, string repositoryId, int pullRequestId, int iterationId, CancellationToken ct)
+        {
+            _ = await this.GetLatestIterationIdAsync(gitClient, projectId, repositoryId, pullRequestId, ct);
+            return this._iterations.GetValueOrDefault(iterationId);
         }
 
         public async Task<IterationChangeSet?> GetChangedPathsAsync(

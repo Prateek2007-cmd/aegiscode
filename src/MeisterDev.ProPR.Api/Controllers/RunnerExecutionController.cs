@@ -197,7 +197,8 @@ public sealed class RunnerExecutionController(
                 usage.IsEstimated);
     }
 
-    /// <summary>Applies trace events, per-file checkpoints with optional withheld evidence, and spend.</summary>
+    /// <summary>Applies trace events, per-file checkpoints with bounded optional model proof or proof fragments, frozen model manifests, and spend.</summary>
+    /// <remarks>Nested and split model proofs require dispatched source, revision, pass scope, actual runtime and current lease bindings. Rejected analytics preserve ordinary file outcomes.</remarks>
     [HttpPost("ingest")]
     public async Task<IActionResult> Ingest([FromBody] RunnerIngestRequest request, CancellationToken ct)
     {
@@ -213,7 +214,8 @@ public sealed class RunnerExecutionController(
                 request.IdempotencyKey,
                 request.Events,
                 request.FileResults,
-                request.Spend),
+                request.Spend,
+                request.ModelManifests),
             ct);
 
         return result.Outcome switch
@@ -519,6 +521,10 @@ public sealed class RunnerChatRequest : RunnerJobCallRequest
 /// <summary>One batch of executor output.</summary>
 public sealed class RunnerIngestRequest : RunnerJobCallRequest
 {
+    /// <summary>Optional bounded model inventories. Invalid analytics metadata remains unavailable without discarding file outcomes.</summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(ModelReviewManifestListJsonConverter))]
+    public IReadOnlyList<MeisterDev.ProPR.Domain.ValueObjects.ModelReviewManifest>? ModelManifests { get; init; }
+
     /// <summary>Position in this job's stream, starting at 1.</summary>
     public int Sequence { get; init; }
 

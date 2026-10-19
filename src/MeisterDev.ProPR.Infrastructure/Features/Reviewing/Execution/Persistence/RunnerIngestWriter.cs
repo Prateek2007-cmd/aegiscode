@@ -11,6 +11,7 @@ using MeisterDev.ProPR.Application.ValueObjects;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using Microsoft.Extensions.Logging;
+using MeisterDev.ProPR.Domain.ValueObjects;
 
 namespace MeisterDev.ProPR.Infrastructure.Features.Reviewing.Execution.Persistence;
 
@@ -30,6 +31,12 @@ public sealed partial class RunnerIngestWriter(
     ILogicalModelResolver? logicalModels = null,
     ILogger<RunnerIngestWriter>? logger = null) : IRunnerIngestWriter
 {
+    /// <inheritdoc />
+    public Task<bool> WriteModelEvidenceAsync(
+        RunnerCallContext call, IReadOnlyList<RunnerFileOutcome> files,
+        IReadOnlyList<ModelReviewManifest> manifests, CancellationToken ct = default) =>
+        jobs.RetainRunnerModelEvidenceAsync(call, files, manifests, ct);
+
     /// <summary>The spooled event whose payload can carry the model's reasoning.</summary>
     private const string AiCallEventName = "protocol.ai_call";
 
@@ -165,6 +172,8 @@ public sealed partial class RunnerIngestWriter(
         // because inserting each of them violates the one-row-per-file constraint and fails the whole
         // batch, including its spend and trace.
         var lastPerPath = results
+            .Where(outcome => outcome.IsComplete || outcome.IsFailed || outcome.IsExcluded
+                              || outcome.ModelEvidence is null && outcome.ModelEvidenceFragment is null)
             .GroupBy(outcome => outcome.FilePath, StringComparer.Ordinal)
             .Select(group => group.Last());
 

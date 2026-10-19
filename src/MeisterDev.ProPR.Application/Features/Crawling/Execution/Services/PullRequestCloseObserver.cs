@@ -34,7 +34,9 @@ public sealed partial class PullRequestCloseObserver(
     IDiscussionSynchronizationService? discussionSynchronization = null,
     IDiscussionSynchronizationStore? discussionStore = null,
     IPullRequestThreadSnapshotReader? snapshotReader = null,
-    TimeProvider? timeProvider = null) : ICodeInsightAcknowledgedCloseObserver, ICodeInsightHistoricalObserver
+    TimeProvider? timeProvider = null,
+    ICodeInsightModelConcernObserver? modelConcerns = null,
+    ICodeInsightDiscussionBatchFactory? modelBatches = null) : ICodeInsightAcknowledgedCloseObserver, ICodeInsightHistoricalObserver
 {
     public async Task ObserveAsync(CodeInsightPullRequestKey key, string providerScopePath, string providerProjectKey, CancellationToken ct = default)
         => _ = await this.ObserveAcknowledgedAsync(key, providerScopePath, providerProjectKey, ct);
@@ -77,10 +79,24 @@ public sealed partial class PullRequestCloseObserver(
             return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
         }
 
-        var connection = await this.ResolveHistoricalConnectionAsync(target, ct);
+        ClientScmConnectionDto? connection;
+        try
+        {
+            connection = await this.ResolveHistoricalConnectionAsync(target, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return this.UnavailableFromException(
+                target, CodeInsightObservationUnavailableReason.ProviderReadFailed, CodeInsightObservationStage.ConnectionLookup, ex);
+        }
+
         if (connection is null)
         {
-            return Unavailable(CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable);
+            return Unavailable(CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable, CodeInsightObservationStage.ConnectionLookup);
         }
 
         var policy = providerRegistry.GetReviewSourcePolicy(target.Provider);
@@ -116,6 +132,7 @@ public sealed partial class PullRequestCloseObserver(
             {
                 state.Consumers.Remove("disposition");
                 state.Consumers.Remove("miss");
+                state.Consumers.Remove("modelEvidence");
             }
 
             await lease.CompleteAsync(
@@ -130,9 +147,9 @@ public sealed partial class PullRequestCloseObserver(
     {
         ct.ThrowIfCancellationRequested();
         if (collectionGate is null || feedbackReader is null || findingStore is null || missHarvester is null
-            || dispositionService is null || harvestCoverageRecorder is null || scmConnectionRepository is null)
+            || dispositionService is null || harvestCoverageRecorder is null || scmConnectionRepository is null || postedCommentOriginStore is null)
         {
-            return Unavailable(CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+            return Unavailable(CodeInsightObservationUnavailableReason.ObserverUnavailable, CodeInsightObservationStage.ObserverDependencies);
         }
 
         if (!await collectionGate.IsCollectionEnabledAsync(target.Key.ClientId, ct))
@@ -140,35 +157,33 @@ public sealed partial class PullRequestCloseObserver(
             return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
         }
 
-        var failure = CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable;
+        var failure = CodeInsightObservationUnavailableReason.ProviderReadFailed;
+        var stage = CodeInsightObservationStage.ConnectionLookup;
         try
         {
             if (!this.HasCapturedCoordinates(target))
             {
-                return Unavailable(CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+                return Unavailable(CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable, CodeInsightObservationStage.CapturedCoordinates);
             }
 
             var connection = await this.ResolveHistoricalConnectionAsync(target, ct);
             if (connection is null)
             {
-                return Unavailable(failure);
+                return Unavailable(CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable, stage);
             }
 
             failure = CodeInsightObservationUnavailableReason.OwnershipUnavailable;
-            if (postedCommentOriginStore is null)
-            {
-                return Unavailable(failure);
-            }
-
+            stage = CodeInsightObservationStage.OwnershipLookup;
             var source = await this.ReadHistoricalSourceAsync(target, ct);
             var observedAt = observationCutoff ?? NormalizeDatabaseTimestamp(DateTimeOffset.UtcNow);
             failure = CodeInsightObservationUnavailableReason.ProviderReadFailed;
+            stage = CodeInsightObservationStage.ProviderRead;
             var feedback = await feedbackReader.ReadAsync(target with { ConnectionId = connection.Id }, source.Ownership, ct);
             ct.ThrowIfCancellationRequested();
             var readFailure = ValidateHistoricalFeedback(source, feedback);
             if (readFailure is not null)
             {
-                return Unavailable(readFailure.Value);
+                return Unavailable(readFailure.Value, CodeInsightObservationStage.ThreadCorrelation);
             }
 
             if (!await collectionGate.IsCollectionEnabledAsync(target.Key.ClientId, ct))
@@ -176,25 +191,31 @@ public sealed partial class PullRequestCloseObserver(
                 return new CodeInsightObservationResult(CodeInsightObservationStatus.Disabled);
             }
 
+            await this.RetainIndependentHistoricalConcernsAsync(target, connection.Id, source.Ownership, feedback.Threads, observedAt, ct);
+
             failure = CodeInsightObservationUnavailableReason.EvidenceRetentionFailed;
+            stage = CodeInsightObservationStage.ThreadCorrelation;
             var identityFailure = CorrelateHistoricalOutcomes(target, source, feedback, observedAt, out var outcomes);
             if (identityFailure is not null)
             {
-                return Unavailable(identityFailure.Value);
+                return Unavailable(identityFailure.Value, stage);
             }
 
+            stage = CodeInsightObservationStage.HumanEvidenceRetention;
             var harvest = await this.RetainHistoricalHumanThreadsAsync(target, connection.Id, source.Ownership, feedback.Threads, observedAt, ct);
             if (harvest.Failure is not null)
             {
-                return Unavailable(harvest.Failure.Value);
+                return Unavailable(harvest.Failure.Value, harvest.Stage ?? stage);
             }
 
+            stage = CodeInsightObservationStage.OutcomeEvidenceRetention;
             var outcomeFailure = await this.RetainHistoricalOutcomesAsync(outcomes, ct);
             if (outcomeFailure is not null)
             {
-                return Unavailable(outcomeFailure.Value);
+                return outcomeFailure;
             }
 
+            stage = CodeInsightObservationStage.CoverageRetention;
             return await this.AcknowledgeHistoricalCoverageAsync(target, harvest.Coverage, observedAt, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -203,20 +224,33 @@ public sealed partial class PullRequestCloseObserver(
         }
         catch (CodeInsightIncompleteEnumerationException)
         {
-            return Unavailable(CodeInsightObservationUnavailableReason.IncompleteEnumeration);
+            return Unavailable(CodeInsightObservationUnavailableReason.IncompleteEnumeration, CodeInsightObservationStage.ProviderRead);
+        }
+        catch (CodeInsightHistoricalCapabilityUnavailableException)
+        {
+            return Unavailable(CodeInsightObservationUnavailableReason.HistoricalCapabilityUnsupported, CodeInsightObservationStage.ProviderRead);
         }
         catch (CodeInsightProviderIdentityException)
         {
-            return Unavailable(CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable);
+            return Unavailable(CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable, CodeInsightObservationStage.ThreadCorrelation);
         }
         catch (Exception ex)
         {
-            // Provider exception messages can contain credentials; retain only the type and numeric code.
-            var exceptionType = ex.GetType();
-            LogHistoricalObservationUnavailable(
-                logger, target.Key.PullRequestId, target.Key.ClientId, failure, exceptionType.FullName ?? exceptionType.Name, ex.HResult);
-            return Unavailable(failure);
+            return this.UnavailableFromException(target, failure, stage, ex);
         }
+    }
+
+    private CodeInsightObservationResult UnavailableFromException(
+        CodeInsightProviderEvidenceTarget target,
+        CodeInsightObservationUnavailableReason reason,
+        CodeInsightObservationStage stage,
+        Exception exception)
+    {
+        // Provider exception messages can contain credentials; retain only the type and numeric code.
+        var exceptionType = exception.GetType();
+        LogHistoricalObservationUnavailable(
+            logger, target.Key.PullRequestId, target.Key.ClientId, reason, stage, exceptionType.FullName ?? exceptionType.Name, exception.HResult);
+        return Unavailable(reason, stage);
     }
 
     private bool HasCapturedCoordinates(CodeInsightProviderEvidenceTarget target)
@@ -366,7 +400,8 @@ public sealed partial class PullRequestCloseObserver(
             var human = ThreadUpdatedEventFactory.IsHumanThread(evt);
             if (human && string.IsNullOrWhiteSpace(thread.ThreadId))
             {
-                return new HistoricalHarvest(coverage, CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable);
+                return new HistoricalHarvest(
+                    coverage, CodeInsightObservationUnavailableReason.ProviderIdentityUnavailable, CodeInsightObservationStage.ThreadCorrelation);
             }
 
             if (string.IsNullOrWhiteSpace(thread.ThreadId))
@@ -377,7 +412,8 @@ public sealed partial class PullRequestCloseObserver(
             var intent = CodeInsightNativeResolution.InterpretKnown(thread.Status);
             if (human && intent is null)
             {
-                return new HistoricalHarvest(coverage, CodeInsightObservationUnavailableReason.ClassificationUnavailable);
+                return new HistoricalHarvest(
+                    coverage, CodeInsightObservationUnavailableReason.ClassificationUnavailable, CodeInsightObservationStage.HumanClassification);
             }
 
             coverage.Observe(evt, intent ?? ThreadResolutionIntent.Active);
@@ -385,14 +421,60 @@ public sealed partial class PullRequestCloseObserver(
             ct.ThrowIfCancellationRequested();
             if (!ack.Retained)
             {
-                return new HistoricalHarvest(coverage, ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+                return new HistoricalHarvest(
+                    coverage, ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                    ack.Stage ?? CodeInsightObservationStage.HumanEvidenceRetention);
             }
         }
 
         return new HistoricalHarvest(coverage, null);
     }
 
-    private async Task<CodeInsightObservationUnavailableReason?> RetainHistoricalOutcomesAsync(IReadOnlyList<HistoricalOutcome> outcomes, CancellationToken ct)
+    private async Task RetainIndependentHistoricalConcernsAsync(
+        CodeInsightProviderEvidenceTarget target, Guid connectionId,
+        ThreadOwnershipResolver ownership, IReadOnlyList<PrCommentThread> threads, DateTimeOffset observedAt, CancellationToken ct)
+    {
+        if (modelConcerns is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var batch = modelBatches is null
+                ? new CodeInsightDiscussionBatch(target.Key, target.ProviderScope, [], "historical-model-concern")
+                : await modelBatches.CreateAsync(target.Key, target.ProviderScope, ct);
+            if (batch is null)
+            {
+                return;
+            }
+
+            await modelConcerns.PrepareAsync(batch with { ConnectionId = connectionId }, ct);
+            var retained = true;
+            var identities = new List<string>();
+            foreach (var thread in threads)
+            {
+                var observation = ThreadUpdatedEventFactory.Build(
+                    target.Key.ClientId, connectionId, target.Key.RepositoryId,
+                    target.Key.PullRequestId, thread, ownership, observedAt, target.ProviderScope);
+                if (!thread.IsDeleted && ModelConcernIdentity.Of(observation) is { } identity)
+                {
+                    identities.Add(identity);
+                }
+
+                var ack = await modelConcerns.ObserveAsync(observation, ct);
+                retained &= ack.ConcernRetained;
+            }
+
+            await modelConcerns.CompleteEnumerationAsync(target.Key, target.ProviderScope, connectionId, observedAt, retained, identities, ct);
+        }
+        catch (Exception exception) when (!ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Independent historical model concern collection unavailable: {FailureType}", exception.GetType().Name);
+        }
+    }
+
+    private async Task<CodeInsightObservationResult?> RetainHistoricalOutcomesAsync(IReadOnlyList<HistoricalOutcome> outcomes, CancellationToken ct)
     {
         foreach (var outcome in outcomes)
         {
@@ -401,7 +483,9 @@ public sealed partial class PullRequestCloseObserver(
             ct.ThrowIfCancellationRequested();
             if (!ack.Retained)
             {
-                return ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed;
+                return Unavailable(
+                    ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                    ack.Stage ?? CodeInsightObservationStage.OutcomeEvidenceRetention);
             }
         }
 
@@ -416,7 +500,9 @@ public sealed partial class PullRequestCloseObserver(
         ct.ThrowIfCancellationRequested();
         return ack.Retained
             ? new CodeInsightObservationResult(CodeInsightObservationStatus.Observed, observedAt)
-            : Unavailable(ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+            : Unavailable(
+                ack.Reason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                ack.Stage ?? CodeInsightObservationStage.CoverageRetention);
     }
 
     // PostgreSQL stores microseconds; acknowledgement comparisons must use the retained precision.
@@ -432,11 +518,14 @@ public sealed partial class PullRequestCloseObserver(
 
     private sealed record HistoricalOutcome(CodeInsightNativeFindingSnapshot Finding, ThreadResolvedDomainEvent Event);
 
-    private sealed record HistoricalHarvest(HarvestCoverageState Coverage, CodeInsightObservationUnavailableReason? Failure);
+    private sealed record HistoricalHarvest(
+        HarvestCoverageState Coverage,
+        CodeInsightObservationUnavailableReason? Failure,
+        CodeInsightObservationStage? Stage = null);
 
-    private static CodeInsightObservationResult Unavailable(CodeInsightObservationUnavailableReason reason)
+    private static CodeInsightObservationResult Unavailable(CodeInsightObservationUnavailableReason reason, CodeInsightObservationStage? stage = null)
     {
-        return new CodeInsightObservationResult(CodeInsightObservationStatus.Unavailable, UnavailableReason: reason);
+        return new CodeInsightObservationResult(CodeInsightObservationStatus.Unavailable, UnavailableReason: reason, Stage: stage);
     }
 
     private static bool CapturedPathMatches(string configured, string captured)
@@ -493,9 +582,10 @@ public sealed partial class PullRequestCloseObserver(
     [LoggerMessage(
         EventId = 6106, Level = LogLevel.Warning,
         Message =
-            "Historical observation for PR {PullRequestId} of client {ClientId} is unavailable: {Reason}. Exception type: {ExceptionType}; error code: {ErrorCode}.")]
+            "Historical observation for PR {PullRequestId} of client {ClientId} is unavailable at {Stage}: {Reason}. Exception type: {ExceptionType}; error code: {ErrorCode}.")]
     private static partial void LogHistoricalObservationUnavailable(
-        ILogger logger, long pullRequestId, Guid clientId, CodeInsightObservationUnavailableReason reason, string exceptionType, int errorCode);
+        ILogger logger, long pullRequestId, Guid clientId, CodeInsightObservationUnavailableReason reason, CodeInsightObservationStage stage,
+        string exceptionType, int errorCode);
 
     [LoggerMessage(
         EventId = 6104,

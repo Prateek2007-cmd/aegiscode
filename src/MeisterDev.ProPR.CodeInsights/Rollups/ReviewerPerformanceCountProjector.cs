@@ -23,7 +23,7 @@ public sealed partial class ReviewerPerformanceCountProjector(
     private const int MaximumWriteAttempts = 3;
 
     /// <summary>Current joint projection schema.</summary>
-    public const int ProjectionVersion = 3;
+    public const int ProjectionVersion = 4;
 
     /// <summary>Refreshes the aggregate containing this job.</summary>
     public async Task ProjectJobAsync(Guid jobId, CancellationToken ct = default)

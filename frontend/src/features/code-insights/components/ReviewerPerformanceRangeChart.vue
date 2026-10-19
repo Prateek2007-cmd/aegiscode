@@ -105,7 +105,8 @@
           />
           <g v-else class="chart-unavailable">
             <rect :x="entry.x - 10" :y="entry.y - 10" width="20" height="20" fill="transparent" />
-            <path :d="`M ${entry.x - 4} ${entry.y - 4} l 8 8 m -8 0 l 8 -8`" stroke="currentColor" />
+            <circle v-if="entry.availability === 'inactive'" class="chart-inactive" :cx="entry.x" :cy="entry.y" r="3.5" fill="none" stroke="currentColor" />
+            <path v-else :d="`M ${entry.x - 4} ${entry.y - 4} l 8 8 m -8 0 l 8 -8`" stroke="currentColor" />
           </g>
         </g>
         <g
@@ -148,6 +149,7 @@
           >
             {{ metricLabel(metric) }} median {{ percent(label.median) }} ·
             {{ percent(label.minimum) }}–{{ percent(label.maximum) }} · {{ label.date }}
+            {{ label.historical ? ' · last available' : '' }}
           </text>
         </g>
         <text
@@ -197,6 +199,8 @@
         <i class="chart-key chart-key--median"></i>
         Scenario median
       </span>
+      <span><b aria-hidden="true">○</b> Inactive / no scoring inputs</span>
+      <span><b aria-hidden="true">×</b> Evidence unavailable</span>
     </div>
     <div
       class="chart-series"
@@ -215,6 +219,7 @@
         <span>
           {{ metricLabel(metric) }} median {{ percent(label.median) }} ·
           {{ percent(label.minimum) }}–{{ percent(label.maximum) }} · {{ label.date }}
+          {{ label.historical ? ' · last available' : '' }}
         </span>
       </button>
     </div>
@@ -228,6 +233,7 @@ import {
   annotationLayout,
   connectedSegments,
   metricLabel,
+  metricRange,
   percent,
   stableSeriesColor,
   type PerformanceMetric,
@@ -265,7 +271,7 @@ const geometry = computed(() => chartGeometry({
   axisDates: props.axisDates,
   axisPeriods: props.axisPeriods,
 }))
-const range = (point: PerformancePoint) => point.score?.summary?.[props.metric]
+const range = (point: PerformancePoint) => metricRange(point, props.metric)
 const y = (value: number) => geometry.value.y(value)
 const x = (series: PerformanceSeries, point: PerformancePoint) => geometry.value.x(series, point)
 const entries = computed(() => inspectionEntries(props.data, props.metric, geometry.value, height.value))
@@ -332,6 +338,7 @@ const labels = computed(() =>
               maximum: score.maximum,
               median: score.median,
               date: point.date,
+              historical: point.date !== series.points?.at(-1)?.date,
             },
           ]
     }),

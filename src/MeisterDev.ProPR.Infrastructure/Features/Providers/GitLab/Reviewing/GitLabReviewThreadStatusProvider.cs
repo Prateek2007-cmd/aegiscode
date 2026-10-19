@@ -97,8 +97,44 @@ internal sealed class GitLabReviewThreadStatusProvider(
                 note.Author?.Username ?? "Unknown", note.Body ?? "",
                 ProviderSnapshotCommentIdentity.FromLogin(note.Author?.Username), note.Id, note.CreatedAt, note.System,
                 note.Author?.Id.ToString(CultureInfo.InvariantCulture))).ToArray(), discussion.Notes.Any(note => note.Resolved) ? "Fixed" : "Active",
-            SourceAnchor: JsonSerializer.Serialize(discussion.Notes.Select(note => note.Position)))).ToArray();
+            SourceAnchor: JsonSerializer.Serialize(discussion.Notes.Select(note => note.Position)),
+            ConcernAnchor: OriginalConcernAnchor(discussion))).ToArray();
         return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
+    }
+
+    private static ReviewConcernAnchor OriginalConcernAnchor(GitLabDiscussionResponse discussion)
+    {
+        var root = discussion.Notes.FirstOrDefault(note => !note.System);
+        var position = root?.OriginalPosition ?? root?.Position;
+        var range = position?.LineRange;
+        var side = range is not null
+            ? range.Start?.Type == "new" && range.End?.Type == "new" ? "RIGHT"
+            : range.Start?.Type == "old" && range.End?.Type == "old" ? "LEFT" : null
+            : position?.NewLine is > 0
+                ? "RIGHT"
+                : position?.OldLine is > 0
+                    ? "LEFT"
+                    : null;
+        var start = range is not null
+            ? side == "RIGHT" ? range.Start?.NewLine : side == "LEFT" ? range.Start?.OldLine : null
+            : side == "RIGHT"
+                ? position?.NewLine
+                : side == "LEFT"
+                    ? position?.OldLine
+                    : null;
+        var end = range is not null
+            ? side == "RIGHT" ? range.End?.NewLine : side == "LEFT" ? range.End?.OldLine : null
+            : start;
+        var anchor = new ReviewConcernAnchor
+        {
+            RootCommentId = root is { Id: > 0 } ? root.Id.ToString(CultureInfo.InvariantCulture) : null,
+            OriginAt = root?.CreatedAt, FilePath = side == "RIGHT" ? position?.NewPath : side == "LEFT" ? position?.OldPath : null,
+            Side = side, StartLine = start, EndLine = end, HeadSha = position?.HeadSha, BaseSha = position?.BaseSha,
+            CommitSha = side == "RIGHT" ? position?.HeadSha : side == "LEFT" ? position?.BaseSha : null, NativeRevisionId = position?.HeadSha,
+            OriginalScopeProven = position is { PositionType: "text" } && !string.IsNullOrWhiteSpace(position.HeadSha) &&
+                                  !string.IsNullOrWhiteSpace(position.BaseSha),
+        };
+        return anchor.IsKnown ? anchor : anchor with { OriginalScopeProven = false };
     }
 
     private async Task<ProviderRestPager.RestPage<GitLabDiscussionResponse>> GetDiscussionPageAsync(
@@ -208,7 +244,9 @@ internal sealed class GitLabReviewThreadStatusProvider(
         [property: JsonPropertyName("position")]
         GitLabPositionResponse? Position,
         [property: JsonPropertyName("created_at")]
-        DateTimeOffset? CreatedAt = null);
+        DateTimeOffset? CreatedAt = null,
+        [property: JsonPropertyName("original_position")]
+        GitLabPositionResponse? OriginalPosition = null);
 
     private sealed record GitLabAuthorResponse(
         [property: JsonPropertyName("id")] long Id,
@@ -220,6 +258,27 @@ internal sealed class GitLabReviewThreadStatusProvider(
         string? NewPath,
         [property: JsonPropertyName("old_path")]
         string? OldPath,
+        [property: JsonPropertyName("new_line")]
+        int? NewLine = null,
+        [property: JsonPropertyName("old_line")]
+        int? OldLine = null,
+        [property: JsonPropertyName("head_sha")]
+        string? HeadSha = null,
+        [property: JsonPropertyName("base_sha")]
+        string? BaseSha = null,
+        [property: JsonPropertyName("start_sha")]
+        string? StartSha = null,
+        [property: JsonPropertyName("position_type")]
+        string? PositionType = null,
+        [property: JsonPropertyName("line_range")]
+        GitLabLineRangeResponse? LineRange = null);
+
+    private sealed record GitLabLineRangeResponse(
+        [property: JsonPropertyName("start")] GitLabLineRangePointResponse? Start,
+        [property: JsonPropertyName("end")] GitLabLineRangePointResponse? End);
+
+    private sealed record GitLabLineRangePointResponse(
+        [property: JsonPropertyName("type")] string? Type,
         [property: JsonPropertyName("new_line")]
         int? NewLine = null,
         [property: JsonPropertyName("old_line")]

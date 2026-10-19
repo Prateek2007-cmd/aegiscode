@@ -56,9 +56,9 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var query = Query() with { Views = [new() { From = new(2026, 9, 1), To = new(2026, 9, 2), Types = ["logic-error", "concurrency"] }] };
         var cumulative = await reader.QueryAsync(query, [Client]);
         var period = await reader.QueryAsync(query with { Aggregation = "period" }, [Client]);
-        Assert.Equal(10, cumulative.Views[0].Series[0].Points[^1].Score.Counts.Outcomes.Positive);
-        Assert.Equal(10, period.Views[0].Series[0].Points.Sum(point => point.Score.Counts.Outcomes.Positive));
-        Assert.Equal(7, period.Views[0].Series[0].Points[^1].Score.Counts.Outcomes.Positive);
+        Assert.Equal(10, cumulative.Views[0].Series[0].Points[^1].OverallPrecision!.Counts.Outcomes.Positive);
+        Assert.Equal(10, period.Views[0].Series[0].Points.Sum(point => point.OverallPrecision!.Counts.Outcomes.Positive));
+        Assert.Equal(7, period.Views[0].Series[0].Points[^1].OverallPrecision!.Counts.Outcomes.Positive);
     }
 
     [Fact]
@@ -76,7 +76,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var query = Query() with { Views = [new() { From = new(2026, 9, 1), To = new(2026, 9, 2), Types = ["concurrency"] }] };
         var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(query, [Client]);
         var point = result.Views[0].Series[0].Points[0];
-        Assert.NotNull(point.Score.Summary.Precision);
+        Assert.NotNull(point.OverallPrecision!.Summary);
         Assert.Null(point.Score.Summary.F1);
         Assert.Contains("miss-type-attribution-unavailable", point.UnavailableReasons);
     }
@@ -89,7 +89,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         await db.SaveChangesAsync();
         var reader = new ReviewerPerformanceRangeReader(db);
         var empty = Query() with { Views = [new() { From = new(2026, 9, 1), To = new(2026, 9, 2), ClientIds = [] }] };
-        Assert.All((await reader.QueryAsync(empty, [Client])).Views[0].Series[0].Points, point => Assert.Null(point.Score.Summary.Precision));
+        Assert.All((await reader.QueryAsync(empty, [Client])).Views[0].Series[0].Points, point => Assert.Null(point.OverallPrecision!.Summary));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => reader.QueryAsync(
             empty with { Views = [empty.Views[0] with { ClientIds = [Guid.NewGuid()] }] }, [Client]));
     }
@@ -132,9 +132,9 @@ public sealed class ReviewerPerformanceRangeReaderTests
         await db.SaveChangesAsync();
         var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(Query() with { Grouping = "model", Aggregation = "period" }, [Client]);
         var series = result.Views[0].Series.Single(row => row.Label == "early");
-        Assert.NotNull(series.Points[0].Score.Summary.Precision);
-        Assert.Null(series.Points[1].Score.Summary.Precision);
-        Assert.Equal(0, series.Points[1].Score.Counts.Outcomes.Positive);
+        Assert.NotNull(series.Points[0].OverallPrecision!.Summary);
+        Assert.Null(series.Points[1].OverallPrecision!.Summary);
+        Assert.Equal(0, series.Points[1].OverallPrecision!.Counts.Outcomes.Positive);
     }
 
     [Fact]
@@ -145,7 +145,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         await db.SaveChangesAsync();
         var query = Query() with { Aggregation = "period", Breakdown = new("type", "qualifier", new(2026, 9, 1)) };
         var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(query, [Client]);
-        Assert.All(result.Views[0].Breakdown, cell => Assert.Equal(3, cell.Measurement.Score.Counts.Outcomes.Positive));
+        Assert.All(result.Views[0].Breakdown, cell => Assert.Equal(3, cell.Measurement.OverallPrecision!.Counts.Outcomes.Positive));
         Assert.All(result.Views[0].Breakdown, cell => Assert.Equal(result.Views[0].Series[0].Points[0].WindowTo, cell.Measurement.WindowTo));
         var unclassified = Cell(1, 2);
         unclassified.TypeMembership = "";
@@ -153,7 +153,9 @@ public sealed class ReviewerPerformanceRangeReaderTests
         await db.SaveChangesAsync();
         var filtered = Query() with { Views = [new() { From = new(2026, 9, 1), To = new(2026, 9, 2), Types = ["unclassified"] }] };
         Assert.Equal(
-            2, (await new ReviewerPerformanceRangeReader(db).QueryAsync(filtered, [Client])).Views[0].Series[0].Points[0].Score.Counts.Outcomes.Positive);
+            2,
+            (await new ReviewerPerformanceRangeReader(db).QueryAsync(filtered, [Client])).Views[0].Series[0].Points[0].OverallPrecision!.Counts.Outcomes
+            .Positive);
     }
 
     [Fact]
@@ -229,8 +231,8 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(query, [Client]);
 
         var point = Assert.Single(result.Views[0].Series).Points[0];
-        Assert.Equal(expectedPositive, point.Score.Counts.Outcomes.Positive);
-        Assert.Equal(expectedMisses, point.Score.Counts.ActedMisses);
+        Assert.Equal(expectedPositive, point.OverallPrecision!.Counts.Outcomes.Positive);
+        Assert.Equal(expectedMisses, point.OverallPrecision!.Counts.ActedMisses);
         Assert.Equal(expectedUnknownScope, point.UnavailableReasons.Contains("miss-provider-scope-unavailable"));
     }
 
@@ -244,11 +246,11 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var query = Query() with { Breakdown = new("type", "qualifier", new(2026, 9, 2)) };
         var result = await reader.QueryAsync(query, [Client]);
         Assert.NotEmpty(result.Views[0].Breakdown);
-        Assert.NotNull(result.Views[0].Series[0].Points[1].Score.Summary.Precision);
-        Assert.All(result.Views[0].Breakdown, cell => Assert.NotNull(cell.Measurement.Score.Summary.Precision));
-        Assert.All(result.Views[0].Breakdown, cell => Assert.Equal(8, cell.Measurement.Score.Counts.Outcomes.Positive));
+        Assert.NotNull(result.Views[0].Series[0].Points[1].OverallPrecision!.Summary);
+        Assert.All(result.Views[0].Breakdown, cell => Assert.NotNull(cell.Measurement.OverallPrecision!.Summary));
+        Assert.All(result.Views[0].Breakdown, cell => Assert.Equal(8, cell.Measurement.OverallPrecision!.Counts.Outcomes.Positive));
         var period = await reader.QueryAsync(query with { Aggregation = "period" }, [Client]);
-        Assert.Null(period.Views[0].Series[0].Points[1].Score.Summary.Precision);
+        Assert.Null(period.Views[0].Series[0].Points[1].OverallPrecision!.Summary);
         Assert.Empty(period.Views[0].Breakdown);
     }
 
@@ -266,13 +268,13 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var query = Query() with { Grouping = "model", Views = [new() { From = new(2026, 9, 1), To = new(2026, 9, 4) }] };
         var result = await reader.QueryAsync(query, [Client]);
         var points = Assert.Single(result.Views[0].Series).Points;
-        Assert.NotNull(points[1].Score.Summary.Precision);
-        Assert.Equal(3, points[1].Score.Counts.Outcomes.Positive);
-        Assert.NotNull(points[3].Score.Summary.Precision);
-        Assert.Equal(10, points[3].Score.Counts.Outcomes.Positive);
+        Assert.NotNull(points[1].OverallPrecision!.Summary);
+        Assert.Equal(3, points[1].OverallPrecision!.Counts.Outcomes.Positive);
+        Assert.NotNull(points[3].OverallPrecision!.Summary);
+        Assert.Equal(10, points[3].OverallPrecision!.Counts.Outcomes.Positive);
         var period = (await reader.QueryAsync(query with { Aggregation = "period" }, [Client])).Views[0].Series[0].Points;
-        Assert.Null(period[1].Score.Summary.Precision);
-        Assert.Null(period[3].Score.Summary.Precision);
+        Assert.Null(period[1].OverallPrecision!.Summary);
+        Assert.Null(period[3].OverallPrecision!.Summary);
     }
 
     [Fact]
@@ -294,10 +296,10 @@ public sealed class ReviewerPerformanceRangeReaderTests
         db.AddRange(finding, coverage, legacyMiss, scopedMiss);
         await db.SaveChangesAsync();
         var point = (await new ReviewerPerformanceRangeReader(db).QueryAsync(Query(), [Client])).Views[0].Series[0].Points[0];
-        Assert.NotNull(point.Score.Summary.Precision);
+        Assert.NotNull(point.OverallPrecision!.Summary);
         Assert.Null(point.Score.Summary.Recall);
         Assert.Null(point.Score.Summary.F1);
-        Assert.Equal(2, point.Score.Counts.ActedMisses);
+        Assert.Equal(2, point.OverallPrecision!.Counts.ActedMisses);
         Assert.Contains("miss-provider-scope-unavailable", point.UnavailableReasons);
     }
 
@@ -318,7 +320,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
             {
                 Assert.Equal(point.WindowFrom, cell.Measurement.WindowFrom);
                 Assert.Equal(point.WindowTo, cell.Measurement.WindowTo);
-                Assert.Equal(point.Score.Counts, cell.Measurement.Score.Counts);
+                Assert.Equal(point.OverallPrecision!.Counts, cell.Measurement.OverallPrecision!.Counts);
             });
     }
 
@@ -329,13 +331,9 @@ public sealed class ReviewerPerformanceRangeReaderTests
         db.Add(Cell(1, 8));
         await db.SaveChangesAsync();
         var point = (await new ReviewerPerformanceRangeReader(db).QueryAsync(Query(), [Client])).Views[0].Series[0].Points[0];
-        Assert.Equal(0, point.Score.Counts.ActedMisses);
-        Assert.All(
-            point.Score.Scenarios, scenario =>
-            {
-                Assert.NotNull(scenario.Precision);
-                Assert.Null(scenario.FalseNegatives);
-            });
+        Assert.Equal(0, point.OverallPrecision!.Counts.ActedMisses);
+        Assert.All(point.OverallPrecision.Scenarios, scenario => Assert.NotNull(scenario.Precision));
+        Assert.All(point.Score.Scenarios, scenario => { Assert.Null(scenario.FalseNegatives); });
     }
 
     [Theory]
@@ -353,6 +351,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         miss.TypeMembership = "concurrency";
         miss.Qualifier = "Missing";
         var coverage = Cell(1, 1);
+        coverage.CodeInsightPullRequestId = miss.CodeInsightPullRequestId;
         coverage.ProviderScope = miss.ProviderScope;
         coverage.Outcome = "collectionComplete";
         db.AddRange(miss, coverage);
@@ -361,7 +360,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var result = await new ReviewerPerformanceRangeReader(db).QueryAsync(
             Query() with { Grouping = dimension, Breakdown = new(dimension, other, new(2026, 9, 1)) }, [Client]);
         var point = Assert.Single(result.Views[0].Series).Points[0];
-        Assert.Equal(2, point.Score.Counts.ActedMisses);
+        Assert.Equal(2, point.OverallPrecision!.Counts.ActedMisses);
         Assert.Equal(0, point.Score.Summary.Recall!.Median);
         Assert.Equal(0, point.Score.Summary.F1!.Median);
         Assert.NotEmpty(result.Views[0].Breakdown);
@@ -383,7 +382,7 @@ public sealed class ReviewerPerformanceRangeReaderTests
         var facets = (await reader.QueryAsync(Query(), [Client])).Views[0].Facets;
         var scope = Query().Views[0] with { Repositories = [facets.Repositories[0].Id], Models = [facets.Models[0].Id] };
         var result = await reader.QueryAsync(Query() with { Views = [scope], Breakdown = new("repository", "model", new(2026, 9, 1)) }, [Client]);
-        Assert.Equal(3, result.Views[0].Series[0].Points[0].Score.Counts.Outcomes.Positive);
+        Assert.Equal(3, result.Views[0].Series[0].Points[0].OverallPrecision!.Counts.Outcomes.Positive);
         Assert.Single(result.Views[0].Breakdown);
     }
 

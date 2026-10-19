@@ -4,7 +4,7 @@
 
 import type { PerformancePoint, PerformanceSeries } from '@/services/reviewerPerformanceService'
 import { UNAVAILABLE_BOTTOM_MARGIN, type ChartGeometry, type ScreenPoint } from './reviewerPerformanceChartGeometry'
-import type { PerformanceMetric } from './reviewerPerformanceRanges'
+import { metricRange, pointAvailability, type PerformanceMetric } from './reviewerPerformanceRanges'
 
 export interface ChartPointSelection {
   seriesId: string
@@ -18,6 +18,7 @@ export interface ChartInspectionEntry extends ChartPointSelection, ScreenPoint {
   seriesLabel: string
   point: PerformancePoint
   unavailable: boolean
+  availability: 'available' | 'inactive' | 'unavailable'
 }
 
 export function inspectionEntries(
@@ -32,7 +33,7 @@ export function inspectionEntries(
       if (!point.date) {
         continue
       }
-      const median = point.score?.summary?.[metric]?.median
+      const median = metricRange(point, metric)?.median
       const unavailable = median == null
       entries.push({
         key: `${seriesIndex}/${pointIndex}`,
@@ -45,6 +46,7 @@ export function inspectionEntries(
         x: geometry.x(series, point),
         y: unavailable ? height - UNAVAILABLE_BOTTOM_MARGIN : geometry.y(median),
         unavailable,
+        availability: pointAvailability(point, metric),
       })
     }
   }

@@ -18,7 +18,9 @@ public sealed record HumanMissJudgementRequest(
     string ProviderThreadId,
     string? FilePath,
     string Discussion,
-    bool ThreadResolved);
+    bool ThreadResolved,
+    bool IndependentConcern = false,
+    bool ReviewerOwnedRoot = false);
 
 /// <summary>
 ///     The three separate judgements a human thread has to pass to count as something ProPR missed. They are
@@ -38,7 +40,9 @@ public sealed record HumanMissJudgement(
     bool WasActedOn,
     bool IsInScope,
     double Confidence,
-    string Rationale);
+    string Rationale,
+    bool IsHumanConfirmed = true,
+    bool IsSingleConcern = true);
 
 /// <summary>
 ///     Judges whether a human-authored review thread describes something ProPR should have found.

@@ -32,6 +32,25 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Features.Crawling;
 [Collection("PostgresIntegration4")]
 public sealed class DiscussionSynchronizationStoreTests(PostgresContainerFixture postgres)
 {
+    [SkippableFact]
+    public async Task RetainedReplayUsesItsConfiguredLeaseWithoutChangingNormalDiscussionDefaults()
+    {
+        postgres.SkipIfUnavailable();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow.AddDays(1));
+        IDiscussionSynchronizationStore store = new DiscussionSynchronizationStore(this.Factory(), LocalScmPolicies.Registry, clock);
+        await using (var replay = await store.TryAcquireRetainedReplayAsync(Target(), TimeSpan.FromMinutes(15)))
+        {
+            Assert.NotNull(replay);
+            Assert.InRange(replay.State.LeaseExpiresAt!.Value - replay.ObservedAt, TimeSpan.FromMinutes(14), TimeSpan.FromMinutes(16));
+            await replay.EnsureCurrentAsync();
+            Assert.InRange(replay.State.LeaseExpiresAt!.Value - clock.GetUtcNow(), TimeSpan.FromMinutes(14), TimeSpan.FromMinutes(16));
+        }
+
+        await using var normal = await store.TryAcquireAsync(Target(), null, true, Interval);
+        Assert.NotNull(normal);
+        Assert.InRange(normal.State.LeaseExpiresAt!.Value - normal.ObservedAt, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(3));
+    }
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(300);
 
     [SkippableFact]

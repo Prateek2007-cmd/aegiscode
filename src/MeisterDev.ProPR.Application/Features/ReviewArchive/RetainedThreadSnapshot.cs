@@ -20,7 +20,8 @@ public sealed record RetainedThreadSnapshot(
     string Status,
     DateTimeOffset UpdatedAt,
     IReadOnlyList<RetainedCommentSnapshot> Comments,
-    bool IsDeleted = false);
+    bool IsDeleted = false,
+    MeisterDev.ProPR.Domain.ValueObjects.ReviewConcernAnchor? ConcernAnchor = null);
 
 /// <summary>
 ///     A single comment within a <see cref="RetainedThreadSnapshot" />. The comment <paramref name="Text" />

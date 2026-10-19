@@ -43,6 +43,11 @@ public interface IRunnerIngestLedger
 /// </summary>
 public interface IRunnerIngestWriter
 {
+    /// <summary>Idempotently checkpoints optional model proof before a batch receipt can acknowledge it.</summary>
+    Task<bool> WriteModelEvidenceAsync(
+        RunnerCallContext call, IReadOnlyList<RunnerFileOutcome> files,
+        IReadOnlyList<MeisterDev.ProPR.Domain.ValueObjects.ModelReviewManifest> manifests, CancellationToken ct = default) => Task.FromResult(false);
+
     /// <summary>Appends trace events to the job's protocol.</summary>
     Task WriteEventsAsync(Guid jobId, IReadOnlyList<RunnerTraceEvent> events, CancellationToken ct = default);
 

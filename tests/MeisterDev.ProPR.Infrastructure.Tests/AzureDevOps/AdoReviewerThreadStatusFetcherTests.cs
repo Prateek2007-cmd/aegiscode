@@ -19,6 +19,54 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AzureDevOps;
 
 public sealed class AdoReviewerThreadStatusFetcherTests
 {
+    [Theory]
+    [InlineData(false, "RIGHT", "original-head")]
+    [InlineData(true, "LEFT", "original-common")]
+    public async Task ConcernAnchorKeepsOriginalTrackedPositionsAndTheCreationIteration(bool left, string side, string commit)
+    {
+        var git = MakeGitClient();
+        var comment = CreateComment("human", Guid.NewGuid(), "Concern", commentId: 1);
+        comment.PublishedDate = DateTime.Parse("2026-10-01T12:00:00Z").ToUniversalTime();
+        var native = new GitPullRequestCommentThread
+        {
+            Id = 5, Status = CommentThreadStatus.Active, Comments = [comment],
+            ThreadContext = new CommentThreadContext { FilePath = "renamed.cs", RightFileStart = new CommentPosition { Line = 99 } },
+            PullRequestThreadContext = new GitPullRequestCommentThreadContext
+            {
+                IterationContext = new CommentIterationContext { FirstComparingIteration = 1, SecondComparingIteration = 1 },
+                TrackingCriteria = new CommentTrackingCriteria
+                {
+                    FirstComparingIteration = 1, SecondComparingIteration = 2,
+                    OrigFilePath = "original.cs", OrigLeftFileStart = left ? new CommentPosition { Line = 12 } : null,
+                    OrigRightFileStart = left ? null : new CommentPosition { Line = 12 }
+                }
+            }
+        };
+        git.GetThreadsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int?>(), Arg.Any<int?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns([native]);
+        git.GetPullRequestIterationsAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<bool?>(), Arg.Any<object>(), Arg.Any<CancellationToken>())
+            .Returns(
+            [
+                new GitPullRequestIteration
+                {
+                    Id = 1, SourceRefCommit = new GitCommitRef { CommitId = "original-head" },
+                    CommonRefCommit = new GitCommitRef { CommitId = "original-common" }
+                },
+                new GitPullRequestIteration { Id = 2, SourceRefCommit = new GitCommitRef { CommitId = "new-head" } }
+            ]);
+        var snapshot = await BuildSut(git, null).ReadSnapshotAsync(
+            "https://dev.azure.com/org", "project", "repo", 1, ThreadOwnershipResolver.None, Guid.NewGuid());
+        var anchor = Assert.Single(snapshot.Threads).ConcernAnchor;
+        Assert.NotNull(anchor);
+        Assert.True(anchor.IsKnown);
+        Assert.Equal("original.cs", anchor.FilePath);
+        Assert.Equal(12, anchor.StartLine);
+        Assert.Equal(side, anchor.Side);
+        Assert.Equal(commit, anchor.CommitSha);
+    }
+
     [Fact]
     public async Task OrdinaryAndStrictAdoStatusesPropagateRequestedCancellation()
     {

@@ -27,3 +27,6 @@ public sealed class CodeInsightIncompleteEnumerationException() : InvalidOperati
 
 /// <summary>The provider cannot correlate retained publications with code-thread identities.</summary>
 public sealed class CodeInsightProviderIdentityException() : InvalidOperationException("Provider code-thread correlation is unavailable.");
+
+/// <summary>The provider adapter does not support strict historical feedback correlation.</summary>
+public sealed class CodeInsightHistoricalCapabilityUnavailableException() : InvalidOperationException("Historical feedback correlation is unsupported.");

@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -15,6 +16,10 @@ internal sealed class ReviewFileResultConfiguration : IEntityTypeConfiguration<R
 {
     public void Configure(EntityTypeBuilder<ReviewFileResult> builder)
     {
+        builder.Property(result => result.ModelEvidence).HasColumnName("model_evidence_json").HasColumnType("jsonb")
+            .HasConversion(
+                value => value == null ? null : JsonSerializer.Serialize(value, (JsonSerializerOptions?)null),
+                json => json == null ? null : ModelEvidenceJson.ReadEvidence(json, null));
         builder.ToTable("review_file_results");
 
         builder.HasKey(r => r.Id);

@@ -96,9 +96,9 @@ public sealed class CodeInsightHistoricalRefreshStore(
                 }
 
                 var gaps = sources.Aggregate(CodeInsightHistoricalGap.None, (current, source) => current | source.Gaps);
-                if (sources.Count == 0 || (gaps == CodeInsightHistoricalGap.None &&
-                                           (row.LastHistoricalRefreshAttemptAt is null ||
-                                            row.LastHistoricalRefreshCompletedAt >= row.LastHistoricalRefreshAttemptAt)))
+                var unfinishedAttempt = row.LastHistoricalRefreshAttemptAt is { } started
+                                        && !(row.LastHistoricalRefreshCompletedAt >= started);
+                if (!IsExplicitlyQueued(row) && (sources.Count == 0 || (gaps == CodeInsightHistoricalGap.None && !unfinishedAttempt)))
                 {
                     continue;
                 }
@@ -130,14 +130,20 @@ public sealed class CodeInsightHistoricalRefreshStore(
     {
         if (!db.Database.IsNpgsql())
         {
+            var repairReasons = CodeInsightHistoricalRecoveryPolicy.RepairRequiredReasons;
             return await db.CodeInsightPullRequests.Where(p => enabled.Contains(p.ClientId)
                                                                && !scanned.Contains(p.Id)
+                                                               && (p.LastHistoricalRefreshReason == null ||
+                                                                   !repairReasons.Contains(p.LastHistoricalRefreshReason))
                                                                && (p.HistoricalRefreshNotBefore == null || p.HistoricalRefreshNotBefore <= now))
-                .OrderBy(p => p.LastHistoricalRefreshAttemptAt).ThenBy(p => p.Id).Take(cap).ToListAsync(ct);
+                .OrderByDescending(p =>
+                    p.LastHistoricalRefreshAttemptId == null && p.HistoricalRefreshNotBefore != null && p.LastHistoricalRefreshReason == null)
+                .ThenBy(p => p.LastHistoricalRefreshAttemptAt).ThenBy(p => p.Id).Take(cap).ToListAsync(ct);
         }
 
         var ids = enabled.ToArray();
         var inspected = scanned.ToArray();
+        var requiresRepair = CodeInsightHistoricalRecoveryPolicy.RepairRequiredReasons;
         return await db.CodeInsightPullRequests.FromSqlInterpolated(
             $"""
              SELECT pr.* FROM code_insight_pull_requests pr
@@ -174,13 +180,17 @@ public sealed class CodeInsightHistoricalRefreshStore(
              ) gaps
              WHERE pr.client_id = ANY({ids})
                AND NOT (pr.id = ANY({inspected}))
+               AND (pr."LastHistoricalRefreshReason" IS NULL OR NOT (pr."LastHistoricalRefreshReason" = ANY({requiresRepair})))
                AND (pr."HistoricalRefreshNotBefore" IS NULL OR pr."HistoricalRefreshNotBefore" <= {now})
                AND (
+                 (pr."LastHistoricalRefreshAttemptId" IS NULL AND pr."HistoricalRefreshNotBefore" IS NOT NULL AND pr."LastHistoricalRefreshReason" IS NULL)
+                 OR
                  -- Partial writes do not complete an interrupted attempt.
                  (gaps.has_retained_evidence AND pr."LastHistoricalRefreshAttemptAt" IS NOT NULL AND
                   (pr."LastHistoricalRefreshCompletedAt" IS NULL OR pr."LastHistoricalRefreshCompletedAt" < pr."LastHistoricalRefreshAttemptAt"))
                  OR gaps.needs_native_outcome OR gaps.needs_miss_fingerprint OR gaps.needs_harvest_coverage)
-             ORDER BY pr."LastHistoricalRefreshAttemptAt" ASC NULLS FIRST, pr.id
+             ORDER BY (pr."LastHistoricalRefreshAttemptId" IS NULL AND pr."HistoricalRefreshNotBefore" IS NOT NULL AND pr."LastHistoricalRefreshReason" IS NULL) DESC,
+               pr."LastHistoricalRefreshAttemptAt" ASC NULLS FIRST, pr.id
              LIMIT {cap} FOR UPDATE OF pr SKIP LOCKED
              """).ToListAsync(ct);
     }
@@ -238,6 +248,61 @@ public sealed class CodeInsightHistoricalRefreshStore(
 
         return true;
     }
+
+    public async Task<CodeInsightHistoricalRequeueResult> RequeueAsync(
+        Guid aggregateId, IReadOnlyCollection<Guid> authorizedClients, DateTimeOffset now, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        await using var lease = await CodeInsightDbContextLease.CreateAsync(dbContext, contextFactory, ct);
+        var db = lease.Context;
+        await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(ct) : null;
+        var clients = authorizedClients.ToArray();
+        if (db.Database.IsNpgsql())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT id FROM code_insight_pull_requests WHERE id = {aggregateId} AND client_id = ANY({clients}) FOR UPDATE", ct);
+        }
+
+        var row = await db.CodeInsightPullRequests.FirstOrDefaultAsync(p => p.Id == aggregateId && clients.Contains(p.ClientId), ct);
+        if (row is null)
+        {
+            return CodeInsightHistoricalRequeueResult.NotFound;
+        }
+
+        if (db.Database.IsRelational())
+        {
+            await db.Entry(row).ReloadAsync(ct);
+        }
+
+        if (!await gate.IsCollectionEnabledAsync(row.ClientId, ct))
+        {
+            return CodeInsightHistoricalRequeueResult.CollectionDisabled;
+        }
+
+        if (row.LastHistoricalRefreshReason is null && row.LastHistoricalRefreshAttemptId is not null
+                                                    && row.LastHistoricalRefreshAttemptAt is { } attempted &&
+                                                    !(row.LastHistoricalRefreshCompletedAt >= attempted)
+                                                    && row.HistoricalRefreshNotBefore > now)
+        {
+            return CodeInsightHistoricalRequeueResult.InProgress;
+        }
+
+        row.LastHistoricalRefreshAttemptId = null;
+        row.LastHistoricalRefreshReason = null;
+        row.HistoricalRefreshNotBefore = now;
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+        {
+            await transaction.CommitAsync(ct);
+        }
+
+        return CodeInsightHistoricalRequeueResult.Queued;
+    }
+
+    // Explicit requeue clears the attempt token while retaining a due cutoff; claims replace that token.
+    private static bool IsExplicitlyQueued(CodeInsightPullRequest row) => row.LastHistoricalRefreshAttemptId is null
+                                                                          && row.HistoricalRefreshNotBefore is not null &&
+                                                                          row.LastHistoricalRefreshReason is null;
 
     private async Task<IReadOnlyList<CodeInsightHistoricalRefreshSource>?> ReadSourcesAsync(
         MeisterProPRDbContext db, CodeInsightPullRequest pr, CancellationToken ct)

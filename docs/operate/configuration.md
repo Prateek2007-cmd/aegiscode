@@ -663,15 +663,20 @@ credential reads together with the federated token file its own variable points 
 ## Code Insights
 
 Client collection policy and the commercial Code Insights capability gate analytics. These variables
-control background work and retention; the example stack does not forward them by default.
+control score coverage, background work and retention; the example stack does not forward them by default.
 
 | Variable | What it does | Default | Accepted |
 |---|---|---|---|
+| `CODE_INSIGHTS_MIN_COVERAGE_PERCENTAGE` | Advisory percentage of covered source pull requests for range diagnostics | `80` | Integer, clamped to 0–100 |
+| `CODE_INSIGHTS_MIN_COVERED_PULL_REQUESTS` | Advisory covered source pull requests for range diagnostics | `1` | Integer, floored at 1 |
 | `CODE_INSIGHTS_CLASSIFICATION_INTERVAL_SECONDS` | Interval between classification backlog sweeps | `60` | Integer, floored at 10 seconds |
 | `CODE_INSIGHTS_CATCHUP_INTERVAL_SECONDS` | Interval between projection, seal and provider-evidence catch-up sweeps | `21600` | Integer, floored at 600 seconds |
 | `CODE_INSIGHTS_BACKFILL_MAX_JOBS` | Maximum jobs processed in one catch-up sweep | `50` | Integer, floored at 1 |
 | `CODE_INSIGHTS_PROVIDER_EVIDENCE_BACKFILL_MAX_PULL_REQUESTS` | Maximum retained pull requests refreshed from provider evidence per catch-up sweep | `25` | Integer, clamped to 1–250 |
 | `CODE_INSIGHTS_PROVIDER_EVIDENCE_SWEEP_BUDGET_SECONDS` | Time budget for one provider-evidence sweep | `300` | Integer, clamped to 10–600 seconds |
+| `CODE_INSIGHTS_PROVIDER_EVIDENCE_LEASE_MINUTES` | Maximum duration of a historical observation claim | `15` | Integer, clamped to 1–60 minutes |
+| `CODE_INSIGHTS_MODEL_EVIDENCE_RETRY_COOLDOWN_MINUTES` | Delay between bounded local classification retries for one captured model source | `5` | Integer, clamped to 1–1440 minutes |
+| `CODE_INSIGHTS_PROVIDER_EVIDENCE_RETRY_COOLDOWN_MINUTES` | Delay before an unavailable, retryable historical observation is eligible again | `360` | Integer, clamped to 10–1440 minutes |
 | `CODE_INSIGHTS_PURGE_INTERVAL_SECONDS` | Interval between source and saved-report expiration sweeps | `3600` | Integer, floored at 60 seconds |
 | `CODE_INSIGHTS_RETENTION_DAYS` | Ordinary collected source-data retention | `365` | Integer, floored at 1 day |
 | `CODE_INSIGHTS_REPORT_RETENTION_DAYS` | Independent immutable saved-report retention | `365` | Integer, floored at 1 day |
@@ -679,9 +684,26 @@ control background work and retention; the example stack does not forward them b
 Source expiration preserves reports until their independent expiry. Collection opt-out stops new
 collection and retains authorized reports until expiry or deletion. Client collection-data deletion and
 client deletion remove complete reports containing that client's data, including mixed-client reports.
-Provider refresh runs after projection and sealing, with its own batch and time limits. Each attempt
-expires after 15 minutes. Unavailable evidence retries after six hours; incomplete provider reads keep
-collection unavailable.
+Provider refresh runs after projection and sealing, with its own batch, time and lease limits. Retryable
+failures use the configured cooldown. Missing usable connections, source coordinates or provider identity,
+unsupported historical collection and missing observer dependencies pause automatic retries until repair
+and explicit requeue. Generic provider failures remain retryable when retained evidence cannot establish
+their cause. Collection-disabled clients are not claimed.
+
+Requeue requires tenant administration and the Code Insights capability. It rejects an active lease or
+disabled client collection and queues a subsequent bounded sweep without collecting evidence in the
+request. It preserves retained observations and retention timestamps. Shortening the catch-up interval
+does not shorten a retryable failure's cooldown.
+
+Each provider-evidence sweep logs attempted, observed, unavailable and disabled totals. Failures log the
+pull request identity, bounded failure reason, failing stage and recovery disposition. Unexpected failures
+include the exception type and numeric diagnostic code without provider messages or payloads.
+
+Coverage settings provide advisory warnings for current range queries. Scores remain available below
+these minimums when covered evidence supports the calculation. Their effective values are captured with
+saved reports; changing them does not recalculate a capture. Recall and F1 require at least one covered
+source. Zero settled misses does not impose an additional sample requirement. Empty denominators remain
+unavailable.
 [Reviewer performance](../concepts/reviewer-performance.md) describes live score ranges and saved reports.
 
 ## Observability

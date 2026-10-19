@@ -115,9 +115,20 @@ public sealed class DiscussionSynchronizationStore(
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<IDiscussionSynchronizationLease?> TryAcquireAsync(
+    public Task<IDiscussionSynchronizationLease?> TryAcquireAsync(
         PullRequestThreadSnapshotTarget target, string? revision,
-        bool force, TimeSpan reconciliationInterval, CancellationToken ct = default)
+        bool force, TimeSpan reconciliationInterval, CancellationToken ct = default) =>
+        this.TryAcquireCoreAsync(target, revision, force, reconciliationInterval, LeaseDuration, ct);
+
+    public Task<IDiscussionSynchronizationLease?> TryAcquireRetainedReplayAsync(
+        PullRequestThreadSnapshotTarget target, TimeSpan leaseDuration,
+        CancellationToken ct = default) => this.TryAcquireCoreAsync(
+        target, null, true, TimeSpan.FromMinutes(5),
+        TimeSpan.FromMinutes(Math.Clamp(leaseDuration.TotalMinutes, 1, 60)), ct);
+
+    private async Task<IDiscussionSynchronizationLease?> TryAcquireCoreAsync(
+        PullRequestThreadSnapshotTarget target, string? revision,
+        bool force, TimeSpan reconciliationInterval, TimeSpan leaseDuration, CancellationToken ct)
     {
         var db = await factory.CreateDbContextAsync(ct);
         IAsyncDisposable? sourceLock = null;
@@ -162,7 +173,7 @@ public sealed class DiscussionSynchronizationStore(
             }
 
             state.LeaseToken = Guid.NewGuid();
-            state.LeaseExpiresAt = now + LeaseDuration;
+            state.LeaseExpiresAt = now + leaseDuration;
             state.ObservationSequence = checked(state.ObservationSequence + 1);
             var observationTime = fence is null || fence.ObservedAt < now ? now : fence.ObservedAt.AddTicks(10);
             if (fence is null)
@@ -177,7 +188,7 @@ public sealed class DiscussionSynchronizationStore(
             fence.ObservedAt = observationTime;
             fence.Completed = false;
             await db.SaveChangesAsync(ct);
-            return new Lease(db, sourceLock, state, fenceId, observationTime, this.NowAsync, this._logger);
+            return new Lease(db, sourceLock, state, fenceId, observationTime, this.NowAsync, this._logger, leaseDuration);
         }
         catch
         {
@@ -264,7 +275,8 @@ public sealed class DiscussionSynchronizationStore(
         Guid fenceId,
         DateTimeOffset observationTime,
         Func<MeisterProPRDbContext, CancellationToken, Task<DateTimeOffset>> nowAsync,
-        ILogger logger)
+        ILogger logger,
+        TimeSpan leaseDuration)
         : IDiscussionSynchronizationLease
     {
         private readonly Guid _token = state.LeaseToken!.Value;
@@ -296,7 +308,7 @@ public sealed class DiscussionSynchronizationStore(
         {
             await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
             var now = await nowAsync(db, ct);
-            var renewed = now + LeaseDuration;
+            var renewed = now + leaseDuration;
             if (this._completed || state.LeaseExpiresAt <= now || await db.DiscussionSynchronizationStates.Where(row => row.Id == state.Id &&
                         row.LeaseToken == this._token && row.ObservationSequence == this._sequence && row.LeaseExpiresAt > now)
                     .ExecuteUpdateAsync(set => set.SetProperty(row => row.LeaseExpiresAt, renewed), ct) != 1)

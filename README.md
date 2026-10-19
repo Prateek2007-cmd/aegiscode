@@ -56,10 +56,6 @@ provider and AI model, and getting a first review posted. The [deployment guide]
 covers what to change once you keep the installation. The compose stack is for evaluation;
 `example/azure/.azure/` deploys the same stack to Azure Container Apps.
 
-Discussion refreshes use authenticated notifications and a five-minute full reconciliation by default.
-Independent client processing uses bounded concurrency and durable per-thread progress.
-See [discussion synchronization](docs/operate/discussion-synchronization.md) for settings and diagnostics.
-
 Guided crawl, webhook, mention and ProCursor configuration starts with a saved client connection.
 The connection supplies its accessible scopes, native hierarchy and source capabilities. ProCursor
 knowledge-source creation is available for connections with a registered knowledge-source capability.
@@ -78,7 +74,7 @@ Start at one of these:
 | [Quickstart](docs/quickstart.md) | You want ProPR running on one machine, with one review posted on a real pull request |
 | [How it works](docs/concepts/how-it-works.md) | You want to know what you deployed and how a review gets triggered |
 | [Reviews](docs/concepts/reviews.md) | You need to know what happens inside a review, or why a finding was not posted |
-| [Reviewer performance](docs/concepts/reviewer-performance.md) | You want interpretation ranges, model precision comparisons, evidence coverage, or saved reports |
+| [Reviewer performance](docs/concepts/reviewer-performance.md) | You want score ranges over covered pull requests, qualified model recall/F1, overall precision, evidence recovery, or saved reports |
 | [SCM platforms](docs/platforms/index.md) | You are connecting Azure DevOps, GitHub, GitLab or Forgejo, on-prem included |
 | [AI providers](docs/ai/index.md) | You are choosing a model provider, or deciding between a native family and a gateway |
 | [Deploying](docs/operate/deploy.md) | You are past evaluation and need ingress, images, workers and persistence configured |

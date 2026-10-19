@@ -35,6 +35,26 @@ public sealed class RunnerExecutionContractTests
         """[{"comment":{"filePath":"src/Foo.cs","lineNumber":3,"severity":"warning","message":"Potential issue."},"reasonCode":"judge_output_limit"}]""";
 
     [Theory]
+    [InlineData("[{\"attempt\":1,\"files\":[\"src/Foo.cs\"]}]", false)]
+    [InlineData("42", true)]
+    public async Task IngestRelaysOptionalModelManifestsWithoutRejectingOrdinaryOutcomes(string manifests, bool malformed)
+    {
+        using var harness = new Harness();
+        var body =
+            CallJson().TrimEnd(
+                '}') + ",\"sequence\":1,\"idempotencyKey\":\"proof\",\"fileResults\":[{\"filePath\":\"src/Foo.cs\",\"isComplete\":true,\"reviewedPassKeys\":[],\"comments\":["
+                     + CommentJson + "]}],\"modelManifests\":" + manifests + "}";
+        using var response = await harness.Client.PostAsync("/runners/execution/ingest", JsonRequest(body));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await harness.Ingest.Received(1).IngestAsync(
+            Arg.Any<RunnerCallContext>(),
+            Arg.Is<RunnerIngestBatch>(batch => batch.FileResults[0].Comments!.Count == 1 && batch.ModelManifests != null && batch.ModelManifests.Count == 1
+                                               && (malformed
+                                                   ? batch.ModelManifests[0].UnavailableReason == "model-proof-limit-exceeded"
+                                                   : batch.ModelManifests[0].Files.Count == 1)), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task PriorResults_ResponseDeserializesAsItsAdvertisedTypeAndPreservesTheEnvelope(bool unavailable)

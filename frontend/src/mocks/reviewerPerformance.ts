@@ -11,12 +11,28 @@ import type {
   PerformanceFacets,
   PerformanceMatrixCell,
   PerformanceSavedReport,
+  PerformanceExclusion,
 } from '@/services/reviewerPerformanceService'
 import type { components } from '@/types'
 type Counts = components['schemas']['ReviewerPerformanceCounts']
 type Outcomes = components['schemas']['ReviewerPerformanceOutcomeCounts']
 type Range = components['schemas']['ReviewerPerformanceRange']
-const version = 'reviewer-performance-v1'
+const version = 'reviewer-performance-v2'
+const recoveryCatalog = new Map<string, PerformanceExclusion>()
+const modelRecovery = new Map<string, number>()
+const sourceConnectionId = '30000000-0000-0000-0000-000000000001'
+const queuedRecovery = new Map<string, { queuedAt: number; requiresRepair: boolean }>()
+const sweepDelay = 5000
+const observationDuration = 10000
+function recoveryProgress(id: string) {
+  const request = queuedRecovery.get(id)
+  if (!request) return undefined
+  const started = request.queuedAt + sweepDelay
+  const completed = started + observationDuration
+  return { ...request, started, completed,
+    state: Date.now() < started ? 'queued' : Date.now() < completed ? 'in-progress' : request.requiresRepair ? 'repair-required' : 'complete',
+  }
+}
 const clients = [
   { id: '10000000-0000-0000-0000-000000000001', label: 'Payments' },
   { id: '10000000-0000-0000-0000-000000000002', label: 'Platform' },
@@ -110,13 +126,8 @@ function summarize(values: (number | null | undefined)[]): Range | undefined {
 }
 function score(
   counts: Counts,
-  modelScope: boolean,
+  _modelScope: boolean,
 ): components['schemas']['ReviewerPerformanceScore'] {
-  if (modelScope) {
-    counts.actedMisses = 0
-    counts.unactedMisses = 0
-    counts.harvestedThreads = 0
-  }
   const scenarios: PerformanceScenario[] = []
   for (const dismissed of ['positive', 'negative', 'excluded'])
     for (const wontFix of ['positive', 'negative', 'excluded'])
@@ -149,11 +160,11 @@ function score(
               duplicates,
               truePositives: tp,
               falsePositives: fp,
-              falseNegatives: modelScope ? null : fn,
+              falseNegatives: fn,
               excluded,
               precision: tp + fp ? tp / (tp + fp) : null,
-              recall: !modelScope && tp + fn ? tp / (tp + fn) : null,
-              f1: !modelScope && 2 * tp + fp + fn ? (2 * tp) / (2 * tp + fp + fn) : null,
+              recall: tp + fn ? tp / (tp + fn) : null,
+              f1: 2 * tp + fp + fn ? (2 * tp) / (2 * tp + fp + fn) : null,
             })
           }
   counts.outcomes = {
@@ -182,6 +193,13 @@ type Cell = {
   type: string
   qualifier: string
   counts: Counts
+  aggregateId: string
+  pullRequestId: number
+  covered: boolean
+  exclusionReason?: string
+  modelCovered: boolean
+  modelReason?: string
+  concerns: { id: string; acted: boolean; detectedBy: string[] }[]
 }
 function cells(from: string, to: string): Cell[] {
   const result: Cell[] = []
@@ -226,7 +244,29 @@ function cells(from: string, to: string): Cell[] {
             counts.withheld = 1
             counts.duplicateChecked = counts.generated! - 4
             counts.duplicateUnknown = 2
+            const coverageOnly = (day + s) % 18 === 0
+            if (coverageOnly) {
+              Object.assign(counts, emptyCounts())
+            }
+            const exclusionReason = !coverageOnly && (day + s) % 12 === 0
+              ? 'miss-judgement-failed'
+              : 'miss-collection-coverage-unavailable'
+            if ((day + s) % 6 === 0 && !coverageOnly) counts.failedMissJudgements = exclusionReason === 'miss-judgement-failed' ? 1 : 0
+            const aggregateId = `20000000-0000-0000-${String(s + 1).padStart(4, '0')}-${String(day).padStart(12, '0')}`
+            const recovered = recoveryProgress(aggregateId)?.state === 'complete'
+            if (recovered) counts.failedMissJudgements = 0
+            const zero = m === 2 && (day + s) % 5 === 0
+            if (zero) Object.assign(counts, emptyCounts())
+            const noConcerns = (day + s) % 10 === 0
+            const modelReason = m === 0 ? 'model-proof-unavailable'
+              : (day + s) % 8 === 0 && m === 2 ? 'model-generation-incomplete'
+              : !noConcerns && (day + s) % 4 === 0 && m === 2 && !modelRecovery.has(aggregateId) ? 'model-concern-match-unavailable'
+              : !recovered && (day + s) % 6 === 0 ? 'model-concern-collection-unavailable' : undefined
+            const issue = `${aggregateId}/${type.id}/${qualifier.id}`
+            const detectedBy = (day + s) % 5 !== 0 && day >= today - 13 ? [models[2]!.id] : []
             result.push({
+              modelCovered: modelReason == null, modelReason,
+              concerns: noConcerns ? [] : [{ id: `${issue}/X`, acted: true, detectedBy }, { id: `${issue}/Y`, acted: t === 0, detectedBy: [] }],
               date: new Date(day * 86400000).toISOString().slice(0, 10),
               client: scope.client,
               repository: repoId(scope),
@@ -234,6 +274,10 @@ function cells(from: string, to: string): Cell[] {
               type: type.id,
               qualifier: qualifier.id,
               counts,
+              aggregateId,
+              pullRequestId: 100 + day,
+              covered: recovered || (day + s) % 6 !== 0,
+              exclusionReason,
             })
           }
   }
@@ -293,12 +337,45 @@ function measurement(
   query: PerformanceQuery,
   dimension: string,
   observed = true,
+  exclusions: PerformanceExclusion[] = [],
 ): PerformancePoint {
+  const modelScope = scope.models != null || dimension === 'model'
   const counts = emptyCounts()
   for (const row of rows) add(counts, row.counts)
-  const hasObservation = query.aggregation === 'period' ? observed : rows.length > 0
-  const modelScope = scope.models != null || dimension === 'model'
-  const result = score(counts, modelScope)
+  const sources = [...new Map(rows.map((row) => [row.aggregateId, row])).values()].map((row) => {
+    const members = rows.filter((member) => member.aggregateId === row.aggregateId)
+    const failed = members.find((member) => modelScope ? !member.modelCovered : !member.covered)
+    return { ...row, covered: !failed, exclusionReason: modelScope ? failed?.modelReason : failed?.exclusionReason }
+  })
+  const excluded = sources.filter((row) => !row.covered)
+  const coveredIds = new Set(sources.filter((row) => row.covered).map((row) => row.aggregateId))
+  const coveredCounts = emptyCounts()
+  for (const row of rows.filter((row) => coveredIds.has(row.aggregateId))) add(coveredCounts, row.counts)
+  if (modelScope) {
+    coveredCounts.actedMisses = 0
+    coveredCounts.unactedMisses = 0
+    coveredCounts.provisionalMisses = 0
+    coveredCounts.harvestedThreads = 0
+    const issues = new Map(rows.filter((row) => coveredIds.has(row.aggregateId)).flatMap((row) => row.concerns.map((concern) => [concern.id, { ...concern, source: row.aggregateId }] as const)))
+    for (const concern of issues.values()) {
+      const selected = new Set(rows.filter((row) => row.aggregateId === concern.source).map((row) => row.model))
+      if (!concern.detectedBy.some((model) => selected.has(model))) {
+        const field = concern.acted ? 'actedMisses' : 'unactedMisses'
+        coveredCounts[field] = (coveredCounts[field] ?? 0) + 1
+      }
+      coveredCounts.harvestedThreads = (coveredCounts.harvestedThreads ?? 0) + 1
+    }
+  }
+  const covered = sources.length - excluded.length
+  const meetsMinimum = covered >= 1 && covered * 100 >= sources.length * 80
+  const hasObservation = (query.aggregation === 'period' ? observed : rows.length > 0) &&
+    ((counts.generated ?? 0) > 0 || (coveredCounts.harvestedThreads ?? 0) > 0)
+  const result = score(coveredCounts, false)
+  if (covered === 0) {
+    result.summary = { precision: result.summary?.precision }
+    result.scenarios = result.scenarios?.map((item) => ({ ...item, falseNegatives: null, recall: null, f1: null }))
+  }
+  const overall = score(counts, false)
   if (!hasObservation) {
     result.summary = {}
     result.scenarios = result.scenarios?.map((item) => ({
@@ -308,6 +385,47 @@ function measurement(
       f1: null,
     }))
   }
+  if (!hasObservation) {
+    overall.summary = {}
+    overall.scenarios = overall.scenarios?.map((item) => ({ ...item, precision: null }))
+  }
+  const ids = excluded.map((row) => {
+    let entry = exclusions.find((entry) => entry.aggregateId === row.aggregateId && entry.reasons?.[0] === row.exclusionReason)
+    if (!entry) {
+      const index = scopes.findIndex((scope) => repoId(scope) === row.repository)
+      const repairRequired = row.pullRequestId % 2 === 0 && row.exclusionReason !== 'miss-judgement-failed'
+      entry = {
+        id: exclusions.length, aggregateId: row.aggregateId, clientId: row.client,
+        clientName: clients.find((client) => client.id === row.client)?.label ?? row.client,
+        repositoryId: row.repository, repositoryName: scopes[index]?.label,
+        pullRequestId: row.pullRequestId, providerScope: provider,
+        reasons: [row.exclusionReason ?? 'miss-collection-coverage-unavailable'],
+        lastAttemptAt: `${row.date}T12:00:00Z`, lastRefreshReason: repairRequired ? 'SourceCoordinatesUnavailable' : row.exclusionReason === 'miss-judgement-failed' ? 'ClassificationUnavailable' : 'ProviderReadFailed',
+        recoveryDisposition: repairRequired ? 'repair-required' : 'retryable',
+        collectionEnabled: true, notBefore: `${row.date}T13:00:00Z`,
+        sourceUrl: repairRequired ? undefined : `https://dev.azure.com/example/project/_git/${scopes[index]?.repo}/pullrequest/${row.pullRequestId}`,
+      }
+      if (modelScope) {
+        entry.recoveryAction = row.exclusionReason === 'model-concern-match-unavailable' ? 'retry-model-evidence'
+          : row.exclusionReason === 'model-concern-collection-unavailable' ? 'recollect-source' : 'none'
+        entry.sourceConnectionId = sourceConnectionId
+        entry.recoveryDisposition = entry.recoveryAction === 'none' ? 'unreconstructable-history' : 'ready'
+        entry.lastModelRetryAt = modelRecovery.has(row.aggregateId) ? new Date(modelRecovery.get(row.aggregateId)!).toISOString() : undefined
+        entry.modelRetryNotBefore = modelRecovery.has(row.aggregateId) ? new Date(modelRecovery.get(row.aggregateId)! + 300000).toISOString() : undefined
+      }
+      const progress = recoveryProgress(row.aggregateId)
+      if (progress) {
+        entry.recoveryDisposition = progress.state
+        entry.lastRefreshReason = progress.state === 'repair-required' ? 'SourceCoordinatesUnavailable' : null
+        entry.notBefore = new Date(progress.state === 'queued' ? progress.queuedAt : progress.state === 'in-progress' ? progress.started + 15 * 60000 : progress.completed + 360 * 60000).toISOString()
+        if (progress.state !== 'queued') entry.lastAttemptAt = new Date(progress.started).toISOString()
+      }
+      exclusions.push(entry)
+      recoveryCatalog.set(modelScope ? `${row.aggregateId}/${provider}/${sourceConnectionId}` : row.aggregateId, { ...entry })
+    }
+    return entry.id!
+  })
+  const exclusionReasons = [...new Set(excluded.map((row) => row.exclusionReason ?? 'miss-collection-coverage-unavailable'))]
   return {
     date,
     windowFrom:
@@ -317,8 +435,16 @@ function measurement(
         ? scope.to
         : endOfBucket(date, query.bucket ?? 'day'),
     score: result,
+    overallPrecision: { counts: overall.counts, summary: overall.summary?.precision, scenarios: overall.scenarios?.map(({ id, truePositives, falsePositives, excluded, precision }) => ({ id, truePositives, falsePositives, excluded, precision })) },
+    coverage: {
+      candidatePullRequests: sources.length, coveredPullRequests: covered, excludedPullRequests: excluded.length,
+      percentage: sources.length ? 100 * covered / sources.length : null, meetsMinimum, recallSupported: true,
+      reasons: exclusionReasons.map((reason) => ({ reason, pullRequests: excluded.filter((row) => row.exclusionReason === reason).length })), exclusionIds: ids,
+    },
     unavailableReasons: [
-      ...(modelScope ? ['miss-model-attribution-unavailable'] : []),
+      ...exclusionReasons,
+      ...(covered < 1 ? ['insufficient-covered-pull-requests'] : []),
+      ...(sources.length > 0 && covered * 100 < sources.length * 80 ? ['coverage-below-minimum'] : []),
       ...(counts.provisionalMisses ? ['miss-observation-provisional'] : []),
       ...(counts.duplicateUnknown ? ['duplicate-verification-incomplete'] : []),
       ...(!hasObservation ? ['no-series-observation-in-period'] : []),
@@ -355,6 +481,7 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
       grouping === 'none'
         ? ['all']
         : [...new Set(selected.map((cell) => key(cell, grouping)))].sort()
+    const exclusionCatalog: PerformanceExclusion[] = []
     const series = keys.map((id) => ({
       id,
       label: label(id, grouping),
@@ -369,7 +496,7 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
         return measurement(
           rows,
           date,
-          scope,
+          grouping === 'model' ? { ...scope, models: [id] } : scope,
           query,
           grouping,
           selected.some(
@@ -378,6 +505,7 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
               cell.date >= date &&
               cell.date <= periodEnd,
           ),
+          exclusionCatalog,
         )
       }),
     }))
@@ -413,6 +541,7 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
               query,
               grouping,
               intersection.length > 0,
+              exclusionCatalog,
             ),
           })
         }
@@ -423,10 +552,12 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
       series,
       breakdown,
       aggregateCells: selected.length,
+      exclusionCatalog,
       evidence: {
         oldestProjectionAt: new Date().toISOString(),
         newestProjectionAt: new Date().toISOString(),
-        projectionVersion: 3,
+        projectionVersion: 4,
+        modelEvidenceSchema: scope.models != null || grouping === 'model' || axes?.rows === 'model' || axes?.columns === 'model' ? 'model-opportunity-v1' : undefined,
         pendingSourceAggregates: 0,
       },
     }
@@ -435,6 +566,7 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
     calculationVersion: version,
     capturedAt: new Date().toISOString(),
     evidenceRevision: 'mock-retained-population-v1',
+    coveragePolicy: { minimumCoveragePercentage: 80, minimumCoveredPullRequests: 1 },
     query,
     premiseIds: score(emptyCounts(), false).scenarios?.map((item) => item.id!),
     views,
@@ -443,6 +575,27 @@ export function mockPerformanceResponse(query: PerformanceQuery): PerformanceRes
 const reports = new Map<string, { request: string; report: PerformanceSavedReport }>()
 export function reviewerPerformanceHandlers(base: string) {
   return [
+    http.post(`${base}/reviewer-performance/evidence/:aggregateId/retry-model`, async ({ params, request }) => {
+      await delay(80)
+      const source = await request.json() as { providerScope?: string; connectionId?: string }
+      const id = params.aggregateId as string
+      const entry = recoveryCatalog.get(`${id}/${source.providerScope}/${source.connectionId}`)
+      if (!entry) return new HttpResponse(null, { status: 404 })
+      if (entry.recoveryAction !== 'retry-model-evidence') return HttpResponse.json({ detail: 'Historical model evidence cannot be reconstructed by this action.' }, { status: 409 })
+      if (modelRecovery.has(id) && Date.now() < modelRecovery.get(id)! + 300000) return HttpResponse.json({ detail: 'Wait until the next classification attempt is permitted, then retry.' }, { status: 409 })
+      modelRecovery.set(id, Date.now())
+      return new HttpResponse(null, { status: 200 })
+    }),
+    http.post(`${base}/reviewer-performance/evidence/:aggregateId/retry`, async ({ params }) => {
+      await delay(80)
+      const id = params.aggregateId as string
+      const entry = recoveryCatalog.get(id)
+      if (!entry) return new HttpResponse(null, { status: 404 })
+      if (entry.collectionEnabled === false) return HttpResponse.json({ title: 'Evidence collection is disabled', detail: 'Enable Code Insights collection for this client, then retry.' }, { status: 409 })
+      if (['queued', 'in-progress'].includes(recoveryProgress(id)?.state ?? '')) return HttpResponse.json({ title: 'Evidence observation is in progress', detail: 'Wait for the current evidence observation to finish, then retry.' }, { status: 409 })
+      queuedRecovery.set(id, { queuedAt: Date.now(), requiresRepair: entry.lastRefreshReason === 'SourceCoordinatesUnavailable' })
+      return new HttpResponse(null, { status: 202 })
+    }),
     http.post(`${base}/reviewer-performance/ranges/query`, async ({ request }) => {
       await delay(80)
       try {

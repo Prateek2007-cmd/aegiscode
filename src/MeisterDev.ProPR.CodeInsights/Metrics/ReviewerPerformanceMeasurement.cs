@@ -22,55 +22,34 @@ internal static class ReviewerPerformanceMeasurement
             }).ToArray(),
             Summary = new(null, null, null)
         },
+        OverallPrecision = measurement.OverallPrecision is { } precision
+            ? precision with
+            {
+                Summary = null,
+                Scenarios = precision.Scenarios.Select(scenario => scenario with { Precision = null }).ToArray()
+            }
+            : null,
         UnavailableReasons = measurement.UnavailableReasons.Concat(["no-series-observation-in-period"]).ToArray(),
     };
 
     internal static ReviewerPerformancePoint Measure(
         DateOnly date, IReadOnlyList<ReviewerPerformanceDailyCount> evidence, IReadOnlyList<ReviewerPerformanceDailyCount> population,
-        ReviewerPerformanceViewQuery scope, string grouping)
+        ReviewerPerformanceViewQuery scope, string grouping, ReviewerPerformanceCoverageContext? coverageContext = null,
+        ReviewerPerformanceContributions? contributions = null, DateOnly? from = null, DateOnly? to = null)
     {
-        var counts = default(ReviewerPerformanceCounts);
-        foreach (var row in evidence.Where(row => !IsCoverage(row)))
+        coverageContext ??= new(new(80, 1));
+        var assessment = coverageContext.Assess(population, scope, grouping, to);
+        var (counts, coveredCounts) = (contributions ?? new(evidence)).Sum(from ?? DateOnly.MinValue, to ?? DateOnly.MaxValue, assessment.CoveredSources);
+        if (scope.Models is not null && coverageContext.HasModelEvidence)
         {
-            counts += Vector(row);
+            coveredCounts = coveredCounts with { ActedMisses = 0, UnactedMisses = 0, ProvisionalMisses = 0, FailedMissJudgements = 0, HarvestedThreads = 0 };
+            coveredCounts += coverageContext.ModelMisses(scope, assessment.CoveredSources, from ?? DateOnly.MinValue, to ?? DateOnly.MaxValue);
         }
 
-        var reasons = new List<string>();
-        var misses = population.Where(row => row.IsMiss && row.Outcome != "missExcluded").ToList();
-        var settledMisses = misses.Where(row => row.Outcome != "missProvisional").ToList();
-        if (!population.Any(row => row.Outcome is "collectionComplete" or "collectionProvisional") || population.Any(row => row.Outcome == "collectionUnknown"))
-        {
-            reasons.Add("miss-collection-coverage-unavailable");
-        }
-
-        if (population.Any(row => row.Outcome == "collectionProvisional") || misses.Any(row => row.Outcome == "missProvisional"))
+        var reasons = assessment.Reasons.ToList();
+        if (population.Any(row => row.Outcome is "collectionProvisional" or "missProvisional"))
         {
             reasons.Add("miss-observation-provisional");
-        }
-
-        if (misses.Any(row => row.Outcome == "missFailed"))
-        {
-            reasons.Add("miss-judgement-failed");
-        }
-
-        if (scope.Models is not null || grouping == "model")
-        {
-            reasons.Add("miss-model-attribution-unavailable");
-        }
-
-        if ((scope.Types is not null || grouping == "type") && settledMisses.Any(row => row.TypeMembership.Length == 0 || !row.IsClassified))
-        {
-            reasons.Add("miss-type-attribution-unavailable");
-        }
-
-        if ((scope.Qualifiers is not null || grouping == "qualifier") && settledMisses.Any(row => row.Qualifier.Length == 0 || !row.IsClassified))
-        {
-            reasons.Add("miss-qualifier-attribution-unavailable");
-        }
-
-        if (settledMisses.Any(row => row.ProviderScope.Length == 0))
-        {
-            reasons.Add("miss-provider-scope-unavailable");
         }
 
         if (counts.PublicationUnknown > 0)
@@ -88,11 +67,13 @@ internal static class ReviewerPerformanceMeasurement
             reasons.Add("finding-classification-incomplete");
         }
 
-        var recallAvailable = !reasons.Any(reason => reason.StartsWith("miss-", StringComparison.Ordinal) && reason != "miss-observation-provisional");
-        return new(date, ReviewerPerformanceScoreCalculator.Compute(counts, recallAvailable), reasons);
+        return new(
+            date, ReviewerPerformanceScoreCalculator.Compute(coveredCounts, assessment.Coverage.CoveredPullRequests > 0 && assessment.Coverage.RecallSupported),
+            reasons,
+            OverallPrecision: ReviewerPerformanceScoreCalculator.ComputePrecision(counts), Coverage: assessment.Coverage);
     }
 
-    private static ReviewerPerformanceCounts Vector(ReviewerPerformanceDailyCount row)
+    internal static ReviewerPerformanceCounts Vector(ReviewerPerformanceDailyCount row)
     {
         var n = row.Count;
         if (row.IsMiss)

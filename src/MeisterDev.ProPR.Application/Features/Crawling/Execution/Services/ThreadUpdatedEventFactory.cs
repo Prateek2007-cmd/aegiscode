@@ -75,7 +75,7 @@ internal static class ThreadUpdatedEventFactory
             thread.LineNumber,
             thread.Status ?? "Active",
             lastActivityAt,
-            comments, observedAt, providerScope);
+            comments, observedAt, providerScope, thread.IsDeleted, thread.ConcernAnchor);
     }
 
     public static bool IsHumanThread(ThreadUpdatedEvent evt) =>

@@ -125,7 +125,7 @@ public sealed class RelayChatRuntime : IResolvedAiChatRuntime
         this.ChatClient = chatClient;
 
         this.Model = new AiConfiguredModelDto(
-            Guid.Empty,
+            binding.ConfiguredModelId ?? Guid.Empty,
             binding.RemoteModelId,
             binding.LogicalModelName,
             [AiOperationKind.Chat],
@@ -138,7 +138,7 @@ public sealed class RelayChatRuntime : IResolvedAiChatRuntime
             SupportsPromptCaching: binding.SupportsPromptCaching);
 
         this.Connection = new AiConnectionDto(
-            Guid.Empty,
+            binding.ConnectionId ?? Guid.Empty,
             null,
             binding.LogicalModelName,
             family,

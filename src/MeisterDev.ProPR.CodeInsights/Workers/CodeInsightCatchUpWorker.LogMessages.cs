@@ -23,6 +23,12 @@ public sealed partial class CodeInsightCatchUpWorker
     private static partial void LogCycleCompleted(ILogger logger, int projectedCount, int sealedCount);
 
     [LoggerMessage(
+        Level = LogLevel.Information,
+        Message =
+            "Historical provider evidence sweep completed (attempted: {Attempted}, observed: {Observed}, unavailable: {Unavailable}, disabled: {Disabled})")]
+    private static partial void LogProviderEvidenceCompleted(ILogger logger, int attempted, int observed, int unavailable, int disabled);
+
+    [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "CodeInsightCatchUpWorker: the code-insight module is not registered: catch-up skipped")]
     private static partial void LogDependenciesUnavailable(ILogger logger);

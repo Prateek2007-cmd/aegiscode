@@ -87,6 +87,39 @@ resolved, is returned to the queue and the next candidate is tried.
 
 A pending job whose client requires a tag no active runner declares is reported as **unroutable**.
 
+## Model opportunity evidence
+
+The server-dispatched manifest freezes optional actual model connection/configuration IDs, pass ordinal,
+scope, lens and shadow assignment, file inventory, source connection, revision, attempt and lease generation. Finding-producing shared execution checkpoints
+carry optional `modelEvidence`; job-level checkpoints use `modelManifests`. Old peers without these fields
+remain valid but cannot establish model recall/F1 evidence. Invalid optional analytics metadata becomes
+unknown without rejecting ordinary file results. It does not change publication or carry-forward policy.
+
+Capture schema `model-opportunity-v1` distinguishes positively completed valid empty generation from
+skips, failures, cancellation and invalid output. Candidate completeness is retained before verification.
+The control plane validates nested manifest proofs and split file proofs against the same dispatched
+source, actual changed-file paths, model, runtime, configuration and pass scope. PR-wide proof identifies a
+finding-producing synthesis or investigation stage. Missing assignment metadata remains unknown.
+The control plane validates every certificate against the dispatched bindings and held generation at the
+durable write. Each pass retains its first complete server acceptance; claimed completion timestamps or a
+first transport fragment cannot backdate it. A later B checkpoint cannot move A's original receipt.
+New attempts and lease generations receive current dispatch bindings and a new inventory receipt.
+Compatible certificates from the same source and revision retain their original pass identities and
+receipts; they do not certify the new dispatch. A same-file resumed checkpoint may contain both prior and
+current passes. Prior content must match server-retained proof for the same source, revision, input and
+ranges; the server restores its retained receipts. Runner-claimed historical receipts do not establish that proof. Historical lookup is
+bounded to 128 requested files and 32 MiB. Optional source-connection lookup failure leaves proof
+unknown and permits ordinary execution.
+
+The spool splits delivery within configured byte/item ceilings and freezes an unacknowledged sequence
+until its acknowledgement arrives. Optional proof can use bounded checksum-qualified fragments: at most
+3 MiB complete proof, 256 fragments and 16 KiB base64 data per fragment. Duplicates and reordering are
+idempotent; incomplete, conflicting or invalid assemblies cannot establish scoring evidence. Ordinary
+results remain deliverable when analytics proof exceeds its bound. Reclaimed same-attempt leases cannot
+retain proof under an earlier generation.
+Analytics-only outcomes, including rejected malformed fragments, do not reset or replace ordinary file
+failure checkpoints.
+
 ## Withheld finding evidence
 
 Per-file ingest outcomes, prior-result responses and final submission annotations carry optional

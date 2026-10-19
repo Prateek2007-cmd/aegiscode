@@ -17,6 +17,25 @@ public sealed class AiHumanMissClassifierTests
 {
     private static readonly Guid ClientId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
+    [Theory]
+    [InlineData("{\"isSubstantive\":true,\"wasActedOn\":true,\"isInScope\":true,\"confidence\":0.9}")]
+    [InlineData("{\"isSubstantive\":true,\"wasActedOn\":true,\"isInScope\":true,\"isHumanConfirmed\":true,\"confidence\":0.9}")]
+    public async Task IndependentTruthRequiresExplicitHumanConfirmationAndOneConcern(string body)
+    {
+        var sut = CreateClassifier(body);
+        Assert.Null(await sut.JudgeAsync(CreateRequest() with { IndependentConcern = true, ReviewerOwnedRoot = true }));
+    }
+
+    [Fact]
+    public async Task AReviewerFindingWithoutHumanConfirmationDoesNotBecomeIndependentTruth()
+    {
+        var sut = CreateClassifier(
+            "{\"isSubstantive\":true,\"wasActedOn\":false,\"isInScope\":true,\"isHumanConfirmed\":false,\"isSingleConcern\":true,\"confidence\":0.9}");
+        var truth = await sut.JudgeAsync(CreateRequest() with { IndependentConcern = true, ReviewerOwnedRoot = true });
+        Assert.NotNull(truth);
+        Assert.False(truth.IsHumanConfirmed);
+    }
+
     [Fact]
     public async Task JudgeAsync_ReturnsTheThreeJudgementsSeparately()
     {

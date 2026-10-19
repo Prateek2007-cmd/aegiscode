@@ -6,8 +6,10 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Security.Cryptography;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Runner.Contracts;
+using MeisterDev.ProPR.Domain.ValueObjects;
 
 namespace MeisterDev.ProPR.Runner.Execution;
 
@@ -48,6 +50,7 @@ public sealed partial class JobSpool(
     private readonly ConcurrentQueue<RunnerTraceEvent> _events = new();
     private readonly ConcurrentQueue<RunnerFileOutcome> _fileResults = new();
     private readonly ConcurrentQueue<RunnerSpendRecord> _spend = new();
+    private readonly ConcurrentQueue<ModelReviewManifest> _modelManifests = new();
     private readonly SemaphoreSlim _flushGate = new(1, 1);
 
     /// <summary>
@@ -59,6 +62,8 @@ public sealed partial class JobSpool(
 
     /// <summary>The last sequence the control plane acknowledged. The next batch is this plus one.</summary>
     private int _acknowledgedSequence;
+
+    private List<object>? _unacknowledgedBatch;
 
     /// <summary>Trace events dropped at the ceiling, so a shortened trace can report the loss.</summary>
     private int _droppedEvents;
@@ -92,9 +97,13 @@ public sealed partial class JobSpool(
         this._spend.Enqueue(spend);
     }
 
+    /// <summary>Buffers a frozen inventory through the non-droppable checkpoint channel.</summary>
+    public void Add(ModelReviewManifest manifest) => this._modelManifests.Enqueue(manifest);
+
     /// <summary>Whether enough has accumulated to be worth a round trip.</summary>
     public bool ShouldFlush =>
-        this._events.Count + this._fileResults.Count + this._spend.Count >= FlushThreshold;
+        this._unacknowledgedBatch is not null ||
+        this._events.Count + this._fileResults.Count + this._spend.Count + this._modelManifests.Count >= FlushThreshold;
 
     /// <summary>
     ///     Whether the control plane has refused this job for good, so there is nothing left to flush to.
@@ -119,80 +128,166 @@ public sealed partial class JobSpool(
     public async Task<bool> FlushAsync(CancellationToken ct)
     {
         await this._flushGate.WaitAsync(ct);
+        var pending = new List<object>();
         try
         {
-            var events = Drain(this._events);
-            var files = Drain(this._fileResults);
-            var spend = Drain(this._spend);
-
-            if (events.Count == 0 && files.Count == 0 && spend.Count == 0)
+            pending.AddRange(Drain(this._events));
+            pending.AddRange(Drain(this._fileResults));
+            pending.AddRange(Drain(this._spend));
+            pending.AddRange(Drain(this._modelManifests));
+            if (this._unacknowledgedBatch is { } retry)
             {
-                return true;
+                pending.InsertRange(0, retry);
             }
 
-            // The next number after the last one acknowledged, not the next after the last one attempted.
-            var sequence = this._acknowledgedSequence + 1;
-            var request = new
+            while (pending.Count > 0)
             {
-                jobId,
-                leaseGeneration,
-                contractVersion = RunnerContractVersion.Current,
-                sequence,
-
-                // Derived from the sequence rather than random, so a resend of the same batch after a
-                // timeout is recognised as the same batch instead of being counted twice.
-                idempotencyKey = $"{jobId:N}-{sequence}",
-                events,
-                fileResults = files,
-                spend,
-            };
-
-            try
-            {
-                using var response = await http.PostAsJsonAsync("ingest", request, ct);
-                if (response.IsSuccessStatusCode)
+                ct.ThrowIfCancellationRequested();
+                var batch = this._unacknowledgedBatch ?? this.TakeBoundedBatch(pending);
+                var sequence = this._acknowledgedSequence + 1;
+                var request = new
                 {
-                    this._acknowledgedSequence = sequence;
-                    return true;
+                    jobId, leaseGeneration, contractVersion = RunnerContractVersion.Current, sequence,
+                    idempotencyKey = $"{jobId:N}-{sequence}",
+                    events = batch.OfType<RunnerTraceEvent>().ToArray(),
+                    fileResults = batch.OfType<RunnerFileOutcome>().ToArray(),
+                    spend = batch.OfType<RunnerSpendRecord>().ToArray(),
+                    modelManifests = batch.OfType<ModelReviewManifest>().ToArray(),
+                };
+                try
+                {
+                    // A lost response can follow a successful server commit. Its sequence must retain the same payload.
+                    this._unacknowledgedBatch = batch;
+                    using var response = await http.PostAsJsonAsync("ingest", request, ct);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        this._acknowledgedSequence = sequence;
+                        this._unacknowledgedBatch = null;
+                        pending.RemoveRange(0, batch.Count);
+                        continue;
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)
+                    {
+                        this._unacknowledgedBatch = null;
+                        if (batch.Count > 1)
+                        {
+                            this._maximumBatchItems = Math.Max(1, batch.Count / 2);
+                            continue;
+                        }
+
+                        if (TrySplitOptionalProof(batch[0], out var split))
+                        {
+                            pending.RemoveAt(0);
+                            pending.InsertRange(0, split);
+                            continue;
+                        }
+                    }
+
+                    LogFlushRefused(logger, jobId, sequence, (int)response.StatusCode);
+                    if (response.StatusCode == HttpStatusCode.Conflict)
+                    {
+                        var conflict = await ReadConflictAsync(response, ct);
+                        if (conflict.LeaseLost)
+                        {
+                            this._refusedForGood = true;
+                        }
+                        else if (conflict.ExpectedSequence is { } expected)
+                        {
+                            this._acknowledgedSequence = expected - 1;
+                        }
+                    }
+                }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+                {
+                    LogFlushFailed(logger, jobId, sequence, exception.GetType().Name);
                 }
 
-                LogFlushRefused(logger, jobId, sequence, (int)response.StatusCode);
-
-                // A 409 is two different answers wearing one status code. Out-of-order names the batch to
-                // resume from and is worth obeying; a lease refusal means the job is not ours any more, and
-                // resending is a loop whose answer will not change.
-                if (response.StatusCode == HttpStatusCode.Conflict)
-                {
-                    var conflict = await ReadConflictAsync(response, ct);
-                    if (conflict.LeaseLost)
-                    {
-                        this._refusedForGood = true;
-                    }
-                    else if (conflict.ExpectedSequence is { } expected)
-                    {
-                        // Resume where the ledger reports it stopped, which may be behind or ahead of what
-                        // this spool recorded as sent.
-                        this._acknowledgedSequence = expected - 1;
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
-            {
-                LogFlushFailed(logger, jobId, sequence, ex.Message);
+                return false;
             }
 
-            // Put it back, at the front, so ordering survives the retry, and under the same sequence: the
-            // ledger refuses a gap, so a batch that failed in transit has to be resent as the batch it was.
-            Requeue(this._events, events);
-            Requeue(this._fileResults, files);
-            Requeue(this._spend, spend);
-            this.TrimToCeiling();
-            return false;
+            return true;
         }
         finally
         {
+            if (this._unacknowledgedBatch is { } retry && pending.Count >= retry.Count)
+            {
+                pending.RemoveRange(0, retry.Count);
+            }
+
+            Requeue(this._events, pending.OfType<RunnerTraceEvent>().ToList());
+            Requeue(this._fileResults, pending.OfType<RunnerFileOutcome>().ToList());
+            Requeue(this._spend, pending.OfType<RunnerSpendRecord>().ToList());
+            Requeue(this._modelManifests, pending.OfType<ModelReviewManifest>().ToList());
+            this.TrimToCeiling();
             this._flushGate.Release();
         }
+    }
+
+    private static readonly JsonSerializerOptions WireJson = new(JsonSerializerDefaults.Web);
+    private int _maximumBatchItems = 500;
+
+    private List<object> TakeBoundedBatch(List<object> pending)
+    {
+        const int maximumBytes = 8 * 1024 * 1024;
+        var batch = new List<object>();
+        var bytes = 1024;
+        foreach (var item in pending.Take(this._maximumBatchItems))
+        {
+            var size = JsonSerializer.SerializeToUtf8Bytes(item, item.GetType(), WireJson).Length;
+            if (batch.Count > 0 && bytes + size > maximumBytes)
+            {
+                break;
+            }
+
+            batch.Add(item);
+            bytes += size;
+        }
+
+        return batch;
+    }
+
+    private static bool TrySplitOptionalProof(object item, out IReadOnlyList<object> split)
+    {
+        var items = new List<object>();
+        if (item is RunnerFileOutcome { ModelEvidence: { } proof } file)
+        {
+            var ordinary = file with { ModelEvidence = null };
+            if (file.IsComplete || file.IsFailed || file.IsExcluded || file.Summary is not null || file.ErrorMessage is not null
+                || file.Comments?.Count > 0 || file.WithheldFindings?.Count > 0 || file.ReviewedPassKeys.Count > 0)
+            {
+                items.Add(ordinary);
+            }
+
+            var bounded = proof.BoundedOrUnknown() with { PendingFragments = [], RetainedTransportDigests = [] };
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(bounded, WireJson);
+            if (bytes.Length > ModelReviewProofFragment.MaximumProofBytes)
+            {
+                bounded = new() { JobId = proof.JobId, FilePath = file.FilePath, UnavailableReason = "model-proof-limit-exceeded" };
+                bytes = JsonSerializer.SerializeToUtf8Bytes(bounded, WireJson);
+            }
+
+            var digest = Convert.ToHexStringLower(SHA256.HashData(bytes));
+            const int chunkBytes = ModelReviewProofFragment.MaximumDataCharacters / 4 * 3;
+            for (var offset = 0; offset < bytes.Length; offset += chunkBytes)
+            {
+                var fragment = new ModelReviewProofFragment(
+                    digest, offset, bytes.Length,
+                    Convert.ToBase64String(bytes, offset, Math.Min(chunkBytes, bytes.Length - offset)));
+                items.Add(new RunnerFileOutcome(file.FilePath, false, false, null, null, [], ModelEvidenceFragment: fragment));
+            }
+        }
+        else if (item is ModelReviewManifest manifest && (manifest.Files.Count > 0 || manifest.AllowedModels.Count > 0 || manifest.PullRequestPasses.Count > 0))
+        {
+            // The control plane already retained the dispatched inventory and model bindings.
+            items.Add(manifest with { Files = [], AllowedModels = [], PullRequestPasses = [], InventoryComplete = false });
+            items.AddRange(
+                manifest.PullRequestPasses.Select(proof =>
+                    new RunnerFileOutcome(proof.FilePath, false, false, null, null, [], ModelEvidence: proof)));
+        }
+
+        split = items;
+        return items.Count > 0;
     }
 
     /// <summary>
@@ -231,7 +326,7 @@ public sealed partial class JobSpool(
     /// </summary>
     private void TrimToCeiling()
     {
-        var total = this._events.Count + this._fileResults.Count + this._spend.Count;
+        var total = this._events.Count + this._fileResults.Count + this._spend.Count + this._modelManifests.Count + (this._unacknowledgedBatch?.Count ?? 0);
         while (total > MaxBufferedItems && this._events.TryDequeue(out _))
         {
             this._droppedEvents++;

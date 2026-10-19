@@ -3,6 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using System.Text.Json;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -18,6 +19,10 @@ internal sealed class ReviewJobEntityTypeConfiguration : IEntityTypeConfiguratio
 {
     public void Configure(EntityTypeBuilder<ReviewJob> builder)
     {
+        builder.Property(job => job.ModelEvidenceManifest).HasColumnName("model_evidence_manifest_json").HasColumnType("jsonb")
+            .HasConversion(
+                value => value == null ? null : JsonSerializer.Serialize(value, (JsonSerializerOptions?)null),
+                json => json == null ? null : ModelEvidenceJson.ReadManifest(json, null));
         builder.ToTable("review_jobs");
 
         builder.HasKey(j => j.Id);

@@ -7,11 +7,17 @@ using MeisterDev.ProPR.CodeInsights.Http;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using MeisterDev.ProPR.Application.Interfaces;
 
 namespace MeisterDev.ProPR.CodeInsights.Metrics;
 
 /// <summary>Reads retained joint cells under one consistent database snapshot, without source analysis.</summary>
-public sealed class ReviewerPerformanceRangeReader(MeisterProPRDbContext dbContext, IDbContextFactory<MeisterProPRDbContext>? contextFactory = null)
+public sealed class ReviewerPerformanceRangeReader(
+    MeisterProPRDbContext dbContext,
+    IDbContextFactory<MeisterProPRDbContext>? contextFactory = null,
+    IOptionsMonitor<CodeInsightsOptions>? options = null,
+    IScmProviderRegistry? providerRegistry = null)
 {
     public const int MaximumDays = 366;
     public const int MaximumCells = 100_000;
@@ -42,6 +48,9 @@ public sealed class ReviewerPerformanceRangeReader(MeisterProPRDbContext dbConte
     {
         Validate(query, authorizedClients);
         var captured = DateTimeOffset.UtcNow;
+        var settings = options?.CurrentValue ?? new CodeInsightsOptions();
+        var policy = new ReviewerPerformanceCoveragePolicy(settings.EffectiveMinimumCoveragePercentage, settings.EffectiveMinimumCoveredPullRequests);
+        var modelRetryCooldown = settings.ModelEvidenceRetryCooldown;
         var revision = db.Database.IsNpgsql()
             ? await db.Database.SqlQueryRaw<string>("SELECT txid_current_snapshot()::text AS \"Value\"").SingleAsync(ct)
             : null;
@@ -49,13 +58,20 @@ public sealed class ReviewerPerformanceRangeReader(MeisterProPRDbContext dbConte
         foreach (var (scope, viewIndex) in query.Views.Select((scope, index) => (scope, index)))
         {
             var clients = (scope.ClientIds ?? authorizedClients.ToArray()).ToArray();
-            var snapshot = await ReviewerPerformanceCellReader.LoadAsync(db, scope, clients, ct);
-            views.Add(ReviewerPerformanceViewBuilder.Build(query, scope, viewIndex, clients, snapshot));
+            var modelEvidence = scope.Models is not null || query.Grouping == "model" || query.Breakdown is { } breakdown
+                && breakdown.ViewIndex == viewIndex && (breakdown.Rows == "model" || breakdown.Columns == "model");
+            var snapshot = await ReviewerPerformanceCellReader.LoadAsync(db, scope, clients, ct, modelEvidence, captured, modelRetryCooldown);
+            if (providerRegistry is not null)
+            {
+                snapshot = snapshot with { SourceUrls = await ReviewerPerformanceSourceUrls.LoadAsync(db, snapshot.Cells, providerRegistry, ct) };
+            }
+
+            views.Add(ReviewerPerformanceViewBuilder.Build(query, scope, viewIndex, clients, snapshot, policy, captured));
         }
 
         return new(
             ReviewerPerformanceScoreCalculator.Version, captured, query,
-            ReviewerPerformancePremises.All.Select(row => row.Id).ToArray(), views, revision);
+            ReviewerPerformancePremises.All.Select(row => row.Id).ToArray(), views, revision, policy);
     }
 
 

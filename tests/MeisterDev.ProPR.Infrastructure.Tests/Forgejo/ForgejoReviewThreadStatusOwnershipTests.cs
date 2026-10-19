@@ -17,6 +17,21 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Forgejo;
 /// </summary>
 public sealed class ForgejoReviewThreadStatusOwnershipTests
 {
+    [Fact]
+    public async Task SnapshotKeepsNativeRootIdentityAndTimeWithoutInventingRevisionOrFileLine()
+    {
+        var provider = BuildSut(out var clientId, "jane", AuthenticatedLogin);
+        var snapshot = await provider.ReadSnapshotAsync("https://codeberg.example.com", "acme", "acme/propr", 42, ThreadOwnershipResolver.None, clientId);
+        var thread = Assert.Single(snapshot.Threads);
+        Assert.Null(thread.ThreadId);
+        Assert.NotNull(thread.ConcernAnchor);
+        Assert.Equal("501", thread.ConcernAnchor.RootCommentId);
+        Assert.Equal(DateTimeOffset.Parse("2026-04-14T08:00:00Z"), thread.ConcernAnchor.OriginAt);
+        Assert.False(thread.ConcernAnchor.IsKnown);
+        Assert.Null(thread.ConcernAnchor.CommitSha);
+        Assert.Null(thread.ConcernAnchor.StartLine);
+    }
+
     private const string AuthenticatedLogin = "meister-dev";
 
     [Fact]

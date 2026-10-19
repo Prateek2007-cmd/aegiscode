@@ -159,6 +159,21 @@ public sealed class ReviewJob
     /// </summary>
     public ReviewResult? Result { get; private set; }
 
+    /// <summary>Optional frozen execution inventory and PR-wide generator evidence.</summary>
+    public ModelReviewManifest? ModelEvidenceManifest { get; private set; }
+
+    /// <summary>Retains a bounded manifest without changing execution or publication state.</summary>
+    public void RecordModelEvidenceManifest(ModelReviewManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        this.ModelEvidenceManifest = manifest.JobId == this.Id && manifest.IsBounded
+            ? manifest
+            : new()
+            {
+                JobId = this.Id, Attempt = manifest.Attempt, UnavailableReason = "model-proof-limit-exceeded",
+            };
+    }
+
     /// <summary>
     ///     Denormalized copy of <see cref="ValueObjects.ReviewResult.Summary" />, populated when the result is
     ///     finalized via <see cref="ApplyResult" />. Lets the overview list render the summary without

@@ -119,17 +119,23 @@ public sealed partial class CodeInsightMissHarvester(
             && HarvestedThreadEligibility.IsHumanThread(BuildDiscussion(evt), postedCommentComposer.Text)
             && CodeInsightNativeResolution.InterpretKnown(evt.Status) is null)
         {
-            return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable);
+            return new CodeInsightEvidenceAcknowledgment(
+                false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable,
+                Stage: CodeInsightObservationStage.HumanClassification);
         }
 
         if (!await this.HandleAsync(evt, true, ct))
         {
-            return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+            return new CodeInsightEvidenceAcknowledgment(
+                false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                Stage: CodeInsightObservationStage.HumanEvidenceRetention);
         }
 
         var retained = await this.ReadObservationAsync(key, evt.ThreadId, ct, evt.ConnectionId, evt.ProviderScope);
         return retained is { ExcludedAsOwnFinding: false } && (retained.JudgementFailed || retained.DimensionJudgementFailed)
-            ? new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable)
+            ? new CodeInsightEvidenceAcknowledgment(
+                false, Reason: CodeInsightObservationUnavailableReason.ClassificationUnavailable,
+                Stage: CodeInsightObservationStage.HumanClassification)
             : new CodeInsightEvidenceAcknowledgment(true);
     }
 
@@ -155,14 +161,15 @@ public sealed partial class CodeInsightMissHarvester(
         }
         catch (Exception ex)
         {
-            LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, ex);
+            LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, ex.GetType().FullName ?? ex.GetType().Name, ex.HResult);
             try
             {
                 return await this.RetainFailedObservationAsync(attempt, observedAt, ct);
             }
             catch (Exception recordingException) when (!ct.IsCancellationRequested)
             {
-                LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, recordingException);
+                LogHandlingFailed(
+                    logger, evt.ThreadId, evt.ClientId, recordingException.GetType().FullName ?? recordingException.GetType().Name, recordingException.HResult);
             }
 
             return false;
@@ -513,7 +520,7 @@ public sealed partial class CodeInsightMissHarvester(
             }
             catch (Exception exception) when (!ct.IsCancellationRequested)
             {
-                LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, exception);
+                LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, exception.GetType().FullName ?? exception.GetType().Name, exception.HResult);
             }
         }
 

@@ -146,12 +146,15 @@ internal sealed partial class FileReviewer(
 
         var tierPurpose = GetTierPurpose(tier);
 
-        var (tierClient, tierModelId, tierCapabilities, tierMaxContextTokens, tierTokenizerName, tierLogicalModelName) =
+        var (tierClient, tierModelId, tierCapabilities, tierMaxContextTokens, tierTokenizerName, tierLogicalModelName, tierConnectionId, tierConfiguredModelId
+                ) =
             await this.ResolveTierClientAsync(job, tierPurpose, ct);
 
         var protocolId = await this.BeginNewProtocolAsync(job, file, fileResult, tierCategory, tierModelId, tierLogicalModelName, ct);
 
         ReviewSystemContext? fileContext = null;
+        var generationStartedAt = DateTimeOffset.UtcNow;
+        var generationReturned = false;
 
         try
         {
@@ -188,6 +191,15 @@ internal sealed partial class FileReviewer(
                 effectiveClient,
                 []);
 
+            fileContext.ModelEvidenceCheckpoint = fileResult;
+            fileContext.RuntimeConnectionId = tierClient is null ? baseContext.RuntimeConnectionId : tierConnectionId;
+            fileContext.ConfiguredModelId = tierClient is null ? baseContext.ConfiguredModelId : tierConfiguredModelId;
+            fileContext.LogicalModelName = tierClient is null ? baseContext.LogicalModelName : tierLogicalModelName;
+            if (this._sourcePolicies is not null)
+            {
+                fileContext.ProviderScope = ProviderSourceIdentity.FromReviewJob(job, this._sourcePolicies.GetSourceIdentityPolicy(job.Provider)).Value;
+            }
+
             var pipelineProfile = ResolvePipelineProfile(job, pipelineProfileProvider);
             fileContext.Aggressiveness = pipelineProfile.Aggressiveness;
             // The baseline (tier) pass takes the client-level baseline reasoning effort. Set before the dispatch
@@ -206,10 +218,19 @@ internal sealed partial class FileReviewer(
             await RecordFocusedGuidanceUsageAsync(protocolRecorder, protocolId, file.Path, fileContext, "per_file_review", ct);
             await this.RecordTriageDecisionEventAsync(fileContext, protocolId, file.Path, triageVerdict, ct);
 
+            await this.PrepareModelInventoryAsync(
+                job, file, fileContext, tier,
+                SecurityFloor.IsFlagged(file.Path, fileContext.PerFileHint?.RiskMarkers ?? FileRiskMarkers.None, triageVerdict.SecurityEscalate), ct);
+
+            generationStartedAt = DateTimeOffset.UtcNow;
+            await this.CheckpointGenerationAsync(job, file, fileContext, 1, generationStartedAt, ModelGenerationDisposition.Unknown, [], false, ct);
             var result = await this.ReviewFileCoreAsync(
                 filePr,
                 fileContext,
                 ct);
+            generationReturned = true;
+            await this.CheckpointGenerationAsync(
+                job, file, fileContext, 1, generationStartedAt, result.GenerationDisposition ?? ModelGenerationDisposition.Unknown, result.Comments, false, ct);
             var baselinePreFilterCount = result.Comments.Count;
 
             var pipelineState = new ReviewResultPipelineState(
@@ -233,10 +254,11 @@ internal sealed partial class FileReviewer(
             // finding is the one that owns it.
             result = result with
             {
-                Comments = StampOriginModel(result.Comments, fileContext.ModelId, tierLogicalModelName),
+                Comments = StampOriginModel(result.Comments, fileContext.ModelId, fileContext.LogicalModelName),
                 WithheldFindings = StampWithheldMetadata(
                     result.WithheldFindings,
-                    comments => StampWithheldScopeAndPass(StampOriginModel(comments, fileContext.ModelId, tierLogicalModelName), file.Path, pr.ChangedFiles)),
+                    comments => StampWithheldScopeAndPass(
+                        StampOriginModel(comments, fileContext.ModelId, fileContext.LogicalModelName), file.Path, pr.ChangedFiles)),
             };
 
             // The full deterministic security floor for this file (path + content-marker + model-escalate legs).
@@ -279,6 +301,14 @@ internal sealed partial class FileReviewer(
         }
         catch (Exception ex)
         {
+            if (!generationReturned && fileContext is not null)
+            {
+                await this.CheckpointGenerationAsync(
+                    job, file, fileContext, 1, generationStartedAt,
+                    ex is OperationCanceledException ? ModelGenerationDisposition.Cancelled : ModelGenerationDisposition.Failed, [], false,
+                    CancellationToken.None);
+            }
+
             await this.FailReviewAsync(fileResult, fileContext, protocolId, ex, ct);
 
             throw;
@@ -350,6 +380,15 @@ internal sealed partial class FileReviewer(
             ActiveProtocolId = protocolId,
             DefaultReviewChatClient = baseContext.DefaultReviewChatClient,
             DefaultReviewModelId = baseContext.DefaultReviewModelId,
+            ProviderScope = baseContext.ProviderScope,
+            SourceConnectionId = baseContext.SourceConnectionId,
+            RuntimeConnectionId = baseContext.RuntimeConnectionId,
+            ConfiguredModelId = baseContext.ConfiguredModelId,
+            ModelInventoryComplete = baseContext.ModelInventoryComplete,
+            CapturedRevisionKey = baseContext.CapturedRevisionKey,
+            CapturedLeaseGeneration = baseContext.CapturedLeaseGeneration,
+            LogicalModelName = baseContext.LogicalModelName,
+            ModelEvidenceCheckpoint = baseContext.ModelEvidenceCheckpoint,
             ProtocolRecorder = protocolId.HasValue ? protocolRecorder : null,
             PromptOverrides = baseContext.PromptOverrides,
             OutputLanguage = baseContext.OutputLanguage,
@@ -463,6 +502,9 @@ internal sealed partial class FileReviewer(
                     plannedPass.TokenizerName,
                     plannedPass.ReasoningEffort,
                     plannedPass.LogicalModelName,
+                    plannedPass.Shadow,
+                    plannedPass.ConnectionId,
+                    plannedPass.ConfiguredModelId,
                     inputs.Ct));
 
             unionComments.AddRange(
@@ -621,7 +663,9 @@ internal sealed partial class FileReviewer(
                 continue;
             }
 
-            var resolution = await this.TryResolvePassRuntimeAsync(inputs.Job, inputs.File.Path, pass, passIndex, inputs.Ct);
+            var resolution = inputs.FileContext.PreparedModelPassRuntimes.TryGetValue(passIndex, out var prepared)
+                ? prepared
+                : await this.TryResolvePassRuntimeAsync(inputs.Job, inputs.File.Path, pass, passIndex, inputs.Ct);
             if (resolution.Runtime is null)
             {
                 await this.RecordMultiPassUnionPassSkippedAsync(
@@ -643,7 +687,9 @@ internal sealed partial class FileReviewer(
                         runtime.Model.MaxContextTokens,
                         runtime.Model.TokenizerName,
                         effort,
-                        runtime.LogicalModelName));
+                        runtime.LogicalModelName,
+                        runtime.Connection?.Id,
+                        runtime.Model.Id));
             }
 
             passIndex++;
@@ -893,6 +939,8 @@ internal sealed partial class FileReviewer(
         // returned comments are unioned by the caller before the single persistence write.
         var transientFileResult = new ReviewFileResult(inputs.Job.Id, inputs.File.Path);
         ReviewSystemContext? passContext = null;
+        var generationStartedAt = DateTimeOffset.UtcNow;
+        var generationReturned = false;
         try
         {
             var focusedGuidance = inputs.FileContext.PerFileHint?.FocusedReviewGuidance ?? [];
@@ -906,6 +954,15 @@ internal sealed partial class FileReviewer(
                 focusedGuidance = await this.ResolveProRvLensGuidanceAsync(inputs, protocolId, inputs.Ct);
                 if (focusedGuidance.Count == 0)
                 {
+                    var skippedContext = inputs.FileContext.CloneForPass();
+                    skippedContext.ModelId = inputs.PassModelId;
+                    skippedContext.LogicalModelName = inputs.PassLogicalModelName;
+                    skippedContext.ActiveLens = inputs.PassArm.Lens;
+                    skippedContext.RuntimeConnectionId = inputs.PassConnectionId;
+                    skippedContext.ConfiguredModelId = inputs.PassConfiguredModelId;
+                    await this.CheckpointGenerationAsync(
+                        inputs.Job, inputs.File, skippedContext, inputs.PassIndex,
+                        generationStartedAt, ModelGenerationDisposition.Skipped, [], inputs.Shadow, inputs.Ct);
                     await this.CompleteAugmentationProtocolAsync(protocolId, null, "Completed", inputs.Ct);
                     return (new ReviewResult(string.Empty, []), 0);
                 }
@@ -938,6 +995,9 @@ internal sealed partial class FileReviewer(
 
             // A lens pass selects a specialist per-file prompt; the marker is read during prompt construction.
             passContext.ActiveLens = inputs.PassArm.Lens;
+            passContext.LogicalModelName = inputs.PassLogicalModelName;
+            passContext.RuntimeConnectionId = inputs.PassConnectionId;
+            passContext.ConfiguredModelId = inputs.PassConfiguredModelId;
 
             // The pass's configured reasoning effort is applied to the outbound request unconditionally.
             passContext.ActiveReasoningEffort = inputs.PassReasoningEffort;
@@ -951,7 +1011,15 @@ internal sealed partial class FileReviewer(
                 inputs.PipelineProfile,
                 inputs.Ct);
 
+            generationStartedAt = DateTimeOffset.UtcNow;
+            await this.CheckpointGenerationAsync(
+                inputs.Job, inputs.File, passContext, inputs.PassIndex, generationStartedAt,
+                ModelGenerationDisposition.Unknown, [], inputs.Shadow, inputs.Ct);
             var result = await this.ReviewFileCoreAsync(inputs.FilePr, passContext, inputs.Ct);
+            generationReturned = true;
+            await this.CheckpointGenerationAsync(
+                inputs.Job, inputs.File, passContext, inputs.PassIndex, generationStartedAt,
+                result.GenerationDisposition ?? ModelGenerationDisposition.Unknown, result.Comments, inputs.Shadow, inputs.Ct);
             var preFilterCount = result.Comments.Count;
 
             // Local verification of a pass finding uses the evidence channel of the baseline file context. An
@@ -976,9 +1044,21 @@ internal sealed partial class FileReviewer(
             await this.CompleteAugmentationProtocolAsync(protocolId, passContext, "Completed", inputs.Ct);
             return (result, preFilterCount);
         }
-        catch when (protocolId.HasValue)
+        catch (Exception ex)
         {
-            await this.CompleteAugmentationProtocolAsync(protocolId, passContext, "Failed", CancellationToken.None);
+            if (!generationReturned && passContext is not null)
+            {
+                await this.CheckpointGenerationAsync(
+                    inputs.Job, inputs.File, passContext, inputs.PassIndex, generationStartedAt,
+                    ex is OperationCanceledException ? ModelGenerationDisposition.Cancelled : ModelGenerationDisposition.Failed, [], inputs.Shadow,
+                    CancellationToken.None);
+            }
+
+            if (protocolId.HasValue)
+            {
+                await this.CompleteAugmentationProtocolAsync(protocolId, passContext, "Failed", CancellationToken.None);
+            }
+
             throw;
         }
     }
@@ -1069,7 +1149,7 @@ internal sealed partial class FileReviewer(
     // model id (connection implied). When the model cannot be resolved (deleted or unresolved model, or no resolver),
     // the result carries no runtime and names the failure, so the caller skips that pass and does not resample the
     // tier model.
-    private async Task<PassRuntimeResolution> TryResolvePassRuntimeAsync(
+    private async Task<PreparedReviewPassRuntime> TryResolvePassRuntimeAsync(
         ReviewJob job,
         string filePath,
         ReviewPassSpec pass,
@@ -1084,7 +1164,7 @@ internal sealed partial class FileReviewer(
             if (logicalModelResolver is null)
             {
                 LogMultiPassUnionLogicalModelPassUnresolved(logger, job.Id, filePath, pass.LogicalModelName, passIndex, ResolverUnavailableFailure, null);
-                return PassRuntimeResolution.Failed(ResolverUnavailableFailure);
+                return PreparedReviewPassRuntime.Failed(ResolverUnavailableFailure);
             }
 
             try
@@ -1092,7 +1172,7 @@ internal sealed partial class FileReviewer(
                 var resolved = await logicalModelResolver
                     .ResolveChatRuntimeAsync(job.ClientId, pass.LogicalModelName, ct: ct)
                     .ConfigureAwait(false);
-                return new PassRuntimeResolution(resolved.Runtime, resolved.ReasoningEffort, null);
+                return new PreparedReviewPassRuntime(resolved.Runtime, resolved.ReasoningEffort, null);
             }
             catch (OperationCanceledException)
             {
@@ -1102,21 +1182,21 @@ internal sealed partial class FileReviewer(
             {
                 var failure = ex.GetType().Name;
                 LogMultiPassUnionLogicalModelPassUnresolved(logger, job.Id, filePath, pass.LogicalModelName, passIndex, failure, ex);
-                return PassRuntimeResolution.Failed(failure);
+                return PreparedReviewPassRuntime.Failed(failure);
             }
         }
 
         if (aiRuntimeResolver is null)
         {
             LogMultiPassUnionPassModelUnresolved(logger, job.Id, filePath, pass.ConfiguredModelId, passIndex, ResolverUnavailableFailure, null);
-            return PassRuntimeResolution.Failed(ResolverUnavailableFailure);
+            return PreparedReviewPassRuntime.Failed(ResolverUnavailableFailure);
         }
 
         try
         {
             var runtime = await aiRuntimeResolver.ResolveChatRuntimeForModelAsync(job.ClientId, pass.ConfiguredModelId, ct)
                 .ConfigureAwait(false);
-            return new PassRuntimeResolution(runtime, pass.ReasoningEffort, null);
+            return new PreparedReviewPassRuntime(runtime, pass.ReasoningEffort, null);
         }
         catch (OperationCanceledException)
         {
@@ -1126,20 +1206,7 @@ internal sealed partial class FileReviewer(
         {
             var failure = ex.GetType().Name;
             LogMultiPassUnionPassModelUnresolved(logger, job.Id, filePath, pass.ConfiguredModelId, passIndex, failure, ex);
-            return PassRuntimeResolution.Failed(failure);
-        }
-    }
-
-    // The outcome of resolving one resample pass. Runtime is null when the pass could not be resolved; Failure then
-    // holds the exception type name, or ResolverUnavailableFailure when no resolver for the pass kind is registered.
-    private readonly record struct PassRuntimeResolution(
-        IResolvedAiChatRuntime? Runtime,
-        ReviewReasoningEffort Effort,
-        string? Failure)
-    {
-        public static PassRuntimeResolution Failed(string failure)
-        {
-            return new PassRuntimeResolution(null, ReviewReasoningEffort.None, failure);
+            return PreparedReviewPassRuntime.Failed(failure);
         }
     }
 
@@ -1855,7 +1922,7 @@ internal sealed partial class FileReviewer(
     }
 
     private async Task<(IChatClient? tierClient, string? tierModelId, AgentReviewRuntimeCapabilities? tierCapabilities, int? tierMaxContextTokens, string?
-        tierTokenizerName, string? tierLogicalModelName)> ResolveTierClientAsync(
+        tierTokenizerName, string? tierLogicalModelName, Guid? connectionId, Guid? configuredModelId)> ResolveTierClientAsync(
         ReviewJob job,
         AiPurpose tierPurpose,
         CancellationToken ct)
@@ -1866,6 +1933,8 @@ internal sealed partial class FileReviewer(
         int? tierMaxContextTokens = null;
         string? tierTokenizerName = null;
         string? tierLogicalModelName = null;
+        Guid? connectionId = null;
+        Guid? configuredModelId = null;
 
         // The tier runtime is resolved, never constructed here. Two cases produce a null client: a host composed
         // without a runtime resolver, and a resolver with no binding for this tier. The caller treats a null
@@ -1881,6 +1950,8 @@ internal sealed partial class FileReviewer(
                 tierMaxContextTokens = tierRuntime.Model.MaxContextTokens;
                 tierTokenizerName = tierRuntime.Model.TokenizerName;
                 tierLogicalModelName = tierRuntime.LogicalModelName;
+                connectionId = tierRuntime.Connection?.Id;
+                configuredModelId = tierRuntime.Model.Id;
             }
             catch
             {
@@ -1890,10 +1961,12 @@ internal sealed partial class FileReviewer(
                 tierMaxContextTokens = null;
                 tierTokenizerName = null;
                 tierLogicalModelName = null;
+                connectionId = null;
+                configuredModelId = null;
             }
         }
 
-        return (tierClient, tierModelId, tierCapabilities, tierMaxContextTokens, tierTokenizerName, tierLogicalModelName);
+        return (tierClient, tierModelId, tierCapabilities, tierMaxContextTokens, tierTokenizerName, tierLogicalModelName, connectionId, configuredModelId);
     }
 
     private static IReadOnlyList<PrCommentThread> FilterThreadsForFile(
@@ -2002,7 +2075,9 @@ internal sealed partial class FileReviewer(
         int? MaxContextTokens = null,
         string? TokenizerName = null,
         ReviewReasoningEffort ReasoningEffort = ReviewReasoningEffort.None,
-        string? LogicalModelName = null);
+        string? LogicalModelName = null,
+        Guid? ConnectionId = null,
+        Guid? ConfiguredModelId = null);
 
     private sealed record MultiPassUnionCompletion(
         Guid? ProtocolId,
@@ -2057,5 +2132,8 @@ internal sealed partial class FileReviewer(
         string? PassTokenizerName,
         ReviewReasoningEffort PassReasoningEffort,
         string? PassLogicalModelName,
+        bool Shadow,
+        Guid? PassConnectionId,
+        Guid? PassConfiguredModelId,
         CancellationToken Ct);
 }

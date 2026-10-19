@@ -57,6 +57,7 @@ internal static class RunnerReviewSubject
         // configured, and nothing reported the substitution.
         job.SetReviewPipelineProfile(manifest.Behaviour?.ReviewPipelineProfileId);
         job.Status = JobStatus.Processing;
+        job.RetryCount = Math.Max(0, manifest.AttemptNumber - 1);
         return job;
     }
 
@@ -76,6 +77,10 @@ internal static class RunnerReviewSubject
         foreach (var seed in recorded)
         {
             var result = new ReviewFileResult(job.Id, seed.FilePath);
+            if (seed.ModelEvidence is { } proof)
+            {
+                result.RecordModelEvidence(proof);
+            }
 
             // Order matters: a result can be both complete and excluded on the wire, and the entity refuses
             // to be marked twice. Exclusion takes precedence, because an excluded file was never reviewed.
@@ -93,7 +98,9 @@ internal static class RunnerReviewSubject
                 // carried-forward row, which suppresses its candidates and labels the file, instead of a
                 // freshly reviewed row that happens to have old comments.
                 result.MarkCompleted(seed.PerFileSummary ?? string.Empty, seed.Comments, seed.ReviewedPassKeys, seed.WithheldFindings);
-                result = ReviewFileResult.CreateCarriedForward(job.Id, result);
+                result = ReviewFileResult.CreateCarriedForward(
+                    job.Id, result,
+                    seed.ModelEvidence?.UnchangedInputProven == true ? seed.ModelEvidence.InputFingerprint : null);
             }
             else if (seed.IsComplete)
             {

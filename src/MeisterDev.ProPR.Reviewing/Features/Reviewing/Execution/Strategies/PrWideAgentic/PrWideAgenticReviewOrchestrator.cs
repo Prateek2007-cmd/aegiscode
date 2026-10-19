@@ -39,7 +39,8 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
     IReviewEvidenceCollector? reviewEvidenceCollector = null,
     ISummaryReconciliationService? summaryReconciliationService = null,
     IReviewFindingVerifier? reviewFindingVerifier = null,
-    IAiRuntimeResolver? aiRuntimeResolver = null)
+    IAiRuntimeResolver? aiRuntimeResolver = null,
+    IReviewFileResultStore? modelEvidenceStore = null)
     : IPrWideAgenticReviewOrchestrator, IPrWideCandidateGenerator
 {
     private static readonly JsonSerializerOptions FinalGateJsonOptions = new(JsonSerializerDefaults.Web);
@@ -72,6 +73,7 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         // GenerateCandidatesAsync, which clones-then-mutates the pass context for the same reason.
         var prWideContext = CloneContext(baseContext, baseContext.ActiveProtocolId, baseContext.ProtocolRecorder);
         prWideContext.ActiveReasoningEffort = baseContext.BaselineReasoningEffort;
+        this.AttachGenerationCapture(job, pr, prWideContext, 0, false);
         var (ownsProtocolPass, prWideContextWithProtocol) =
             await this.BeginProtocolIfNeededAsync(job, prWideContext, overrideClient, ct);
         prWideContext = prWideContextWithProtocol;
@@ -243,6 +245,10 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         // through the synthesis inlet so a job-level pass meets per-file findings at the shared per-finding gate.
         var passContext = CloneContext(baseContext, baseContext.ActiveProtocolId, baseContext.ProtocolRecorder);
         passContext.ModelId = runtime.Model.RemoteModelId;
+        passContext.LogicalModelName = runtime.LogicalModelName;
+        passContext.RuntimeConnectionId = runtime.Connection?.Id;
+        passContext.ConfiguredModelId = runtime.Model.Id;
+        this.AttachGenerationCapture(job, pr, passContext, unionPassIndex, shadow);
         // The pass's configured reasoning effort is applied to every stage's chat request unconditionally; CloneContext
         // carries it forward if the protocol re-clone below runs.
         passContext.ActiveReasoningEffort = reasoningEffort;
@@ -602,9 +608,13 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         IChatClient? overrideClient,
         CancellationToken ct)
     {
+        var stage = "investigation-" + ModelReviewCapture.Digest(task.Id)[..16];
+        var started = DateTimeOffset.UtcNow;
+        await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Unknown, [], ct);
         var reviewTools = baseContext.ReviewTools;
         if (reviewTools is null)
         {
+            await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Skipped, [], ct);
             return (new PrWideInvestigationResult(task.Id, "degraded", [], [], [], true), 0, 0, 0, 0, 0, 0);
         }
 
@@ -670,15 +680,25 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
 
                 if (PrWideArtifactParser.TryParseInvestigationResult(response.Text, task, boundedTools.Attempts.ToList(), out var parsed) && parsed is not null)
                 {
+                    await ObserveGenerationAsync(
+                        baseContext, stage, started,
+                        IsCompleteCandidateArray(response.Text, parsed.CandidateFindings.Count)
+                            ? ModelGenerationDisposition.Completed
+                            : ModelGenerationDisposition.InvalidOutput,
+                        parsed.CandidateFindings, ct);
                     return (parsed, inputTokens, outputTokens, 1, cachedInputTokens, cacheWriteTokens, reasoningTokens);
                 }
+
+                await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.InvalidOutput, [], ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Cancelled, [], CancellationToken.None);
                 throw;
             }
             catch (Exception ex)
             {
+                await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Failed, [], ct);
                 LogStageFallback(this._logger, "investigation", Guid.Empty, ex.Message);
             }
         }
@@ -992,6 +1012,9 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         IChatClient? overrideClient,
         CancellationToken ct)
     {
+        const string stage = "synthesis";
+        var started = DateTimeOffset.UtcNow;
+        await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Unknown, [], ct);
         var effectiveClient = overrideClient ?? baseContext.DefaultReviewChatClient ?? baseContext.TierChatClient;
         if (effectiveClient is not null)
         {
@@ -1016,21 +1039,39 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
                 var cacheWriteTokens = usage.CacheWriteTokens;
                 var reasoningTokens = usage.ReasoningTokens;
 
-                if (PrWideArtifactParser.TryParseSynthesisResult(response.Text, out var parsed) &&
-                    parsed is not null &&
-                    parsed.CandidateFindings.Count > 0)
+                if (PrWideArtifactParser.TryParseSynthesisResult(response.Text, out var parsed) && parsed is not null)
                 {
-                    return (parsed, inputTokens, outputTokens, 1, cachedInputTokens, cacheWriteTokens, reasoningTokens);
+                    await ObserveGenerationAsync(
+                        baseContext, stage, started,
+                        IsCompleteCandidateArray(response.Text, parsed.CandidateFindings.Count)
+                            ? ModelGenerationDisposition.Completed
+                            : ModelGenerationDisposition.InvalidOutput,
+                        parsed.CandidateFindings, ct);
+                    if (parsed.CandidateFindings.Count > 0)
+                    {
+                        return (parsed, inputTokens, outputTokens, 1, cachedInputTokens, cacheWriteTokens, reasoningTokens);
+                    }
+                }
+                else
+                {
+                    await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.InvalidOutput, [], ct);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Cancelled, [], CancellationToken.None);
                 throw;
             }
             catch (Exception ex)
             {
+                await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Failed, [], ct);
                 LogStageFallback(this._logger, "synthesis", Guid.Empty, ex.Message);
             }
+        }
+
+        else
+        {
+            await ObserveGenerationAsync(baseContext, stage, started, ModelGenerationDisposition.Skipped, [], ct);
         }
 
         var candidates = investigations

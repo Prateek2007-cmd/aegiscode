@@ -13,7 +13,9 @@ internal static class ReviewerPerformanceDimensions
     {
         if (ReviewerPerformanceMeasurement.IsCoverage(row))
         {
-            return true;
+            return row.Outcome != "collectionModelOpportunity" || (scope.Models is null || scope.Models.Contains(ReviewerPerformanceIdentity.ModelKey(row)))
+                && (scope.Types is null || row.TypeMembership.Length == 0 || MatchesTypes(row, scope.Types))
+                && (scope.Qualifiers is null || row.Qualifier.Length == 0 || scope.Qualifiers.Contains(row.Qualifier));
         }
 
         return (scope.Models is null || scope.Models.Contains(ReviewerPerformanceIdentity.ModelKey(row)))
@@ -75,16 +77,20 @@ internal static class ReviewerPerformanceDimensions
     {
         var source = cells.Where(row => !ReviewerPerformanceMeasurement.IsCoverage(row)).ToList();
         return new(
-            FacetItems(cells, "client"), FacetItems(cells, "repository"), FacetItems(source.Where(row => !row.IsMiss).ToList(), "model"),
+            FacetItems(cells, "client"), FacetItems(cells, "repository"), FacetItems(
+                cells.Where(row => !row.IsMiss
+                                   && (!ReviewerPerformanceMeasurement.IsCoverage(row) || row.Outcome == "collectionModelOpportunity")).ToList(), "model"),
             FacetItems(source, "type"), FacetItems(source, "qualifier"));
     }
 
-    internal static List<ReviewerPerformanceDailyCount> Coalesce(List<ReviewerPerformanceDailyCount> cells, bool preserveScope)
+    internal static List<ReviewerPerformanceDailyCount> Coalesce(List<ReviewerPerformanceDailyCount> cells)
     {
         var groups = cells.GroupBy(row => new
         {
-            ClientId = preserveScope ? row.ClientId : Guid.Empty,
-            RepositoryId = preserveScope ? row.RepositoryId : "",
+            row.CodeInsightPullRequestId,
+            row.PullRequestId,
+            row.ClientId,
+            row.RepositoryId,
             row.ProviderScope,
             row.BucketDate,
             row.ModelId,
@@ -106,6 +112,8 @@ internal static class ReviewerPerformanceDimensions
         {
             ClientId = clientId,
             RepositoryId = repositoryId,
+            CodeInsightPullRequestId = representative.CodeInsightPullRequestId,
+            PullRequestId = representative.PullRequestId,
             ProviderScope = representative.ProviderScope,
             BucketDate = representative.BucketDate,
             ModelId = representative.ModelId,

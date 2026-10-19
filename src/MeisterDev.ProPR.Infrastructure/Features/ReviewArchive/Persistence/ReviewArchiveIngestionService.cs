@@ -46,7 +46,7 @@ public sealed class ReviewArchiveIngestionService(IReviewArchiveStore store) : I
                     comment.PublishedAt,
                     comment.Text,
                     comment.OriginatingJobId))
-                .ToList());
+                .ToList(), evt.IsDeleted, evt.ConcernAnchor);
 
         await store.UpsertThreadAsync(key, snapshot, ct);
     }

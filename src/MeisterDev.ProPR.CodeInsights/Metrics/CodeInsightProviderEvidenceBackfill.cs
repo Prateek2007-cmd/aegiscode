@@ -9,11 +9,13 @@ using MeisterDev.ProPR.CodeInsights.Ports;
 using MeisterDev.ProPR.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MeisterDev.ProPR.CodeInsights.Metrics;
 
 /// <summary>Coordinates claimed historical source observations without holding database locks during reads.</summary>
-public sealed class CodeInsightProviderEvidenceBackfill(
+public sealed partial class CodeInsightProviderEvidenceBackfill(
     ICodeInsightHistoricalRefreshStore store,
     MeisterProPRDbContext dbContext,
     ICodeInsightsCollectionGate gate,
@@ -21,8 +23,11 @@ public sealed class CodeInsightProviderEvidenceBackfill(
     IScmProviderRegistry providerRegistry,
     IOptionsMonitor<CodeInsightsOptions> options,
     IDbContextFactory<MeisterProPRDbContext>? contextFactory = null,
-    TimeProvider? timeProvider = null) : ICodeInsightProviderEvidenceBackfill
+    TimeProvider? timeProvider = null,
+    ILogger<CodeInsightProviderEvidenceBackfill>? logger = null) : ICodeInsightProviderEvidenceBackfill
 {
+    private readonly ILogger _logger = logger ?? NullLogger<CodeInsightProviderEvidenceBackfill>.Instance;
+
     public async Task<CodeInsightProviderEvidenceBackfillResult> SweepAsync(int maximumPullRequests, CancellationToken ct = default)
     {
         var clock = timeProvider ?? TimeProvider.System;
@@ -76,7 +81,8 @@ public sealed class CodeInsightProviderEvidenceBackfill(
                 if (expired)
                 {
                     result = new CodeInsightObservationResult(
-                        CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded);
+                        CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded,
+                        Stage: CodeInsightObservationStage.ProcessingDeadline);
                 }
                 else
                 {
@@ -86,7 +92,8 @@ public sealed class CodeInsightProviderEvidenceBackfill(
                     {
                         expired = true;
                         result = new CodeInsightObservationResult(
-                            CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded);
+                            CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded,
+                            Stage: CodeInsightObservationStage.ProcessingDeadline);
                     }
                 }
             }
@@ -98,12 +105,15 @@ public sealed class CodeInsightProviderEvidenceBackfill(
             {
                 expired = true;
                 result = new CodeInsightObservationResult(
-                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded);
+                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded,
+                    Stage: CodeInsightObservationStage.ProcessingDeadline);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogUnexpectedFailure(this._logger, candidate.AggregateId, candidate.AttemptId, ex.GetType().FullName ?? ex.GetType().Name, ex.HResult);
                 result = new CodeInsightObservationResult(
-                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProviderReadFailed);
+                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProviderReadFailed,
+                    Stage: CodeInsightObservationStage.ProviderRead);
             }
 
             ct.ThrowIfCancellationRequested();
@@ -111,12 +121,29 @@ public sealed class CodeInsightProviderEvidenceBackfill(
             {
                 expired = true;
                 result = new CodeInsightObservationResult(
-                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded);
+                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.ProcessingDeadlineExceeded,
+                    Stage: CodeInsightObservationStage.ProcessingDeadline);
             }
 
-            if (await store.RecordResultAsync(
-                    candidate.AggregateId, candidate.AttemptId, result,
-                    clock.GetUtcNow(), settings.ProviderEvidenceRetryCooldown, ct) && result.Status == CodeInsightObservationStatus.Observed)
+            var recordedAt = clock.GetUtcNow();
+            var acknowledged = await store.RecordResultAsync(
+                candidate.AggregateId, candidate.AttemptId, result,
+                recordedAt, settings.ProviderEvidenceRetryCooldown, ct);
+            if (!acknowledged || result.Status != CodeInsightObservationStatus.Observed)
+            {
+                var reason = result.Status == CodeInsightObservationStatus.Disabled
+                    ? "CollectionDisabled"
+                    : (result.UnavailableReason ?? CodeInsightObservationUnavailableReason.EvidenceRetentionFailed).ToString();
+                var disposition = result.Status == CodeInsightObservationStatus.Disabled ? "collection-disabled"
+                    : CodeInsightHistoricalRecoveryPolicy.RequiresRepair(reason) ? "repair-required" : "retryable";
+                LogAttemptUnavailable(
+                    this._logger, candidate.AggregateId, candidate.AttemptId, candidate.Key.ClientId,
+                    candidate.Key.RepositoryId, candidate.Key.PullRequestId, result.Stage ?? CodeInsightObservationStage.Completion,
+                    reason, disposition, acknowledged,
+                    acknowledged && disposition == "retryable" ? recordedAt + settings.ProviderEvidenceRetryCooldown : null);
+            }
+
+            if (acknowledged && result.Status == CodeInsightObservationStatus.Observed)
             {
                 completed++;
             }
@@ -150,7 +177,8 @@ public sealed class CodeInsightProviderEvidenceBackfill(
         if (candidate.Sources.Count == 0)
         {
             return new CodeInsightObservationResult(
-                CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+                CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable,
+                Stage: CodeInsightObservationStage.SourceLookup);
         }
 
         CodeInsightObservationResult? unavailable = null;
@@ -175,8 +203,11 @@ public sealed class CodeInsightProviderEvidenceBackfill(
             if (job is null || string.IsNullOrWhiteSpace(source.ProviderScope)
                             || ProviderSourceIdentity.FromReviewJob(job, providerRegistry.GetSourceIdentityPolicy(job.Provider)).Value != source.ProviderScope)
             {
-                unavailable ??= new CodeInsightObservationResult(
-                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable);
+                var missing = new CodeInsightObservationResult(
+                    CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.SourceCoordinatesUnavailable,
+                    Stage: CodeInsightObservationStage.SourceLookup);
+                unavailable = CodeInsightHistoricalRecoveryPolicy.PreferFailure(unavailable, missing);
+                this.LogSourceFailure(candidate, source.ProviderScope, missing);
                 continue;
             }
 
@@ -185,10 +216,13 @@ public sealed class CodeInsightProviderEvidenceBackfill(
             ct.ThrowIfCancellationRequested();
             if (result.Status != CodeInsightObservationStatus.Observed || result.ObservedAt is null)
             {
-                unavailable ??= result.Status == CodeInsightObservationStatus.Observed
+                var failure = result.Status == CodeInsightObservationStatus.Observed
                     ? new CodeInsightObservationResult(
-                        CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed)
+                        CodeInsightObservationStatus.Unavailable, UnavailableReason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                        Stage: CodeInsightObservationStage.ObservationAcknowledgment)
                     : result;
+                unavailable = CodeInsightHistoricalRecoveryPolicy.PreferFailure(unavailable, failure);
+                this.LogSourceFailure(candidate, source.ProviderScope, failure);
             }
             else
             {
@@ -198,4 +232,49 @@ public sealed class CodeInsightProviderEvidenceBackfill(
 
         return unavailable ?? new CodeInsightObservationResult(CodeInsightObservationStatus.Observed, observedAt);
     }
+
+    private void LogSourceFailure(CodeInsightHistoricalRefreshCandidate candidate, string scope, CodeInsightObservationResult result)
+    {
+        if (result.Status != CodeInsightObservationStatus.Unavailable)
+        {
+            return;
+        }
+
+        var reason = result.UnavailableReason ?? CodeInsightObservationUnavailableReason.ProviderReadFailed;
+        LogSourceUnavailable(
+            this._logger, candidate.AggregateId, candidate.AttemptId, candidate.Key.ClientId, candidate.Key.RepositoryId,
+            candidate.Key.PullRequestId, SafeScope(scope), result.Stage ?? CodeInsightObservationStage.ProviderRead, reason,
+            CodeInsightHistoricalRecoveryPolicy.RequiresRepair(reason.ToString()) ? "repair-required" : "retryable");
+    }
+
+    private static string SafeScope(string scope)
+    {
+        var separator = scope.IndexOf(':');
+        return separator > 0 && Enum.TryParse<MeisterDev.ProPR.Domain.Enums.ScmProvider>(scope[..separator], out var provider) && Enum.IsDefined(provider)
+               && Uri.TryCreate(scope[(separator + 1)..], UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+            ? $"{provider}:{uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped).TrimEnd('/')}"
+            : "Unavailable";
+    }
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message =
+            "Historical source observation failed for aggregate {AggregateId}, attempt {AttemptId}, client {ClientId}, repository {RepositoryId}, PR {PullRequestId}, source {ProviderScope}, stage {Stage}: {Reason}; recovery {RecoveryDisposition}")]
+    private static partial void LogSourceUnavailable(
+        ILogger logger, Guid aggregateId, Guid attemptId, Guid clientId, string repositoryId,
+        long pullRequestId, string providerScope, CodeInsightObservationStage stage, CodeInsightObservationUnavailableReason reason,
+        string recoveryDisposition);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message =
+            "Historical attempt {AttemptId} for aggregate {AggregateId}, client {ClientId}, repository {RepositoryId}, PR {PullRequestId} is unavailable at {Stage}: {Reason}; recovery {RecoveryDisposition}, result retained {Acknowledged}, next retry {NextRetryAt}")]
+    private static partial void LogAttemptUnavailable(
+        ILogger logger, Guid aggregateId, Guid attemptId, Guid clientId, string repositoryId,
+        long pullRequestId, CodeInsightObservationStage stage, string reason, string recoveryDisposition, bool acknowledged, DateTimeOffset? nextRetryAt);
+
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Historical attempt {AttemptId} for aggregate {AggregateId} failed; exception type {ExceptionType}, error code {ErrorCode}")]
+    private static partial void LogUnexpectedFailure(ILogger logger, Guid aggregateId, Guid attemptId, string exceptionType, int errorCode);
 }

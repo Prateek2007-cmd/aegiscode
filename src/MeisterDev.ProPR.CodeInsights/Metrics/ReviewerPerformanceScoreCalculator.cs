@@ -7,7 +7,16 @@ namespace MeisterDev.ProPR.CodeInsights.Metrics;
 /// <summary>Evaluates supported interpretations without I/O.</summary>
 public static class ReviewerPerformanceScoreCalculator
 {
-    public const string Version = "reviewer-performance-v1";
+    public const string Version = "reviewer-performance-v2";
+
+    public static ReviewerPerformancePrecisionScore ComputePrecision(ReviewerPerformanceCounts counts)
+    {
+        var score = Compute(counts, recallIsMeasurable: false);
+        return new(
+            counts,
+            score.Scenarios.Select(scenario => new ReviewerPerformancePrecisionScenario(
+                scenario.Id, scenario.TruePositives, scenario.FalsePositives, scenario.Excluded, scenario.Precision)).ToArray(), score.Summary.Precision);
+    }
 
     public static ReviewerPerformanceScore Compute(ReviewerPerformanceCounts counts, bool recallIsMeasurable = true)
     {

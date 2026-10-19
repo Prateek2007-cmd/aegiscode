@@ -25,6 +25,42 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 /// </summary>
 public class ToolAwareAiReviewCoreTests
 {
+    [Theory]
+    [InlineData("{\"summary\":\"Done\",\"comments\":[],\"loop_complete\":true}", ModelGenerationDisposition.Completed)]
+    [InlineData("{\"summary\":\"Done\",\"comments\":null,\"loop_complete\":true}", ModelGenerationDisposition.InvalidOutput)]
+    public async Task GenerationProofRequiresAnExplicitValidCandidateArray(string response, ModelGenerationDisposition expected)
+    {
+        var client = Substitute.For<IChatClient>();
+        client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+        var result = await CreateSut(client, maxIterations: 1).ReviewAsync(CreatePullRequest(), CreateContext());
+
+        Assert.Empty(result.Comments);
+        Assert.Equal(expected, result.GenerationDisposition);
+    }
+
+    [Theory]
+    [InlineData("{\"comments\":[{}],\"loop_complete\":true}")]
+    [InlineData("{\"comments\":[{\"message\":\"valid finding\"},{}],\"loop_complete\":true}")]
+    public async Task MalformedCandidateEntriesRetainTheExistingReviewResultRejection(string response)
+    {
+        var client = Substitute.For<IChatClient>();
+        client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+        await Assert.ThrowsAsync<ArgumentException>(() => CreateSut(client, maxIterations: 1).ReviewAsync(CreatePullRequest(), CreateContext()));
+    }
+
+    [Fact]
+    public async Task WhitespaceCandidateKeepsItsReviewResultButCannotCertifyGeneration()
+    {
+        var client = Substitute.For<IChatClient>();
+        client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"comments\":[{\"message\":\" \"}],\"loop_complete\":true}")));
+        var result = await CreateSut(client, maxIterations: 1).ReviewAsync(CreatePullRequest(), CreateContext());
+        Assert.Equal(" ", Assert.Single(result.Comments).Message);
+        Assert.Equal(ModelGenerationDisposition.InvalidOutput, result.GenerationDisposition);
+    }
+
     // The file-content tool prefixes every returned line with its absolute file line number so
     // the model reads anchors from the annotation instead of counting lines.
     [Fact]

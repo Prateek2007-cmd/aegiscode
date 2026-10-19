@@ -18,6 +18,18 @@ public sealed record ReviewResult(
     [JsonIgnore]
     public IReadOnlyList<WithheldReviewFinding> WithheldFindings { get; init; } = [];
 
+    /// <summary>Internal generation proof retained independently of publishable comments.</summary>
+    [JsonIgnore]
+    public ModelReviewEvidence? ModelEvidence { get; init; }
+
+    /// <summary>Generation status supplied by the producing core, including invalid and skipped output.</summary>
+    [JsonIgnore]
+    public ModelGenerationDisposition? GenerationDisposition { get; init; }
+
+    /// <summary>The execution inventory and PR-wide pass proofs.</summary>
+    [JsonIgnore]
+    public ModelReviewManifest? ModelEvidenceManifest { get; init; }
+
     /// <summary>
     ///     File paths whose results were carried forward from a prior iteration's review.
     ///     Empty for full (non-incremental) reviews.

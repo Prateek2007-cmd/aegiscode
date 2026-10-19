@@ -136,6 +136,32 @@ public sealed class ReviewSystemContext
     /// </summary>
     public string? LogicalModelName { get; set; }
 
+    /// <summary>The canonical source and connection captured for this review execution.</summary>
+    public string? ProviderScope { get; set; }
+
+    public Guid? SourceConnectionId { get; set; }
+    public Guid? RuntimeConnectionId { get; set; }
+    public Guid? ConfiguredModelId { get; set; }
+
+    /// <summary>The shared per-file checkpoint receiving independent generation certificates.</summary>
+    public MeisterDev.ProPR.Domain.Entities.ReviewFileResult? ModelEvidenceCheckpoint { get; set; }
+
+    public ModelReviewEvidence? ModelEvidenceScope { get; set; }
+
+    /// <summary>All finding-producing file assignments have been retained in one closed inventory.</summary>
+    public bool ModelInventoryComplete { get; set; }
+
+    /// <summary>Prepared runtime resolutions keyed by the configured pass ordinal for this file.</summary>
+    public IReadOnlyDictionary<int, PreparedReviewPassRuntime> PreparedModelPassRuntimes { get; set; } =
+        new Dictionary<int, PreparedReviewPassRuntime>();
+
+    public Func<string, DateTimeOffset, ModelGenerationDisposition,
+            IReadOnlyList<MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models.PrWideCandidateFinding>, CancellationToken, Task>?
+        ModelGenerationObserver { get; set; }
+
+    public string? CapturedRevisionKey { get; set; }
+    public int? CapturedLeaseGeneration { get; set; }
+
     /// <summary>
     ///     The context-window size (in tokens) of the resolved model for this review stage, used to
     ///     budget and trim the prompt before each provider call. <see langword="null" /> when the model

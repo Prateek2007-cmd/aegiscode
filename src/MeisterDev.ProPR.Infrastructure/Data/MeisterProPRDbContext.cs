@@ -299,6 +299,9 @@ public sealed class MeisterProPRDbContext(DbContextOptions<MeisterProPRDbContext
     /// <summary>Human-authored threads harvested as things ProPR missed (discussion encrypted at rest).</summary>
     public DbSet<CodeInsightMiss> CodeInsightMisses => this.Set<CodeInsightMiss>();
 
+    public DbSet<CodeInsightHumanConcern> CodeInsightHumanConcerns => this.Set<CodeInsightHumanConcern>();
+    public DbSet<CodeInsightModelConcernEvidence> CodeInsightModelConcernEvidence => this.Set<CodeInsightModelConcernEvidence>();
+
     /// <summary>Source eligibility observations retained before human classification completes.</summary>
     public DbSet<CodeInsightThreadEligibility> CodeInsightThreadEligibility => this.Set<CodeInsightThreadEligibility>();
 

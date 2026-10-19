@@ -194,7 +194,9 @@ public sealed class CodeInsightPerformanceEvidenceStore(MeisterProPRDbContext db
         if (finding.OutcomeObservedAt is null || finding.OutcomeObservedAt < observedAt ||
             (finding.OutcomeObservedAt == observedAt && (finding.NativeStatus != nativeStatus || finding.OutcomeSourceFingerprint != fingerprint)))
         {
-            return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
+            return new CodeInsightEvidenceAcknowledgment(
+                false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                Stage: CodeInsightObservationStage.OutcomeAcknowledgment);
         }
 
         var intent = CodeInsightNativeResolution.InterpretKnown(finding.NativeStatus);

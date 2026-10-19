@@ -44,11 +44,11 @@ public sealed partial class CodeInsightMissHarvester
 
     [LoggerMessage(
         Level = LogLevel.Warning,
-        Message = "Harvesting human thread {ProviderThreadId} (client {ClientId}) failed; "
-                  + "the crawl continues unaffected.")]
+        Message = "Harvesting human thread {ProviderThreadId} (client {ClientId}) failed with {ExceptionType}, code {ErrorCode}.")]
     private static partial void LogHandlingFailed(
         ILogger logger,
         string providerThreadId,
         Guid clientId,
-        Exception ex);
+        string exceptionType,
+        int errorCode);
 }

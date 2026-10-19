@@ -3,6 +3,8 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 using System.Diagnostics;
+using MeisterDev.ProPR.Application.Features.Providers.Identity;
+using MeisterDev.ProPR.Application.Support;
 using MeisterDev.Ai.Providers.Drivers;
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
@@ -11,6 +13,7 @@ using MeisterDev.ProPR.Application.Features.Licensing.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.ValueObjects;
 using MeisterDev.ProPR.Domain.Entities;
@@ -44,7 +47,9 @@ public sealed partial class RunnerJobManifestResolver(
     AiReviewOptions? reviewOptions = null,
     ILicensingCapabilityService? licensing = null,
     IReviewJobExecutionStore? executionStore = null,
-    ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null) : IRunnerJobManifestResolver
+    ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null,
+    IReviewFileResultStore? resultStore = null,
+    IClientScmConnectionRepository? scmConnections = null) : IRunnerJobManifestResolver
 {
     /// <inheritdoc />
     public async Task<RunnerJobManifestResolution> ResolveAsync(
@@ -140,6 +145,10 @@ public sealed partial class RunnerJobManifestResolver(
             var linkedItems = includeLinkedItems
                 ? await this.DiscoverLinkedItemsAsync(job, request.Conversation, ct)
                 : null;
+            var providerScope = providerRegistry is null
+                ? string.Empty
+                : ProviderSourceIdentity.FromReviewJob(job, providerRegistry.GetSourceIdentityPolicy(job.Provider)).Value;
+            var sourceConnection = await this.ResolveSourceConnectionAsync(job, ct);
 
             var manifest = new RunnerJobManifest(
                 RunnerContractVersion.Current,
@@ -162,7 +171,8 @@ public sealed partial class RunnerJobManifestResolver(
                     job.RevisionHeadSha,
                     job.RevisionBaseSha,
                     [.. request.ChangedPaths],
-                    ToManifestThreads(request.ExistingThreads)),
+                    ToManifestThreads(request.ExistingThreads), providerScope, sourceConnection?.Id,
+                    ReviewRevisionKeys.GetStoredKey(job.ReviewRevisionReference, job.IterationId)),
                 new RunnerWorkspaceReference(
                     request.WorkspaceFetchPath,
                     job.RevisionHeadSha,
@@ -211,7 +221,37 @@ public sealed partial class RunnerJobManifestResolver(
                 // with no licensing service at all (the offline harness) reads as licensed, exactly as the
                 // in-process planner treats a null licensing service.
                 ParallelReviewExecutionLicensed: licensing is null
-                                                 || await licensing.IsEnabledAsync(PremiumCapabilityKey.ParallelReviewExecution, ct));
+                                                 || await licensing.IsEnabledAsync(PremiumCapabilityKey.ParallelReviewExecution, ct),
+                AttemptNumber: job.RetryCount + 1);
+
+            if (resultStore is not null)
+            {
+                try
+                {
+                    await resultStore.RecordModelManifestAsync(
+                        job.Id, job.RetryCount + 1, new ModelReviewManifest
+                        {
+                            JobId = job.Id, Attempt = job.RetryCount + 1, LeaseGeneration = request.Lease.Generation,
+                            Files = request.ChangedPaths.Distinct(StringComparer.Ordinal).ToArray(),
+                            ProviderScope = providerScope, SourceConnectionId = sourceConnection?.Id, InventoryComplete = true,
+                            CapturedAt = DateTimeOffset.UtcNow,
+                            AllowedModels = new[]
+                            {
+                                new ModelReviewModelBinding(
+                                    defaultBinding.RemoteModelId, defaultBinding.LogicalModelName, defaultBinding.ConnectionId,
+                                    defaultBinding.ConfiguredModelId,
+                                    1, ReviewPassScope.PerFile, Shadow: false)
+                            }.Concat(
+                                passBindings.Select(pass => new ModelReviewModelBinding(
+                                    pass.Model.RemoteModelId, pass.Model.LogicalModelName, pass.Model.ConnectionId, pass.Model.ConfiguredModelId,
+                                    pass.Ordinal + 1, pass.Scope ?? ReviewPassScope.PerFile, pass.Lens, pass.Shadow))).ToArray(),
+                        }, ct);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    logger.LogWarning("Runner model inventory retention unavailable for job {JobId}: {FailureType}", job.Id, exception.GetType().Name);
+                }
+            }
 
             return RunnerJobManifestResolution.Resolved(manifest);
         }
@@ -222,6 +262,24 @@ public sealed partial class RunnerJobManifestResolver(
             // chosen.
             LogResolutionFailed(logger, job.Id, ex);
             return RunnerJobManifestResolution.Refused($"Resolving the job manifest failed, so the job was not offered: {ex.Message}");
+        }
+    }
+
+    private async Task<ClientScmConnectionDto?> ResolveSourceConnectionAsync(ReviewJob job, CancellationToken ct)
+    {
+        if (scmConnections is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return RetentionConnectionResolver.Resolve(await scmConnections.GetByClientIdAsync(job.ClientId, ct), job.Provider, job.ProviderHost.HostBaseUrl);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Runner source proof unavailable for job {JobId}: {FailureType}", job.Id, exception.GetType().Name);
+            return null;
         }
     }
 
@@ -309,7 +367,7 @@ public sealed partial class RunnerJobManifestResolver(
             runtime.Model.SupportsPromptCaching,
             runtime.Model.SupportsToolUse,
             runtime.Model.SupportsStructuredOutput,
-            runtime.SupportsLowReasoningEffort);
+            runtime.SupportsLowReasoningEffort, runtime.Connection.Id, runtime.Model.Id);
     }
 
     /// <summary>

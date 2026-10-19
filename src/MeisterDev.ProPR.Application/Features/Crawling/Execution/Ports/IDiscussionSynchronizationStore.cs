@@ -19,6 +19,10 @@ public interface IDiscussionSynchronizationStore
         PullRequestThreadSnapshotTarget target, string? revision,
         bool force, TimeSpan reconciliationInterval, CancellationToken ct = default);
 
+    Task<IDiscussionSynchronizationLease?> TryAcquireRetainedReplayAsync(
+        PullRequestThreadSnapshotTarget target, TimeSpan leaseDuration,
+        CancellationToken ct = default) => this.TryAcquireAsync(target, null, true, TimeSpan.FromMinutes(5), ct);
+
     Task<IReadOnlyList<DiscussionSynchronizationState>> ListDueAsync(TimeSpan reconciliationInterval, int limit, CancellationToken ct = default);
 }
 

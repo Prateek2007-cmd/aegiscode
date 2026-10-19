@@ -38,7 +38,8 @@ public sealed class DiscussionSynchronizationService(
     IThreadMemoryService? memory = null,
     IReviewPrScanThreadStatusStore? scans = null,
     IAiConfigurationVersionReader? aiVersions = null,
-    TimeProvider? timeProvider = null) : IDiscussionSynchronizationService
+    TimeProvider? timeProvider = null,
+    ICodeInsightModelConcernObserver? modelConcerns = null) : IDiscussionSynchronizationService
 {
     private readonly Dictionary<PullRequestThreadSnapshotTarget, CachedObservation> _observations = [];
 
@@ -267,6 +268,22 @@ public sealed class DiscussionSynchronizationService(
         var missVersion = batch is null
             ? null
             : DiscussionThreadProgress.Fingerprint(batch.DependencyVersion, state.CollectionGeneration.ToString(), misses?.DependencyVersion ?? "");
+        string? modelVersion = null;
+        var modelPreparationCurrent = true;
+        if (batch is not null && modelConcerns is not null)
+        {
+            try
+            {
+                modelVersion = DiscussionThreadProgress.Fingerprint(await modelConcerns.PrepareAsync(batch, ct), state.CollectionGeneration.ToString());
+            }
+            catch (Exception exception) when (!ct.IsCancellationRequested)
+            {
+                modelPreparationCurrent = false;
+                modelVersion = "model-evidence-preparation-unavailable";
+                logger.LogWarning("Independent model concern preparation unavailable: {FailureType}", exception.GetType().Name);
+            }
+        }
+
         var archiveVersion = DiscussionThreadProgress.Fingerprint(
             "archive-v2", state.RetentionGeneration.ToString(), connection.StoreThreads.ToString(), connection.RetentionDays?.ToString() ?? "");
         var memoryConfiguration = memory is not null && scan is not null && aiVersions is not null
@@ -278,7 +295,7 @@ public sealed class DiscussionSynchronizationService(
             .Where(thread => thread.ThreadId is not null).Select(thread => thread.ThreadId!).ToHashSet(StringComparer.Ordinal);
         return new(
             scope, key, batch, scopedFindings, progress, ownership, unverifiable, scan,
-            new(dispositionVersion, missVersion, archiveVersion, memoryVersion), priorReviewerIds);
+            new(dispositionVersion, missVersion, archiveVersion, memoryVersion, modelVersion), priorReviewerIds, modelPreparationCurrent);
     }
 
     private async Task<PullRequestThreadSnapshot> ReadSnapshotAsync(
@@ -297,6 +314,7 @@ public sealed class DiscussionSynchronizationService(
                 archive is not null && connection.StoreThreads && state.Needs("archive", state.SourceFingerprint, prepared.Versions.Archive) ||
                 prepared.Batch is not null && dispositions is not null && state.Needs("disposition", state.SourceFingerprint, prepared.Versions.Disposition!) ||
                 prepared.Batch is not null && misses is not null && state.Needs("miss", state.SourceFingerprint, prepared.Versions.Miss!) ||
+                prepared.Versions.ModelEvidence is not null && state.Needs("modelEvidence", state.SourceFingerprint, prepared.Versions.ModelEvidence) ||
                 memory is not null && prepared.Scan is not null && prepared.PriorReviewerIds.Contains(entry.Key) &&
                 state.Needs("memory", state.SourceFingerprint, prepared.Versions.Memory);
         });
@@ -352,6 +370,24 @@ public sealed class DiscussionSynchronizationService(
             await this.PersistArchiveAsync(context, ct);
             await this.PersistMemoryStatusesAsync(context, ct);
             await this.RecordCoverageAsync(context, ct);
+            if (modelConcerns is not null && context.Prepared.Batch is not null && context.Snapshot.EnumerationComplete)
+            {
+                await context.Lease.EnsureCurrentAsync(ct);
+                try
+                {
+                    var retained = await modelConcerns.CompleteEnumerationAsync(
+                        context.Prepared.Key, context.Prepared.Scope, context.Connection.Id,
+                        context.Snapshot.ObservedAt, context.ModelConcernsRetained && context.Prepared.ModelPreparationCurrent,
+                        context.ModelIdentities.ToArray(), ct);
+                    context.ModelEvidenceCurrent &= retained;
+                }
+                catch (Exception exception) when (!ct.IsCancellationRequested)
+                {
+                    context.ModelEvidenceCurrent = false;
+                    logger.LogWarning("Independent model concern finalization unavailable: {FailureType}", exception.GetType().Name);
+                }
+            }
+
             return await this.CompleteObservationAsync(context, renewal, ct);
         }
         catch
@@ -374,6 +410,7 @@ public sealed class DiscussionSynchronizationService(
             var unaddressable = ThreadUpdatedEventFactory.Build(
                 context.Request.ClientId, context.Connection.Id, context.Request.RepositoryId,
                 context.Request.PullRequestId, thread, context.Prepared.Ownership, context.Snapshot.ObservedAt, context.Prepared.Scope);
+            await this.ObserveModelEvidenceAsync(context, unaddressable, null, null, ct);
             if (ThreadUpdatedEventFactory.IsHumanThread(unaddressable))
             {
                 context.HarvestCoverage.Observe(
@@ -403,6 +440,11 @@ public sealed class DiscussionSynchronizationService(
             state.Consumers.Remove("disposition");
         }
 
+        if (context.Prepared.Versions.ModelEvidence is null)
+        {
+            state.Consumers.Remove("modelEvidence");
+        }
+
         var visible = thread with { Comments = thread.Comments.Where(comment => !comment.IsDeleted).ToArray() };
         var observation = ThreadUpdatedEventFactory.Build(
             context.Request.ClientId, context.Connection.Id, context.Request.RepositoryId, context.Request.PullRequestId,
@@ -429,10 +471,49 @@ public sealed class DiscussionSynchronizationService(
 
         var observationState = new ObservedThread(thread, visible, observation, state, status, digest);
         this.CollectArchiveChanges(context, observationState);
+        await this.ObserveModelEvidenceAsync(context, observation, state, digest, ct);
         await this.ObserveDispositionAsync(context, observationState, ct);
         await this.ObserveMissAsync(context, observationState, ct);
         await this.ObserveMemoryAsync(context, observationState, ct);
         state.SourceFingerprint = digest;
+    }
+
+    private async Task ObserveModelEvidenceAsync(
+        ObservationContext context, ThreadUpdatedEvent observation,
+        DiscussionThreadProgress? state, string? digest, CancellationToken ct)
+    {
+        if (modelConcerns is null || !context.Prepared.ModelPreparationCurrent || context.Prepared.Versions.ModelEvidence is not { } version)
+        {
+            return;
+        }
+
+        if (!observation.IsDeleted && ModelConcernIdentity.Of(observation) is { } identity)
+        {
+            context.ModelIdentities.Add(identity);
+        }
+
+        if (state is not null && !state.Needs("modelEvidence", digest!, version))
+        {
+            return;
+        }
+
+        await context.Lease.EnsureCurrentAsync(ct);
+        try
+        {
+            var ack = await modelConcerns.ObserveAsync(observation, ct);
+            context.ModelConcernsRetained &= ack.ConcernRetained;
+            context.ModelEvidenceCurrent &= ack.ConcernRetained && ack.ModelsCurrent;
+            if (ack.ConcernRetained && ack.ModelsCurrent)
+            {
+                state?.Acknowledge("modelEvidence", digest!, version);
+            }
+        }
+        catch (Exception exception) when (!ct.IsCancellationRequested)
+        {
+            context.ModelConcernsRetained = false;
+            context.ModelEvidenceCurrent = false;
+            logger.LogWarning("Independent model concern observation unavailable: {FailureType}", exception.GetType().Name);
+        }
     }
 
     private void CollectArchiveChanges(ObservationContext context, ObservedThread observed)
@@ -450,7 +531,7 @@ public sealed class DiscussionSynchronizationService(
                         .Where(stamp => stamp.HasValue).Max() ?? context.Snapshot.ObservedAt,
                     observation.Comments.Select(comment => new RetainedCommentSnapshot(
                         comment.CommentId, comment.AuthorIdentity, comment.IsAiAuthored,
-                        comment.PublishedAt, comment.Text, comment.OriginatingJobId)).ToArray(), thread.IsDeleted));
+                        comment.PublishedAt, comment.Text, comment.OriginatingJobId)).ToArray(), thread.IsDeleted, thread.ConcernAnchor));
             context.ArchiveAcknowledgments.Add((state, digest));
         }
     }
@@ -679,7 +760,7 @@ public sealed class DiscussionSynchronizationService(
         var summaries = MergeReviewerSummaries(snapshot, context.Lease.State.ReviewerSummariesJson);
         await context.Lease.CompleteAsync(
             JsonSerializer.Serialize(context.Prepared.Progress), JsonSerializer.Serialize(summaries), snapshot.ObservedAt,
-            snapshot.EnumerationComplete, context.AllCurrent,
+            snapshot.EnumerationComplete, context.AllCurrent && context.ModelEvidenceCurrent,
             context.Request.PullRequestStatus != PrStatus.Active && !context.UnavailableNativeEvidence, context.Revision, context.Interval, ct);
         if (context.Lease.CompletionIsCurrent && context.AllCurrent && snapshot.EnumerationComplete && context.InsightsCurrent &&
             coverage is not null && misses is not null && dispositions is not null)
@@ -688,7 +769,8 @@ public sealed class DiscussionSynchronizationService(
             reader.AcknowledgeCurrentConsumers(context.Target, snapshot);
         }
 
-        if (context.Lease.CompletionIsCurrent && context.AllCurrent && !context.UnavailableNativeEvidence && snapshot.EnumerationComplete)
+        if (context.Lease.CompletionIsCurrent && context.AllCurrent && context.ModelEvidenceCurrent && !context.UnavailableNativeEvidence &&
+            snapshot.EnumerationComplete)
         {
             var state = context.Lease.State;
             this._observations[context.Target] = new(
@@ -721,7 +803,7 @@ public sealed class DiscussionSynchronizationService(
         }
     }
 
-    private sealed record ConsumerVersions(string? Disposition, string? Miss, string Archive, string Memory);
+    private sealed record ConsumerVersions(string? Disposition, string? Miss, string Archive, string Memory, string? ModelEvidence);
 
     private sealed record CachedObservation(
         PullRequestThreadSnapshot Snapshot,
@@ -744,7 +826,8 @@ public sealed class DiscussionSynchronizationService(
         ThreadOwnershipResolver Unverifiable,
         ReviewPrScan? Scan,
         ConsumerVersions Versions,
-        HashSet<string> PriorReviewerIds);
+        HashSet<string> PriorReviewerIds,
+        bool ModelPreparationCurrent);
 
     private sealed record ObservedThread(
         PrCommentThread Thread,
@@ -782,6 +865,9 @@ public sealed class DiscussionSynchronizationService(
 
         public bool AllCurrent { get; set; } = true;
         public bool InsightsCurrent { get; set; } = prepared.Batch is not null;
+        public bool ModelEvidenceCurrent { get; set; } = prepared.ModelPreparationCurrent;
+        public bool ModelConcernsRetained { get; set; } = true;
+        public HashSet<string> ModelIdentities { get; } = new(StringComparer.Ordinal);
         public bool UnavailableNativeEvidence { get; set; }
         public bool DispositionPrepared { get; set; }
         public bool MissPrepared { get; set; }

@@ -42,7 +42,9 @@ internal sealed class CodeInsightAudienceHarness
         bool withClientRoles = true,
         bool tenantAdmin = false,
         bool isAdmin = false,
-        string? minimumSampleSize = null)
+        string? minimumSampleSize = null,
+        ICodeInsightHistoricalRefreshStore? historicalRefreshStore = null,
+        IModelEvidenceMaintenance? modelEvidenceMaintenance = null)
     {
         this.Rollups = Substitute.For<ICodeInsightRollupReader>();
         this.Metrics = Substitute.For<ICodeInsightMetricReader>();
@@ -216,7 +218,8 @@ internal sealed class CodeInsightAudienceHarness
             withReaders ? this.Metrics : null,
             withReaders ? this.Browse : null,
             null,
-            withReaders ? this.Importer : null)
+            withReaders ? this.Importer : null,
+            historicalRefreshStore: historicalRefreshStore, modelEvidenceMaintenance: modelEvidenceMaintenance)
         {
             ControllerContext = new ControllerContext { HttpContext = httpContext },
         };

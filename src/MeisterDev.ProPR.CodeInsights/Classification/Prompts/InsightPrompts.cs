@@ -37,6 +37,12 @@ internal static class InsightPrompts
     internal static string HumanMissSystem()
         => PromptTemplateRuntime.RenderTemplateFile(InsightPromptTemplates.HumanMissSystem);
 
+    internal static string HumanConcernSystem()
+        => PromptTemplateRuntime.RenderTemplateFile(InsightPromptTemplates.HumanConcernSystem);
+
+    internal static string HumanConcernModelSystem()
+        => PromptTemplateRuntime.RenderTemplateFile(InsightPromptTemplates.HumanConcernModelSystem);
+
     internal static string HumanMissUser(InsightPromptModels.HumanMissUserModel model)
         => PromptTemplateRuntime.RenderTemplateFile(InsightPromptTemplates.HumanMissUser, model);
 }

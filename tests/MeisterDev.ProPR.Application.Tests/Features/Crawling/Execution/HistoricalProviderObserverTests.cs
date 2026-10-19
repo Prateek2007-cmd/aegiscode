@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Crawling.Execution.Services;
+using MeisterDev.ProPR.Application.Features.Crawling.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Features.ThreadOwnership;
 using MeisterDev.ProPR.Application.Interfaces;
@@ -20,6 +21,136 @@ namespace MeisterDev.ProPR.Application.Tests.Features.Crawling.Execution;
 
 public sealed class HistoricalProviderObserverTests
 {
+    [Fact]
+    public async Task HistoricalModelConsumerRetainsHumanConcernsWithoutChangingLegacyAcknowledgment()
+    {
+        var models = Substitute.For<ICodeInsightModelConcernObserver>();
+        models.PrepareAsync(Arg.Any<CodeInsightDiscussionBatch>(), Arg.Any<CancellationToken>()).Returns("models");
+        models.ObserveAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>()).Returns(new ModelConcernAcknowledgment(true, false));
+        models.CompleteEnumerationAsync(
+            Arg.Any<CodeInsightPullRequestKey>(), Arg.Any<string>(), Arg.Any<Guid>(), Arg.Any<DateTimeOffset>(),
+            Arg.Any<bool>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>()).Returns(true);
+        var h = new Harness(models: models);
+        h.Reader.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+                CodeInsightObservationMode.HistoricalBackfill)
+            .Returns(new CodeInsightProviderFeedback([], [new("human", "a.cs", 2, [new("Human", "Concern")], "Fixed")]));
+        var result = await h.Observer.RefreshAsync(h.Target);
+        Assert.Equal(CodeInsightObservationStatus.Observed, result.Status);
+        await models.Received(1).ObserveAsync(
+            Arg.Is<ThreadUpdatedEvent>(evt => evt.ProviderScope == h.Target.ProviderScope && evt.ConnectionId == h.Connection.Id),
+            Arg.Any<CancellationToken>());
+        await models.Received(1).CompleteEnumerationAsync(
+            h.Target.Key, h.Target.ProviderScope, h.Connection.Id, Arg.Any<DateTimeOffset>(), true,
+            Arg.Is<IReadOnlyList<string>>(ids => ids.Count == 1), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MissingPostedOriginStorageRequiresObserverRepairBeforeAnySourceReads()
+    {
+        var h = new Harness(includePostedOrigins: false);
+
+        var result = await h.Observer.RefreshAsync(h.Target);
+
+        Assert.Equal(CodeInsightObservationStatus.Unavailable, result.Status);
+        Assert.Equal(CodeInsightObservationUnavailableReason.ObserverUnavailable, result.UnavailableReason);
+        Assert.Equal(CodeInsightObservationStage.ObserverDependencies, result.Stage);
+        Assert.Null(result.ObservedAt);
+        await h.Connections.DidNotReceiveWithAnyArgs().GetByClientIdAsync(default);
+        await h.Reader.DidNotReceiveWithAnyArgs().ReadAsync(default!, default!);
+        await h.Coverage.DidNotReceiveWithAnyArgs().RecordAcknowledgedAsync(default!, default!, false, default);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task MissingOrInactiveConnectionsStopBeforeProviderReads(bool inactive, bool useDiscussionStore)
+    {
+        var h = new Harness(useDiscussionStore: useDiscussionStore);
+        h.Connections.GetByClientIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(inactive ? [h.Connection with { IsActive = false }] : []);
+
+        var result = await h.Observer.RefreshAsync(h.Target);
+
+        Assert.Equal(CodeInsightObservationStatus.Unavailable, result.Status);
+        Assert.Equal(CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable, result.UnavailableReason);
+        Assert.Equal(CodeInsightObservationStage.ConnectionLookup, result.Stage);
+        Assert.Null(result.ObservedAt);
+        await h.Reader.DidNotReceiveWithAnyArgs().ReadAsync(default!, default!);
+        await h.Coverage.DidNotReceiveWithAnyArgs().RecordAcknowledgedAsync(default!, default!, false, default);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConnectionLookupTimeoutKeepsARetryableFailureReason(bool useDiscussionStore)
+    {
+        var h = new Harness(useDiscussionStore: useDiscussionStore);
+        h.Connections.GetByClientIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).ThrowsAsync(new TimeoutException());
+
+        var result = await h.Observer.RefreshAsync(h.Target);
+
+        Assert.Equal(CodeInsightObservationStatus.Unavailable, result.Status);
+        Assert.Equal(CodeInsightObservationUnavailableReason.ProviderReadFailed, result.UnavailableReason);
+        Assert.Equal(CodeInsightObservationStage.ConnectionLookup, result.Stage);
+        Assert.Null(result.ObservedAt);
+        await h.Reader.DidNotReceiveWithAnyArgs().ReadAsync(default!, default!);
+        await h.Coverage.DidNotReceiveWithAnyArgs().RecordAcknowledgedAsync(default!, default!, false, default);
+    }
+
+    [Fact]
+    public async Task LeasedConnectionLookupCancellationPropagatesWithoutLoggingProviderFailure()
+    {
+        List<CapturedLog> logs = [];
+        var h = new Harness(new CapturingLogger<PullRequestCloseObserver>(logs), useDiscussionStore: true);
+        using var cancellation = new CancellationTokenSource();
+        h.Connections.GetByClientIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(_ =>
+        {
+            cancellation.Cancel();
+            return Task.FromCanceled<IReadOnlyList<ClientScmConnectionDto>>(cancellation.Token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.Observer.RefreshAsync(h.Target, cancellation.Token));
+
+        Assert.Empty(logs);
+        Assert.Empty(h.Discussions.ReceivedCalls());
+        await h.Reader.DidNotReceiveWithAnyArgs().ReadAsync(default!, default!);
+    }
+
+    [Fact]
+    public async Task UnsupportedHistoricalCapabilityRequiresRepairWithoutCertifyingCoverage()
+    {
+        var h = new Harness();
+        h.Reader.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(),
+                Arg.Any<CancellationToken>(), CodeInsightObservationMode.HistoricalBackfill)
+            .ThrowsAsync(new CodeInsightHistoricalCapabilityUnavailableException());
+        var result = await h.Observer.RefreshAsync(h.Target);
+        Assert.Equal(CodeInsightObservationUnavailableReason.HistoricalCapabilityUnsupported, result.UnavailableReason);
+        Assert.Equal(CodeInsightObservationStage.ProviderRead, result.Stage);
+        await h.Coverage.DidNotReceiveWithAnyArgs().RecordAcknowledgedAsync(default!, default!, false, default);
+    }
+
+    [Fact]
+    public async Task HumanRetentionFailureKeepsItsOriginStage()
+    {
+        var h = new Harness();
+        h.Reader.ReadAsync(
+                Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(),
+                Arg.Any<CancellationToken>(), CodeInsightObservationMode.HistoricalBackfill)
+            .Returns(new CodeInsightProviderFeedback([], [new PrCommentThread("human", "file.cs", 2, [new PrThreadComment("Human", "Concern")], "Fixed")]));
+        h.Harvester.ObserveHistoricalAsync(Arg.Any<ThreadUpdatedEvent>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new CodeInsightEvidenceAcknowledgment(
+                    false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed,
+                    Stage: CodeInsightObservationStage.HumanEvidenceRetention));
+        var result = await h.Observer.RefreshAsync(h.Target);
+        Assert.Equal(CodeInsightObservationStage.HumanEvidenceRetention, result.Stage);
+        Assert.Equal(CodeInsightObservationUnavailableReason.EvidenceRetentionFailed, result.UnavailableReason);
+    }
+
     [Fact]
     public async Task MissingRetainedHumanConcernIsUnavailableAfterAnEmptyProviderRead()
     {
@@ -53,6 +184,42 @@ public sealed class HistoricalProviderObserverTests
         await h.Dispositions.Received(1).ObserveHistoricalAsync(
             finding,
             Arg.Is<ThreadResolvedDomainEvent>(e => e.ThreadId == "review-99" && e.NativeStatus == "Closed"), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HistoricalProviderReadUsesResolvedConnectionAndRetainsItsFailureStage(bool providerFails)
+    {
+        var h = new Harness();
+        if (providerFails)
+        {
+            h.Reader.ReadAsync(
+                    Arg.Any<CodeInsightProviderEvidenceTarget>(), Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+                    CodeInsightObservationMode.HistoricalBackfill)
+                .ThrowsAsync(new HttpRequestException());
+        }
+
+        var result = await h.Observer.RefreshAsync(h.Target);
+
+        await h.Reader.Received(1).ReadAsync(
+            h.Target with { ConnectionId = h.Connection.Id }, Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(),
+            CodeInsightObservationMode.HistoricalBackfill);
+        if (providerFails)
+        {
+            Assert.Equal(CodeInsightObservationStatus.Unavailable, result.Status);
+            Assert.Equal(CodeInsightObservationUnavailableReason.ProviderReadFailed, result.UnavailableReason);
+            Assert.Equal(CodeInsightObservationStage.ProviderRead, result.Stage);
+            Assert.Null(result.ObservedAt);
+            await h.Coverage.DidNotReceiveWithAnyArgs().RecordAcknowledgedAsync(default!, default!, false, default);
+        }
+        else
+        {
+            Assert.Equal(CodeInsightObservationStatus.Observed, result.Status);
+            Assert.NotNull(result.ObservedAt);
+            await h.Coverage.Received(1).RecordAcknowledgedAsync(
+                h.Target.Key, h.Target.ProviderScope, true, result.ObservedAt.Value, Arg.Any<CancellationToken>());
+        }
     }
 
     [Fact]
@@ -136,11 +303,13 @@ public sealed class HistoricalProviderObserverTests
     }
 
     [Theory]
-    [InlineData("connection", CodeInsightObservationUnavailableReason.ProviderConnectionUnavailable)]
-    [InlineData("ownership", CodeInsightObservationUnavailableReason.OwnershipUnavailable)]
-    [InlineData("provider", CodeInsightObservationUnavailableReason.ProviderReadFailed)]
-    [InlineData("retention", CodeInsightObservationUnavailableReason.EvidenceRetentionFailed)]
-    public async Task HistoricalFailuresLogSafeDiagnosticsAndPreserveTheirStage(string stage, CodeInsightObservationUnavailableReason reason)
+    [InlineData("connection", CodeInsightObservationUnavailableReason.ProviderReadFailed, false)]
+    [InlineData("ownership", CodeInsightObservationUnavailableReason.OwnershipUnavailable, false)]
+    [InlineData("provider", CodeInsightObservationUnavailableReason.ProviderReadFailed, false)]
+    [InlineData("retention", CodeInsightObservationUnavailableReason.EvidenceRetentionFailed, false)]
+    [InlineData("connection", CodeInsightObservationUnavailableReason.ProviderReadFailed, true)]
+    public async Task HistoricalFailuresLogSafeDiagnosticsAndPreserveTheirStage(
+        string stage, CodeInsightObservationUnavailableReason reason, bool useDiscussionStore)
     {
         const string secret = "private-provider-token";
         var message = $"https://svc:{secret}@provider.example.test/collection?token={secret}; response payload: {secret}";
@@ -153,7 +322,7 @@ public sealed class HistoricalProviderObserverTests
         };
         failure.Data["ProviderPayload"] = message;
         List<CapturedLog> logs = [];
-        var h = new Harness(new CapturingLogger<PullRequestCloseObserver>(logs));
+        var h = new Harness(new CapturingLogger<PullRequestCloseObserver>(logs), useDiscussionStore: useDiscussionStore);
         switch (stage)
         {
             case "connection":
@@ -182,6 +351,14 @@ public sealed class HistoricalProviderObserverTests
         Assert.Equal(CodeInsightObservationStatus.Unavailable, result.Status);
         Assert.Equal(reason, result.UnavailableReason);
         Assert.Null(result.ObservedAt);
+        Assert.Equal(
+            stage switch
+            {
+                "connection" => CodeInsightObservationStage.ConnectionLookup,
+                "ownership" => CodeInsightObservationStage.OwnershipLookup,
+                "provider" => CodeInsightObservationStage.ProviderRead,
+                _ => CodeInsightObservationStage.CoverageRetention,
+            }, result.Stage);
         var log = Assert.Single(logs);
         Assert.Equal(LogLevel.Warning, log.Level);
         Assert.Equal(6106, log.EventId.Id);
@@ -336,6 +513,7 @@ public sealed class HistoricalProviderObserverTests
         internal readonly IClientScmConnectionRepository Connections = Substitute.For<IClientScmConnectionRepository>();
         internal readonly ICodeInsightHarvestCoverageRecorder Coverage = Substitute.For<ICodeInsightHarvestCoverageRecorder>();
         internal readonly ICodeInsightDispositionService Dispositions = Substitute.For<ICodeInsightDispositionService>();
+        internal readonly IDiscussionSynchronizationStore Discussions = Substitute.For<IDiscussionSynchronizationStore>();
         internal readonly ICodeInsightFindingStore Findings = Substitute.For<ICodeInsightFindingStore>();
         internal readonly ICodeInsightsCollectionGate Gate = Substitute.For<ICodeInsightsCollectionGate>();
         internal readonly ICodeInsightMissHarvester Harvester = Substitute.For<ICodeInsightMissHarvester>();
@@ -347,7 +525,9 @@ public sealed class HistoricalProviderObserverTests
             new CodeInsightPullRequestKey(Guid.NewGuid(), "repo", 1), ScmProvider.AzureDevOps,
             "https://ado.example.test/collection", "project", "AzureDevOps:https://ado.example.test/collection");
 
-        internal Harness(ILogger<PullRequestCloseObserver>? logger = null)
+        internal Harness(
+            ILogger<PullRequestCloseObserver>? logger = null, bool includePostedOrigins = true, bool useDiscussionStore = false,
+            ICodeInsightModelConcernObserver? models = null)
         {
             this.Connection = new ClientScmConnectionDto(
                 Guid.NewGuid(), this.Target.Key.ClientId, ScmProvider.AzureDevOps,
@@ -373,8 +553,10 @@ public sealed class HistoricalProviderObserverTests
             this.Observer = new PullRequestCloseObserver(
                 LocalScmPolicies.Registry, logger ?? NullLogger<PullRequestCloseObserver>.Instance,
                 missHarvester: this.Harvester, findingStore: this.Findings, collectionGate: this.Gate,
-                scmConnectionRepository: this.Connections, postedCommentOriginStore: this.Origins, dispositionService: this.Dispositions,
-                harvestCoverageRecorder: this.Coverage, feedbackReader: this.Reader);
+                scmConnectionRepository: this.Connections, postedCommentOriginStore: includePostedOrigins ? this.Origins : null,
+                dispositionService: this.Dispositions,
+                harvestCoverageRecorder: this.Coverage, feedbackReader: this.Reader,
+                discussionStore: useDiscussionStore ? this.Discussions : null, modelConcerns: models);
         }
 
         internal CodeInsightNativeFindingSnapshot Finding(string comment)

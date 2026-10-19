@@ -4,6 +4,7 @@
 
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using System.Text.Json.Serialization;
 
 namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 
@@ -65,4 +66,6 @@ public sealed record RunnerPriorFileResult(
     IReadOnlyList<string> ReviewedPassKeys,
     IReadOnlyList<ReviewComment> Comments,
     bool IsCarriedForward = false,
-    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null);
+    IReadOnlyList<WithheldReviewFinding>? WithheldFindings = null,
+    [property: JsonConverter(typeof(ModelReviewEvidenceJsonConverter))]
+    ModelReviewEvidence? ModelEvidence = null);

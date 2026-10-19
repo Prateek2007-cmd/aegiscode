@@ -20784,7 +20784,7 @@
         "tags": [
           "ReviewerPerformance"
         ],
-        "summary": "Returns versioned interpretation ranges from retained counts for one or two consistently read views.",
+        "summary": "Returns covered-population scoring ranges, independent overall precision and source exclusions under one database snapshot.",
         "requestBody": {
           "description": "Bounded dates, dimensions, cumulative or period mode, and optional measurement matrix.",
           "content": {
@@ -20807,7 +20807,7 @@
         },
         "responses": {
           "200": {
-            "description": "Counts, coherent scenario tuples, summaries, evidence limits and authorized facets.",
+            "description": "Versioned covered counts and coherent scenarios, advisory coverage policy and counts, overall precision, captured exclusion collection progress and authorized facets.",
             "content": {
               "text/plain": {
                 "schema": {
@@ -21283,6 +21283,242 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/reviewer-performance/evidence/{aggregateId}/retry-model": {
+      "post": {
+        "tags": [
+          "ReviewerPerformance"
+        ],
+        "summary": "Retries classification of bounded retained model concerns without provider reads or review execution.",
+        "parameters": [
+          {
+            "name": "aggregateId",
+            "in": "path",
+            "description": "Source aggregate within the administered client scope.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Captured provider namespace and connection for this source.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewerPerformanceRetryModelRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewerPerformanceRetryModelRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewerPerformanceRetryModelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A bounded local classification retry completed; refresh the measurement to inspect its result."
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Tenant administration or the Code Insights capability is missing.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The source is absent or outside the administered client scope.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Collection is disabled, the source is busy or cooling down, or retained proof cannot support this action.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database analytics services are unavailable."
+          }
+        }
+      }
+    },
+    "/reviewer-performance/evidence/{aggregateId}/retry": {
+      "post": {
+        "tags": [
+          "ReviewerPerformance"
+        ],
+        "summary": "Queues retained provider evidence for the next background sweep after source or configuration repair.",
+        "parameters": [
+          {
+            "name": "aggregateId",
+            "in": "path",
+            "description": "Retained pull-request aggregate within an administered tenant.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Evidence is queued; provider collection runs during a subsequent bounded sweep."
+          },
+          "401": {
+            "description": "Missing or invalid credentials.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing tenant administration or the commercial Code Insights capability.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The aggregate is absent or outside the authorized client scope.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Collection is disabled or an unexpired observation claim is active.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database analytics services are unavailable."
           }
         }
       }
@@ -23234,7 +23470,8 @@
         "tags": [
           "RunnerExecution"
         ],
-        "summary": "Applies trace events, per-file checkpoints with optional withheld evidence, and spend.",
+        "summary": "Applies trace events, per-file checkpoints with bounded optional model proof or proof fragments, frozen model manifests, and spend.",
+        "description": "Nested and split model proofs require dispatched source, revision, pass scope, actual runtime and current lease bindings. Rejected analytics preserve ordinary file outcomes.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -35588,6 +35825,431 @@
         "additionalProperties": false,
         "description": "One provider the catalog describes."
       },
+      "ModelGenerationDisposition": {
+        "enum": [
+          "unknown",
+          "completed",
+          "notApplicable",
+          "skipped",
+          "failed",
+          "cancelled",
+          "invalidOutput"
+        ],
+        "type": "string",
+        "description": "The observed disposition of a finding-producing model pass."
+      },
+      "ModelReviewCandidate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "nullable": true
+          },
+          "filePath": {
+            "type": "string",
+            "nullable": true
+          },
+          "lineNumber": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "A stable, attributed candidate retained before verification and publication."
+      },
+      "ModelReviewEvidence": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "nullable": true
+          },
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "leaseGeneration": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "clientId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "repositoryId": {
+            "type": "string",
+            "nullable": true
+          },
+          "pullRequestId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "providerScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceConnectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "revisionKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "headSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "baseSha": {
+            "type": "string",
+            "nullable": true
+          },
+          "filePath": {
+            "type": "string",
+            "nullable": true
+          },
+          "inputFingerprint": {
+            "type": "string",
+            "nullable": true
+          },
+          "assignedRanges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewRange"
+            },
+            "nullable": true
+          },
+          "inventoryComplete": {
+            "type": "boolean"
+          },
+          "inputComplete": {
+            "type": "boolean"
+          },
+          "passes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewPassEvidence"
+            },
+            "nullable": true
+          },
+          "capturedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acceptedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "originJobId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "originFileResultId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "unchangedInputProven": {
+            "type": "boolean"
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "pendingFragments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewProofFragment"
+            },
+            "nullable": true
+          },
+          "retainedTransportDigests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "isBounded": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Versioned source, input and pass inventory retained with a review checkpoint."
+      },
+      "ModelReviewManifest": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "nullable": true
+          },
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "leaseGeneration": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "allowedModels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewModelBinding"
+            },
+            "nullable": true
+          },
+          "providerScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceConnectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "inventoryComplete": {
+            "type": "boolean"
+          },
+          "pullRequestPasses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewEvidence"
+            },
+            "nullable": true
+          },
+          "capturedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "acceptedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "unavailableReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "isBounded": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "The frozen file inventory and PR-wide generation proof of one execution."
+      },
+      "ModelReviewModelBinding": {
+        "type": "object",
+        "properties": {
+          "modelId": {
+            "type": "string",
+            "description": "Resolved remote model identity.",
+            "nullable": true
+          },
+          "logicalModelName": {
+            "type": "string",
+            "description": "Logical role used by the actual pass.",
+            "nullable": true
+          },
+          "connectionId": {
+            "type": "string",
+            "description": "Resolved AI runtime connection, independent of the source-provider connection.",
+            "format": "uuid",
+            "nullable": true
+          },
+          "configuredModelId": {
+            "type": "string",
+            "description": "Resolved configured model identity.",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ordinal": {
+            "type": "integer",
+            "description": "Actual generation pass ordinal; missing legacy metadata cannot authorize a certificate.",
+            "format": "int32",
+            "nullable": true
+          },
+          "scope": {
+            "type": "string",
+            "description": "The assigned per_file or pr_wide scope.",
+            "nullable": true
+          },
+          "lens": {
+            "type": "string",
+            "description": "Configured per-file lens when applicable.",
+            "nullable": true
+          },
+          "shadow": {
+            "type": "boolean",
+            "description": "Whether the assignment suppresses publication.",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "A server-dispatched model assignment with optional typed scope and pass identity."
+      },
+      "ModelReviewPassEvidence": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "passKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "modelId": {
+            "type": "string",
+            "nullable": true
+          },
+          "logicalModelName": {
+            "type": "string",
+            "nullable": true
+          },
+          "connectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "configuredModelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "leaseGeneration": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "lens": {
+            "type": "string",
+            "nullable": true
+          },
+          "shadow": {
+            "type": "boolean"
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/ModelGenerationDisposition"
+          },
+          "candidateSetComplete": {
+            "type": "boolean"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "acceptedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewCandidate"
+            },
+            "nullable": true
+          },
+          "isCertified": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Positive completion evidence for one generation pass, including a valid empty candidate set."
+      },
+      "ModelReviewProofFragment": {
+        "type": "object",
+        "properties": {
+          "digest": {
+            "type": "string",
+            "nullable": true
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "data": {
+            "type": "string",
+            "nullable": true
+          },
+          "isBounded": {
+            "type": "boolean",
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "A bounded transport fragment retained until its complete proof checksum can be verified."
+      },
+      "ModelReviewRange": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "end": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "side": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "A closed range assigned to the generation pass, independent of its tool reads."
+      },
       "PatchAdminCrawlConfigRequest": {
         "type": "object",
         "properties": {
@@ -39957,6 +40619,66 @@
         "additionalProperties": false,
         "description": "Retained inputs and evidence coverage for one scoped measurement."
       },
+      "ReviewerPerformanceCoverage": {
+        "type": "object",
+        "properties": {
+          "candidatePullRequests": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "coveredPullRequests": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "excludedPullRequests": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "percentage": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "meetsMinimum": {
+            "type": "boolean"
+          },
+          "recallSupported": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewerPerformanceExclusionReasonCount"
+            },
+            "nullable": true
+          },
+          "exclusionIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Source pull-request coverage before contribution filters remove incompatible misses."
+      },
+      "ReviewerPerformanceCoveragePolicy": {
+        "type": "object",
+        "properties": {
+          "minimumCoveragePercentage": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "minimumCoveredPullRequests": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Advisory coverage and sample minimums captured with the measurement response."
+      },
       "ReviewerPerformanceEvidenceMetadata": {
         "type": "object",
         "properties": {
@@ -39977,9 +40699,124 @@
           "pendingSourceAggregates": {
             "type": "integer",
             "format": "int32"
+          },
+          "modelEvidenceSchema": {
+            "type": "string",
+            "nullable": true
           }
         },
         "additionalProperties": false
+      },
+      "ReviewerPerformanceExclusion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "aggregateId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "clientId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "clientName": {
+            "type": "string",
+            "nullable": true
+          },
+          "repositoryId": {
+            "type": "string",
+            "nullable": true
+          },
+          "repositoryName": {
+            "type": "string",
+            "nullable": true
+          },
+          "pullRequestId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "providerScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "lastAttemptAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "notBefore": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastCompletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastRefreshReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "recoveryDisposition": {
+            "type": "string",
+            "nullable": true
+          },
+          "collectionEnabled": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "sourceUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "recoveryAction": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastModelRetryAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "modelRetryNotBefore": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "sourceConnectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Captured exclusion identity and bounded recovery metadata, including queued, active and completed collection; source URLs may be unavailable."
+      },
+      "ReviewerPerformanceExclusionReasonCount": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "pullRequests": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Distinct excluded source pull requests carrying one evidence limitation."
       },
       "ReviewerPerformanceFacet": {
         "type": "object",
@@ -40129,9 +40966,64 @@
             "type": "string",
             "format": "date",
             "nullable": true
+          },
+          "overallPrecision": {
+            "$ref": "#/components/schemas/ReviewerPerformancePrecisionScore"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/ReviewerPerformanceCoverage"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A covered-population score with independently supported overall precision."
+      },
+      "ReviewerPerformancePrecisionScenario": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "nullable": true
+          },
+          "truePositives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "falsePositives": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "excluded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "precision": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "One scoring premise applied to the overall published-outcome population."
+      },
+      "ReviewerPerformancePrecisionScore": {
+        "type": "object",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/ReviewerPerformanceCounts"
+          },
+          "scenarios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewerPerformancePrecisionScenario"
+            },
+            "nullable": true
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReviewerPerformanceRange"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Overall precision and raw selected inputs, independent of recall coverage."
       },
       "ReviewerPerformanceQuery": {
         "type": "object",
@@ -40224,6 +41116,9 @@
           "evidenceRevision": {
             "type": "string",
             "nullable": true
+          },
+          "coveragePolicy": {
+            "$ref": "#/components/schemas/ReviewerPerformanceCoveragePolicy"
           }
         },
         "additionalProperties": false,
@@ -40254,6 +41149,21 @@
           }
         },
         "additionalProperties": false
+      },
+      "ReviewerPerformanceRetryModelRequest": {
+        "type": "object",
+        "properties": {
+          "providerScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "connectionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Captured source identity for a bounded retained-classification retry."
       },
       "ReviewerPerformanceSaveReportRequest": {
         "type": "object",
@@ -40488,6 +41398,13 @@
           },
           "evidence": {
             "$ref": "#/components/schemas/ReviewerPerformanceEvidenceMetadata"
+          },
+          "exclusionCatalog": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewerPerformanceExclusion"
+            },
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -40798,6 +41715,12 @@
             },
             "description": "Generated findings excluded from publication and retained with the checkpoint.",
             "nullable": true
+          },
+          "modelEvidence": {
+            "$ref": "#/components/schemas/ModelReviewEvidence"
+          },
+          "modelEvidenceFragment": {
+            "$ref": "#/components/schemas/ModelReviewProofFragment"
           }
         },
         "additionalProperties": false,
@@ -40895,6 +41818,14 @@
             "type": "integer",
             "description": "The contract version the caller speaks.",
             "format": "int32"
+          },
+          "modelManifests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelReviewManifest"
+            },
+            "description": "Optional bounded model inventories. Invalid analytics metadata remains unavailable without discarding file outcomes.",
+            "nullable": true
           },
           "sequence": {
             "type": "integer",
@@ -41082,6 +42013,10 @@
             "type": "boolean",
             "description": "Whether reviewing several files in parallel is licensed, resolved at dispatch because the license\nlives in the control plane's database. Without it the pipeline works one file at a time however\nhigh the configured concurrency is. This is the same clamp the in-process planner applies. Null from an\nolder control plane reads as licensed, which is how the review behaved before the field existed.",
             "nullable": true
+          },
+          "attemptNumber": {
+            "type": "integer",
+            "format": "int32"
           }
         },
         "additionalProperties": false,
@@ -41376,6 +42311,16 @@
           "supportsLowReasoningEffort": {
             "type": "boolean",
             "description": "Whether the resolved model and transport support low reasoning effort."
+          },
+          "connectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "configuredModelId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
           }
         },
         "additionalProperties": false,
@@ -41443,6 +42388,9 @@
             },
             "description": "Generated findings retained for internal evidence collection.",
             "nullable": true
+          },
+          "modelEvidence": {
+            "$ref": "#/components/schemas/ModelReviewEvidence"
           }
         },
         "additionalProperties": false,
@@ -41902,6 +42850,19 @@
               "$ref": "#/components/schemas/RunnerReviewThread"
             },
             "description": "The conversation already on the review. The reviewer reads it to avoid raising again what a reviewer\nhas already answered, so an executor without it would post duplicates of findings the author has\naddressed.",
+            "nullable": true
+          },
+          "providerScope": {
+            "type": "string",
+            "nullable": true
+          },
+          "sourceConnectionId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "revisionKey": {
+            "type": "string",
             "nullable": true
           }
         },

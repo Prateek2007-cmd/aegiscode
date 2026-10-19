@@ -191,7 +191,7 @@ test('inspects the focused model when unavailable markers overlap', async ({ pag
   await page.getByRole('option', { name: 'Models', exact: true }).click()
   const result = await (await returned).json() as PerformanceResponse
   await waitForEvidence(page)
-  const series = result.views![0]!.series![0]!
+  const series = result.views![0]!.series!.find((series) => series.label === 'review-large')!
   await page.getByRole('combobox', { name: 'Inspect series', exact: true }).press('ArrowDown')
   await page.getByRole('option', { name: series.label!, exact: true }).click()
   const marker = page.locator('.chart-point').filter({ has: page.locator('.chart-unavailable') }).last()

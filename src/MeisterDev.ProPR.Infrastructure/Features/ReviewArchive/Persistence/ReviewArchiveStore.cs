@@ -104,6 +104,7 @@ public sealed class ReviewArchiveStore(
                     stored.FilePath = thread.FilePath;
                     stored.Line = thread.Line;
                     stored.Status = thread.Status;
+                    stored.ConcernAnchor = thread.ConcernAnchor;
                     stored.UpdatedAt = thread.UpdatedAt;
                     var groups = stored.Comments.GroupBy(comment => comment.CommentId, StringComparer.Ordinal).ToArray();
                     var byId = groups.ToDictionary(
@@ -234,7 +235,7 @@ public sealed class ReviewArchiveStore(
                                 comment.PublishedAt,
                                 secretProtectionCodec.Unprotect(comment.EncryptedText, ThreadCommentPurpose),
                                 comment.OriginatingJobId))
-                            .ToList()))
+                            .ToList(), thread.ConcernAnchor))
                     .ToList();
             },
             ct);

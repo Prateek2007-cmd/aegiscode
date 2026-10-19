@@ -60,7 +60,7 @@ internal static class ReviewerPerformanceProjectionEvidenceReader
         var exposures = await db.CodeInsightReviewExposures.AsNoTracking().Where(row => row.CodeInsightPullRequestId == aggregateId)
             .Select(row => new ReviewerPerformanceExposureEvidence(
                 row.ObservedAt,
-                row.ProviderScope)).ToListAsync(ct);
+                row.ProviderScope, row.ModelId, row.LogicalModelName)).ToListAsync(ct);
         var coverage = await db.CodeInsightHarvestCoverage.AsNoTracking().Where(row => row.CodeInsightPullRequestId == aggregateId).ToListAsync(ct);
         return new(findings, dispositions, memberships, misses, exposures, coverage);
     }

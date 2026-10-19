@@ -5,6 +5,7 @@ using MeisterDev.Ai.Providers.Declaration;
 using MeisterDev.Ai.Providers.Enums;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Application.ValueObjects;
@@ -27,6 +28,46 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.AI;
 /// </summary>
 public sealed class PrWideCandidateGeneratorTests
 {
+    [Theory]
+    [InlineData("{\"candidate_findings\":[]}", true)]
+    [InlineData("{}", false)]
+    [InlineData("{\"candidate_findings\":[{\"message\":\"incomplete candidate\"}]}", false)]
+    public async Task PrWideProofDistinguishesCertifiedZeroFromFallbackArtifacts(string generation, bool complete)
+    {
+        var store = Substitute.For<IReviewFileResultStore>();
+        var retained = new List<ModelReviewManifest>();
+        store.RecordModelManifestAsync(Arg.Any<Guid>(), Arg.Any<int>(), Arg.Do<ModelReviewManifest>(retained.Add), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+        var chat = Substitute.For<IChatClient>();
+        chat.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ChatResponse(
+                    new ChatMessage(
+                        ChatRole.Assistant,
+                        "{\"plan_id\":\"plan\",\"concerns\":[],\"changed_areas\":[],\"investigation_tasks\":[],\"no_investigation_reason\":\"Direct synthesis\"}")),
+                new ChatResponse(new ChatMessage(ChatRole.Assistant, generation)));
+        var runtime = Runtime(chat);
+        runtime.LogicalModelName.Returns("reviewer");
+        var sut = new PrWideAgenticReviewOrchestrator(
+            Substitute.For<IFileByFileReviewOrchestrator>(),
+            Microsoft.Extensions.Options.Options.Create(new AiReviewOptions()), Substitute.For<ILogger<PrWideAgenticReviewOrchestrator>>(),
+            modelEvidenceStore: store);
+        await sut.GenerateCandidatesAsync(
+            CreateJob(), CreatePr(), new ReviewSystemContext(null, [], null), runtime,
+            new PrWideGenerationBudget(1, 1, 1), 2, false, ReviewReasoningEffort.None, CancellationToken.None);
+
+        Assert.NotEmpty(retained);
+        var passes = retained[^1].PullRequestPasses.SelectMany(proof => proof.Passes).ToArray();
+        Assert.NotEmpty(passes);
+        Assert.All(
+            passes, pass =>
+            {
+                Assert.Equal(complete, pass.IsCertified);
+                Assert.Equal("reviewer", pass.LogicalModelName);
+                Assert.Empty(pass.Candidates);
+            });
+    }
+
     [Fact]
     public async Task GenerateCandidatesAsync_RunsStagesOnceAndTagsPrWideProvenance()
     {

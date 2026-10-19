@@ -13,6 +13,8 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.Forgejo.Support;
 internal sealed class ForgejoReviewSourcePolicy : ReviewSourcePolicyBase, IReviewSourcePolicy
 {
     public override ScmProvider Provider => ScmProvider.Forgejo;
+
+    public string? CreateCapturedReviewUrl(CapturedReviewUrlCoordinates coordinates) => CapturedReviewWebUrls.Repository(coordinates, "pulls");
     public bool RequiresOrganizationScope => false;
 
     public bool IsSelectedScopeCompatible(string connectionHost, string scope) =>

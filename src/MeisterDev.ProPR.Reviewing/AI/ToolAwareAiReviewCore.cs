@@ -309,7 +309,7 @@ internal sealed partial class ToolAwareAiReviewCore(
         return new ReviewResult(
             $"Skipped: '{budgetFileLabel}' exceeds the model context window " +
             $"(~{preflight.EstimatedInputTokens} input tokens over the {inputBudget}-token budget). The file was not reviewed.",
-            []);
+            []) { GenerationDisposition = ModelGenerationDisposition.Skipped };
     }
 
     private int ResolveEffectiveMaxIterations(
@@ -2298,13 +2298,13 @@ internal sealed partial class ToolAwareAiReviewCore(
         var normalized = NormalizeJsonPayload(json);
         if (string.IsNullOrWhiteSpace(normalized))
         {
-            return new ReviewResult("", new List<ReviewComment>().AsReadOnly());
+            return new ReviewResult("", new List<ReviewComment>().AsReadOnly()) { GenerationDisposition = ModelGenerationDisposition.InvalidOutput };
         }
 
         var dto = JsonSerializer.Deserialize<AgenticResponseDto>(normalized, JsonOptions);
         if (dto is null)
         {
-            return new ReviewResult("", new List<ReviewComment>().AsReadOnly());
+            return new ReviewResult("", new List<ReviewComment>().AsReadOnly()) { GenerationDisposition = ModelGenerationDisposition.InvalidOutput };
         }
 
         // Stamp read-grounding from the reads captured during the pass, so the finalization pipeline can enforce
@@ -2319,7 +2319,12 @@ internal sealed partial class ToolAwareAiReviewCore(
             })
             .ToList();
 
-        return new ReviewResult(dto.Summary ?? "", comments.AsReadOnly());
+        return new ReviewResult(dto.Summary ?? "", comments.AsReadOnly())
+        {
+            GenerationDisposition = dto.Comments is not null && dto.Comments.All(comment => comment is not null && !string.IsNullOrWhiteSpace(comment.Message))
+                ? ModelGenerationDisposition.Completed
+                : ModelGenerationDisposition.InvalidOutput,
+        };
     }
 
     private static string NormalizeJsonPayload(string json)

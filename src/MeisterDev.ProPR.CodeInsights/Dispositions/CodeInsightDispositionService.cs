@@ -105,7 +105,7 @@ public sealed partial class CodeInsightDispositionService(
         }
         catch (Exception ex)
         {
-            LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, ex);
+            LogHandlingFailed(logger, evt.ThreadId, evt.ClientId, ex.GetType().FullName ?? ex.GetType().Name, ex.HResult);
             return new CodeInsightEvidenceAcknowledgment(false, Reason: CodeInsightObservationUnavailableReason.EvidenceRetentionFailed);
         }
     }

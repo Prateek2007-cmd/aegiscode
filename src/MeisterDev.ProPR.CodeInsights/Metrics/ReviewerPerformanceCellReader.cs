@@ -14,12 +14,18 @@ internal sealed record ReviewerPerformanceViewSnapshot(
     DateTimeOffset? NewestProjection,
     int Pending,
     IReadOnlyDictionary<Guid, string> ClientNames,
-    IReadOnlyDictionary<(Guid ClientId, string RepositoryId), string?> RepositoryNames);
+    IReadOnlyDictionary<(Guid ClientId, string RepositoryId), string?> RepositoryNames,
+    IReadOnlyDictionary<Guid, CodeInsightPullRequest> Aggregates,
+    IReadOnlyDictionary<Guid, bool> CollectionEnabled,
+    IReadOnlyDictionary<ReviewerPerformanceSourceKey, string?>? SourceUrls = null,
+    ReviewerPerformanceModelEvidence? ModelEvidence = null,
+    TimeSpan? ModelRetryCooldown = null);
 
 internal static class ReviewerPerformanceCellReader
 {
     internal static async Task<ReviewerPerformanceViewSnapshot> LoadAsync(
-        MeisterProPRDbContext db, ReviewerPerformanceViewQuery scope, Guid[] clients, CancellationToken ct)
+        MeisterProPRDbContext db, ReviewerPerformanceViewQuery scope, Guid[] clients, CancellationToken ct, bool includeModelEvidence = false,
+        DateTimeOffset? capturedAt = null, TimeSpan? modelRetryCooldown = null)
     {
         var cellsQuery = db.ReviewerPerformanceDailyCounts.AsNoTracking()
             .Where(row => clients.Contains(row.ClientId) && row.BucketDate >= scope.From && row.BucketDate <= scope.To);
@@ -27,9 +33,29 @@ internal static class ReviewerPerformanceCellReader
         var cells = await LoadBoundedCellsAsync(cellsQuery, ct);
         var clientNames = await LoadClientNamesAsync(db, clients, ct);
         var repositoryNames = await LoadRepositoryNamesAsync(db, clients, cellsQuery, ct);
+        var aggregates = await db.CodeInsightPullRequests.AsNoTracking()
+            .Where(pr => clients.Contains(pr.ClientId) && cellsQuery.Any(cell => cell.CodeInsightPullRequestId == pr.Id
+                                                                                 && cell.ClientId == pr.ClientId && cell.RepositoryId == pr.RepositoryId))
+            .ToDictionaryAsync(pr => pr.Id, ct);
+        var collectionEnabled = await db.Clients.AsNoTracking().Where(client => clients.Contains(client.Id))
+            .ToDictionaryAsync(client => client.Id, client => client.CodeInsightsCollectionEnabled, ct);
         var pending = await ReviewerPerformanceProjectionQueries.Stale(db).AsNoTracking()
             .Where(pr => clients.Contains(pr.ClientId)).CountAsync(ct);
-        return new(cells, newestProjection, pending, clientNames, repositoryNames);
+        var modelEvidence = includeModelEvidence
+            ? await ReviewerPerformanceModelEvidenceReader.LoadAsync(db, aggregates, cells, capturedAt ?? DateTimeOffset.UtcNow, ct)
+            : null;
+        if (modelEvidence is not null)
+        {
+            cells.AddRange(modelEvidence.Markers(scope.From, scope.To));
+            if (cells.Count > ReviewerPerformanceRangeReader.MaximumCells)
+            {
+                throw new ArgumentException("The scope exceeds the retained-cell limit. Narrow the dates or clients.");
+            }
+        }
+
+        return new(
+            cells, newestProjection, pending, clientNames, repositoryNames, aggregates, collectionEnabled, ModelEvidence: modelEvidence,
+            ModelRetryCooldown: modelRetryCooldown);
     }
 
     private static async Task<List<ReviewerPerformanceDailyCount>> LoadBoundedCellsAsync(
@@ -38,6 +64,8 @@ internal static class ReviewerPerformanceCellReader
         var cells = await cellsQuery
             .GroupBy(row => new
             {
+                row.CodeInsightPullRequestId,
+                row.PullRequestId,
                 row.ClientId,
                 row.RepositoryId,
                 row.ProviderScope,
@@ -54,6 +82,8 @@ internal static class ReviewerPerformanceCellReader
             })
             .Select(group => new ReviewerPerformanceDailyCount
             {
+                CodeInsightPullRequestId = group.Key.CodeInsightPullRequestId,
+                PullRequestId = group.Key.PullRequestId,
                 ClientId = group.Key.ClientId,
                 RepositoryId = group.Key.RepositoryId,
                 ProviderScope = group.Key.ProviderScope,
@@ -75,6 +105,12 @@ internal static class ReviewerPerformanceCellReader
         if (cells.Count > ReviewerPerformanceRangeReader.MaximumCells)
         {
             throw new ArgumentException("The scope exceeds the retained-cell limit. Narrow the dates or clients.");
+        }
+
+        // Repository selection and facets use the same unknown source identity as coverage assessment.
+        foreach (var row in cells)
+        {
+            row.ProviderScope = ReviewerPerformanceSourceKey.Normalize(row.ProviderScope);
         }
 
         return cells;

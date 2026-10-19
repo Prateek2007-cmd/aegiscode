@@ -18,6 +18,64 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.GitHub;
 
 public sealed class GitHubReviewThreadStatusProviderTests
 {
+    [Theory]
+    [InlineData("RIGHT", true, true)]
+    [InlineData("LEFT", true, false)]
+    [InlineData("RIGHT", false, false)]
+    public async Task ConcernAnchorUsesTheNativeOriginalRootPositionAndNullablePublicationTime(string side, bool published, bool known)
+    {
+        var client = Guid.NewGuid();
+        var host = new ProviderHostRef(ScmProvider.GitHub, "https://github.com");
+        var origin = DateTimeOffset.Parse("2026-10-01T12:00:00Z");
+        var factory = CreateHttpClientFactory(request => request.RequestUri!.AbsoluteUri == "https://api.github.com/user"
+            ? CreateJsonResponse(new { login = "meister-dev" })
+            : CreateJsonResponse(
+                new
+                {
+                    data = new
+                    {
+                        repository = new
+                        {
+                            pullRequest = new
+                            {
+                                reviewThreads = new
+                                {
+                                    pageInfo = new { hasNextPage = false }, nodes = new[]
+                                    {
+                                        new
+                                        {
+                                            id = "T", isResolved = true,
+                                            path = "renamed.cs", line = 99, originalLine = 12, diffSide = side, subjectType = "LINE",
+                                            comments = new
+                                            {
+                                                pageInfo = new { hasNextPage = false }, nodes = new[]
+                                                {
+                                                    new
+                                                    {
+                                                        databaseId = 501, body = "Verified concern", author = new { login = "human" }, path = "original.cs",
+                                                        originalLine = 12, originalCommit = new { oid = "original-head" },
+                                                        publishedAt = published ? (DateTimeOffset?)origin : null,
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }));
+        var sut = new GitHubReviewThreadStatusProvider(new GitHubConnectionVerifier(CreateConnectionRepository(client, host), factory), factory);
+        var snapshot = await sut.ReadSnapshotAsync("https://github.com", "acme", "acme/propr", 42, ThreadOwnershipResolver.None, client);
+        var anchor = Assert.Single(snapshot.Threads).ConcernAnchor;
+        Assert.NotNull(anchor);
+        Assert.Equal(known, anchor.IsKnown);
+        Assert.Equal("original.cs", anchor.FilePath);
+        Assert.Equal(12, anchor.StartLine);
+        Assert.Equal(published ? origin : null, anchor.OriginAt);
+        Assert.Equal(side == "RIGHT" ? "original-head" : null, anchor.CommitSha);
+    }
+
     [Fact]
     public async Task GetReviewerThreadStatusesAsync_ReviewerOwnedThreads_ReturnsHistoryAndReplyCounts()
     {

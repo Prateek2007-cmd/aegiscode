@@ -121,6 +121,7 @@ public sealed partial class ReviewOrchestrationService(
                 resolvedReviewRuntime.Value.ChatClient,
                 resolvedReviewRuntime.Value.Capabilities,
                 resolvedReviewRuntime.Value.LogicalModelName,
+                resolvedReviewRuntime.Value.ConfiguredModelId,
                 ct);
         }
         catch (BudgetHardCapReachedException ex)
@@ -245,6 +246,7 @@ public sealed partial class ReviewOrchestrationService(
         IChatClient overrideChatClient,
         AgentReviewRuntimeCapabilities runtimeCapabilities,
         string? defaultReviewLogicalModelName,
+        Guid? defaultReviewConfiguredModelId,
         CancellationToken ct)
     {
         LogReviewStarted(logger, job.Id, job.PullRequestId);
@@ -311,6 +313,7 @@ public sealed partial class ReviewOrchestrationService(
                 overrideChatClient,
                 runtimeCapabilities,
                 defaultReviewLogicalModelName,
+                defaultReviewConfiguredModelId,
                 workspacePreparation,
                 ct);
 
@@ -710,6 +713,23 @@ public sealed partial class ReviewOrchestrationService(
         return RetentionConnectionResolver.Resolve(connections, host.Provider, host.HostBaseUrl);
     }
 
+    private async Task<Guid?> ResolveModelEvidenceSourceConnectionAsync(ReviewJob job, CancellationToken ct)
+    {
+        try
+        {
+            return (await this.ResolveRetentionConnectionAsync(job, ct))?.Id;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning("Model evidence source connection unavailable for job {JobId}: {FailureType}", job.Id, exception.GetType().Name);
+            return null;
+        }
+    }
+
     private static string MapRetainedChangeType(ChangeType changeType)
     {
         return changeType switch
@@ -928,15 +948,15 @@ public sealed partial class ReviewOrchestrationService(
 
     // Resolves the review's chat runtime through the shared resolver. Returns null when it cannot be resolved,
     // having already failed the job with the reason the resolver gave.
-    private async Task<(IChatClient ChatClient, AgentReviewRuntimeCapabilities Capabilities, string? LogicalModelName)?> ResolveAiConnectionAsync(
-        ReviewJob job, CancellationToken ct)
+    private async Task<(IChatClient ChatClient, AgentReviewRuntimeCapabilities Capabilities, string? LogicalModelName, Guid ConfiguredModelId)?>
+        ResolveAiConnectionAsync(ReviewJob job, CancellationToken ct)
     {
         try
         {
             var runtime = await aiRuntimeResolver.ResolveChatRuntimeAsync(job.ClientId, AiPurpose.ReviewDefault, ct);
             job.SetAiConfig(runtime.Connection.Id, runtime.Model.RemoteModelId, job.ReviewTemperature);
             await jobs.UpdateAiConfigAsync(job.Id, runtime.Connection.Id, runtime.Model.RemoteModelId, ct, job.ReviewTemperature);
-            return (runtime.ChatClient, runtime.Capabilities, runtime.LogicalModelName);
+            return (runtime.ChatClient, runtime.Capabilities, runtime.LogicalModelName, runtime.Model.Id);
         }
         catch (AiPurposeBindingNotConfiguredException ex) when (!ct.IsCancellationRequested)
         {
@@ -1117,6 +1137,7 @@ public sealed partial class ReviewOrchestrationService(
         IChatClient chatClient,
         AgentReviewRuntimeCapabilities runtimeCapabilities,
         string? defaultReviewLogicalModelName,
+        Guid? defaultReviewConfiguredModelId,
         ReviewRepositoryWorkspacePreparationResult preparedWorkspace,
         CancellationToken ct)
     {
@@ -1200,6 +1221,10 @@ public sealed partial class ReviewOrchestrationService(
             DefaultReviewChatClient = chatClient,
             DefaultReviewModelId = job.AiModel,
             LogicalModelName = defaultReviewLogicalModelName,
+            ConfiguredModelId = defaultReviewConfiguredModelId,
+            ProviderScope = ProviderSourceIdentity.FromReviewJob(job, providerRegistry.GetSourceIdentityPolicy(job.Provider)).Value,
+            SourceConnectionId = await this.ResolveModelEvidenceSourceConnectionAsync(job, ct),
+            RuntimeConnectionId = job.AiConnectionId,
             RuntimeCapabilities = runtimeCapabilities,
             EnableMultiPassUnion = enableMultiPassUnion,
             IncludeLinkedItemsInContext = includeLinkedItemsInContext,

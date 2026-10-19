@@ -28,7 +28,7 @@ public sealed class ReviewerPerformanceReportStoreTests
         await db.SaveChangesAsync();
         var opened = await store.GetAsync(request.Id, [a]);
         var retried = await store.SaveAsync(request, [a]);
-        Assert.Equal(2, opened!.Response.Views[0].Series[0].Points[0].Score.Counts.Outcomes.Positive);
+        Assert.Equal(2, opened!.Response.Views[0].Series[0].Points[0].OverallPrecision!.Counts.Outcomes.Positive);
         Assert.Equal(saved.Response.CapturedAt, retried.Response.CapturedAt);
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(request with { Name = "Different" }, [a]));
     }

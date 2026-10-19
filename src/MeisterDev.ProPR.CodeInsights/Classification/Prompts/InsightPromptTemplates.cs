@@ -24,5 +24,9 @@ internal static class InsightPromptTemplates
 
     internal const string HumanMissSystem = "code-insights/human-miss-system.hbs";
 
+    internal const string HumanConcernSystem = "code-insights/human-concern-system.hbs";
+
+    internal const string HumanConcernModelSystem = "code-insights/human-concern-model-system.hbs";
+
     internal const string HumanMissUser = "code-insights/human-miss-user.hbs";
 }

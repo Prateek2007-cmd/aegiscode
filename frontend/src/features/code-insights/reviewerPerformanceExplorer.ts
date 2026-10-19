@@ -3,7 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 import type { PerformanceMatrixCell, PerformanceRange } from '@/services/reviewerPerformanceService'
-import { metricLabel, percent, type PerformanceMetric } from './reviewerPerformanceRanges'
+import { metricLabel, metricRange, metricCounts, percent, type PerformanceMetric } from './reviewerPerformanceRanges'
 
 export interface ExplorerAxisItem {
   id: string
@@ -44,8 +44,8 @@ export function dimensionLabel(dimension: string): string {
 export function cellRange(
   cell: PerformanceMatrixCell,
   metric: PerformanceMetric,
-): PerformanceRange | undefined {
-  return cell.measurement?.score?.summary?.[metric]
+): PerformanceRange | null | undefined {
+  return cell.measurement ? metricRange(cell.measurement, metric) : undefined
 }
 
 function axisItems(
@@ -74,7 +74,7 @@ function prepareMatrixEntry(
     range?.firstQuartile != null && range.thirdQuartile != null
       ? `${percent(range.firstQuartile)}–${percent(range.thirdQuartile)}`
       : 'unavailable'
-  const publications = source?.measurement?.score?.counts?.outcomes?.total ?? 0
+  const publications = source?.measurement ? metricCounts(source.measurement, metric)?.outcomes?.total ?? 0 : 0
   const measurementDescription = range
     ? `${metricLabel(metric)} median ${median}, full range ${fullRange}, middle half ${middleHalf}; ${publications} published.`
     : `${metricLabel(metric)} unavailable, middle half ${middleHalf}; ${publications} published.`

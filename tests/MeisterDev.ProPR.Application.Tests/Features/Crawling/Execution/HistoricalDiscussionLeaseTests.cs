@@ -84,8 +84,14 @@ public sealed class HistoricalDiscussionLeaseTests
             feedbackReader: feedback, missHarvester: Substitute.For<ICodeInsightMissHarvester>(),
             dispositionService: Substitute.For<ICodeInsightDispositionService>(),
             harvestCoverageRecorder: coverage, discussionStore: store, timeProvider: clock);
-        var running = observer.RefreshAsync(new(key, connection.ProviderFamily, connection.HostBaseUrl, "project", scope, connection.Id));
+        var running = observer.RefreshAsync(new(key, connection.ProviderFamily, connection.HostBaseUrl, "project", scope));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await feedback.Received(1).ReadAsync(
+            Arg.Is<CodeInsightProviderEvidenceTarget>(target => target.ConnectionId == connection.Id),
+            Arg.Any<ThreadOwnershipResolver>(), Arg.Any<CancellationToken>(), CodeInsightObservationMode.HistoricalBackfill);
+        await store.Received(1).TryAcquireAsync(
+            Arg.Is<PullRequestThreadSnapshotTarget>(target => target.ClientId == key.ClientId && target.ConnectionId == connection.Id),
+            null, true, TimeSpan.FromSeconds(300), Arg.Any<CancellationToken>());
         try
         {
             for (var i = 0; i < 6; i++)
@@ -110,7 +116,10 @@ public sealed class HistoricalDiscussionLeaseTests
             else
             {
                 release.TrySetResult(new([], []));
-                Assert.Equal(CodeInsightObservationStatus.Observed, (await running).Status);
+                var result = await running;
+                Assert.Equal(CodeInsightObservationStatus.Observed, result.Status);
+                Assert.Equal(lease.ObservedAt, result.ObservedAt);
+                await coverage.Received(1).RecordAcknowledgedAsync(key, scope, true, lease.ObservedAt, Arg.Any<CancellationToken>());
             }
         }
         finally

@@ -21,6 +21,15 @@ namespace MeisterDev.ProPR.CodeInsights;
 /// </remarks>
 public sealed class CodeInsightsOptions
 {
+    /// <summary>Advisory minimum percentage of covered source pull requests for range diagnostics.</summary>
+    public int MinimumCoveragePercentage { get; set; } = 80;
+
+    /// <summary>Advisory minimum distinct covered source pull requests for range diagnostics.</summary>
+    public int MinimumCoveredPullRequests { get; set; } = 1;
+
+    public int EffectiveMinimumCoveragePercentage => Math.Clamp(this.MinimumCoveragePercentage, 0, 100);
+    public int EffectiveMinimumCoveredPullRequests => Math.Max(this.MinimumCoveredPullRequests, 1);
+
     /// <summary>How often the classification sweeper drains its backlog. Floored at ten seconds.</summary>
     public int ClassificationIntervalSeconds { get; set; } = 60;
 
@@ -45,8 +54,16 @@ public sealed class CodeInsightsOptions
     /// <summary>Pull requests refreshed from provider evidence per catch-up cycle.</summary>
     public int ProviderEvidenceBackfillMaxPullRequests { get; set; } = 25;
 
+    /// <summary>Minutes allowed for a historical observation claim, clamped to 1 through 60.</summary>
     public int ProviderEvidenceLeaseMinutes { get; set; } = 15;
+
+    /// <summary>Minutes before a retryable historical observation is eligible again, clamped to 10 through 1440.</summary>
     public int ProviderEvidenceRetryCooldownMinutes { get; set; } = 360;
+
+    /// <summary>Cooldown between local retries of retained independent concern classification.</summary>
+    public int ModelEvidenceRetryCooldownMinutes { get; set; } = 5;
+
+    public TimeSpan ModelEvidenceRetryCooldown => TimeSpan.FromMinutes(Math.Clamp(this.ModelEvidenceRetryCooldownMinutes, 1, 1440));
 
     /// <summary>Seconds admitted for one provider-evidence sweep, clamped to 10 through 600.</summary>
     public int ProviderEvidenceSweepBudgetSeconds { get; set; } = 300;

@@ -17,7 +17,7 @@ public sealed class ReviewerPerformanceScoreCalculatorTests
             from byDesign in rules
             from misses in new[] { "acted", "allSettled" }
             from duplicates in new[] { "retain", "negative", "excluded" }
-            select $"reviewer-performance-v1/dismissed:{dismissed}/wontFix:{wontFix}/byDesign:{byDesign}/misses:{misses}/duplicates:{duplicates}";
+            select $"reviewer-performance-v2/dismissed:{dismissed}/wontFix:{wontFix}/byDesign:{byDesign}/misses:{misses}/duplicates:{duplicates}";
 
         Assert.Equal(expected, score.Scenarios.Select(scenario => scenario.Id));
         Assert.Equal(

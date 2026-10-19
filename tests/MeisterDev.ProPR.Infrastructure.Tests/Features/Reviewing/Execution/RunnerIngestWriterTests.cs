@@ -49,6 +49,84 @@ public sealed class RunnerIngestWriterTests
         return new RunnerIngestWriter(this._jobs, this._protocols, this._reasoningCapture);
     }
 
+    [Theory]
+    [InlineData("\"invalid\"")]
+    [InlineData("{}")]
+    [InlineData("{\"digest\":null,\"offset\":0,\"totalBytes\":1,\"data\":\"eA==\"}")]
+    public async Task RejectedFragmentJsonCannotTurnAnalyticsDeliveryIntoAnOrdinaryRetry(string fragmentJson)
+    {
+        var failed = new ReviewFileResult(JobId, "a.cs");
+        failed.MarkFailed("original failure");
+        var writer = this.CreateWriter(Job(failed));
+        var json = "{\"sequence\":1,\"idempotencyKey\":\"one\",\"events\":[],\"spend\":[],\"fileResults\":["
+                   + "{\"filePath\":\"a.cs\",\"isComplete\":false,\"isFailed\":false,\"reviewedPassKeys\":[],\"modelEvidenceFragment\":"
+                   + fragmentJson + "}]}";
+        var batch = JsonSerializer.Deserialize<RunnerIngestBatch>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+        await writer.WriteFileResultsAsync(JobId, batch.FileResults);
+
+        Assert.True(failed.IsFailed);
+        Assert.Equal("original failure", failed.ErrorMessage);
+        await this._jobs.DidNotReceive().UpdateFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task AnalyticsOnlyDeliveryCannotReplaceOrResetAnOrdinaryFailure(bool sameBatch, bool fragmented)
+    {
+        var job = Job();
+        this._jobs.AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>()).Returns(call =>
+        {
+            job.FileReviewResults.Add(call.Arg<ReviewFileResult>());
+            return Task.CompletedTask;
+        });
+        var writer = this.CreateWriter(job);
+        var failure = new RunnerFileOutcome("a.cs", false, true, null, "original model failure", []);
+        var proof = new RunnerFileOutcome(
+            "a.cs", false, false, null, null, [],
+            ModelEvidence: fragmented ? null : new ModelReviewEvidence { JobId = JobId, FilePath = "a.cs" },
+            ModelEvidenceFragment: fragmented ? new(new string('a', 64), 0, 1, "eA==") : null);
+
+        if (sameBatch)
+        {
+            await writer.WriteFileResultsAsync(JobId, [failure, proof]);
+        }
+        else
+        {
+            await writer.WriteFileResultsAsync(JobId, [failure]);
+            await writer.WriteFileResultsAsync(JobId, [proof]);
+        }
+
+        var retained = Assert.Single(job.FileReviewResults);
+        Assert.True(retained.IsFailed);
+        Assert.Equal("original model failure", retained.ErrorMessage);
+        await this._jobs.DidNotReceive().UpdateFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
+        var call = new RunnerCallContext(JobId, 1, "runner");
+        _ = await writer.WriteModelEvidenceAsync(call, [proof], []);
+        await this._jobs.Received(1).RetainRunnerModelEvidenceAsync(
+            call,
+            Arg.Is<IReadOnlyList<RunnerFileOutcome>>(items => items.Count == 1 && items[0] == proof),
+            Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ModelProofUsesTheAtomicLeaseFencedStoreInsteadOfOrdinaryOutcomeWrites()
+    {
+        var job = Job();
+        var call = new RunnerCallContext(JobId, 2, "runner-a");
+        RunnerFileOutcome[] files = [new("a.cs", false, false, null, null, [], ModelEvidence: new() { JobId = JobId })];
+        this._jobs.RetainRunnerModelEvidenceAsync(call, files, Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>()).Returns(true);
+        IRunnerIngestWriter writer = this.CreateWriter(job);
+
+        Assert.True(await writer.WriteModelEvidenceAsync(call, files, []));
+
+        await this._jobs.Received(1).RetainRunnerModelEvidenceAsync(call, files, Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>());
+        await this._jobs.DidNotReceive().AddFileResultAsync(Arg.Any<ReviewFileResult>(), Arg.Any<CancellationToken>());
+    }
+
     // The comments are the checkpoint's substance: without them a reclaimed job's synthesis reasons over
     // finished files that appear to have found nothing, and the published review drops the findings.
     [Fact]

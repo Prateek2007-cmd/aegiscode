@@ -135,7 +135,7 @@ public sealed class JobSpoolTests
         handler.Throw = false;
         await spool.FlushAsync(CancellationToken.None);
 
-        var names = handler.Batches[^1].GetProperty("events").EnumerateArray()
+        var names = handler.Batches.SelectMany(batch => batch.GetProperty("events").EnumerateArray())
             .Select(e => e.GetProperty("name").GetString())
             .ToArray();
 

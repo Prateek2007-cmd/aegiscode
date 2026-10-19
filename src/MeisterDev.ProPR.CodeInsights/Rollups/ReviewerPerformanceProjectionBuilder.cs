@@ -18,6 +18,16 @@ internal static class ReviewerPerformanceProjectionBuilder
         var cells = new List<ReviewerPerformanceDailyCount>();
         AddFindings(cells, evidence);
         AddMisses(cells, evidence.Misses);
+        foreach (var exposure in evidence.Exposures.Where(row => !string.IsNullOrWhiteSpace(row.ModelId)))
+        {
+            cells.Add(
+                new()
+                {
+                    BucketDate = DateOnly.FromDateTime(exposure.ObservedAt.UtcDateTime), ProviderScope = exposure.ProviderScope,
+                    ModelId = exposure.ModelId!, LogicalModelName = exposure.LogicalModelName ?? "", Outcome = "collectionModelOpportunity"
+                });
+        }
+
         AddCoverage(cells, pr, evidence);
         var projected = new List<ReviewerPerformanceDailyCount>();
         foreach (var group in cells.GroupBy(row => new

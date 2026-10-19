@@ -10,10 +10,10 @@ namespace MeisterDev.ProPR.CodeInsights.Controllers;
 
 public sealed partial class ReviewerPerformanceController
 {
-    /// <summary>Returns versioned interpretation ranges from retained counts for one or two consistently read views.</summary>
+    /// <summary>Returns covered-population scoring ranges, independent overall precision and source exclusions under one database snapshot.</summary>
     /// <param name="query">Bounded dates, dimensions, cumulative or period mode, and optional measurement matrix.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <response code="200">Counts, coherent scenario tuples, summaries, evidence limits and authorized facets.</response>
+    /// <response code="200">Versioned covered counts and coherent scenarios, advisory coverage policy and counts, overall precision, captured exclusion collection progress and authorized facets.</response>
     /// <response code="400">Unsupported query or exceeded bounds.</response>
     /// <response code="401">Missing or invalid credentials.</response>
     /// <response code="403">Missing tenant administration, license or selected-client access.</response>

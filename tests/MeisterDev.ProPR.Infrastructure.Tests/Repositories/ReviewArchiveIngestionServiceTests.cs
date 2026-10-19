@@ -10,6 +10,24 @@ namespace MeisterDev.ProPR.Infrastructure.Tests.Repositories;
 
 public sealed class ReviewArchiveIngestionServiceTests
 {
+    [Fact]
+    public async Task RetainedSnapshotPreservesNativeConcernOriginWithoutUsingObservationTime()
+    {
+        var store = Substitute.For<IReviewArchiveStore>();
+        var anchor = new MeisterDev.ProPR.Domain.ValueObjects.ReviewConcernAnchor
+        {
+            RootCommentId = "root", OriginAt = DateTimeOffset.UtcNow.AddDays(-3),
+            CommitSha = "original", FilePath = "original.cs", Side = "RIGHT", StartLine = 2, EndLine = 2, OriginalScopeProven = true
+        };
+        await new ReviewArchiveIngestionService(store).HandleThreadUpdatedAsync(
+            new(
+                ClientId, ConnectionId, "repo", 42, "thread", "moved.cs", 99,
+                "Fixed", DateTimeOffset.UtcNow, [], DateTimeOffset.UtcNow, ConcernAnchor: anchor));
+        await store.Received(1).UpsertThreadAsync(
+            Arg.Any<PullRequestRetentionKey>(),
+            Arg.Is<RetainedThreadSnapshot>(snapshot => snapshot.ConcernAnchor == anchor), Arg.Any<CancellationToken>());
+    }
+
     private static readonly Guid ClientId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid ConnectionId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 

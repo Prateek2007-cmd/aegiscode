@@ -17,6 +17,9 @@ using MeisterDev.ProPR.CodeInsights.Contracts;
 using MeisterDev.ProPR.CodeInsights.Rollups;
 using MeisterDev.ProPR.CodeInsights.Metrics;
 using MeisterDev.ProPR.CodeInsights.Persistence;
+using MeisterDev.ProPR.CodeInsights.Ports;
+using MeisterDev.ProPR.CodeInsights.Workers;
+using Microsoft.Extensions.Options;
 
 namespace MeisterDev.ProPR.CodeInsights.Tests.Rollups;
 
@@ -26,6 +29,22 @@ namespace MeisterDev.ProPR.CodeInsights.Tests.Rollups;
 /// </summary>
 public sealed class CodeInsightCatchUpTests : IDisposable
 {
+    [Fact]
+    public async Task ModelMaintenanceFailureDoesNotSkipExistingCatchUpConsumers()
+    {
+        var maintenance = Substitute.For<IModelEvidenceMaintenance>();
+        maintenance.SweepAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).ThrowsAsync(new InvalidOperationException("analytics unavailable"));
+        var projector = Substitute.For<ICodeInsightRollupProjector>();
+        var sweeper = Substitute.For<ICodeInsightSealSweeper>();
+        await using var services = new ServiceCollection().AddSingleton(maintenance).AddSingleton(projector).AddSingleton(sweeper).BuildServiceProvider();
+        var options = Substitute.For<IOptionsMonitor<CodeInsightsOptions>>();
+        options.CurrentValue.Returns(new CodeInsightsOptions());
+        var worker = new CodeInsightCatchUpWorker(services.GetRequiredService<IServiceScopeFactory>(), options, NullLogger<CodeInsightCatchUpWorker>.Instance);
+        await worker.CatchUpOnceAsync(CancellationToken.None);
+        await projector.Received(1).BackfillAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+        await sweeper.Received(1).SweepAsync(Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+    }
+
     private static readonly Guid ClientA = Guid.Parse("88888888-8888-8888-8888-888888888888");
     private static readonly Guid ClientB = Guid.Parse("99999999-9999-9999-9999-999999999999");
     private static readonly DateTimeOffset ReviewedAt = new(2026, 3, 11, 9, 0, 0, TimeSpan.Zero);

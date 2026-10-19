@@ -8,11 +8,79 @@ using System.Text.Json;
 using MeisterDev.ProPR.Application.Options;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using MeisterDev.ProPR.Domain.ValueObjects;
 
 namespace MeisterDev.ProPR.Application.Tests.Features.Reviewing.Execution;
 
 public sealed class RunnerIngestServiceTests
 {
+    [Theory]
+    [InlineData("42")]
+    [InlineData("{\"digest\":null,\"offset\":0,\"totalBytes\":3,\"data\":null}")]
+    [InlineData("{\"digest\":\"bad\",\"offset\":-1,\"totalBytes\":4,\"data\":\"AQIDBA==\"}")]
+    public void InvalidOptionalFragmentCannotDiscardAnOrdinaryOutcome(string fragment)
+    {
+        var json = "{\"filePath\":\"f.cs\",\"isComplete\":true,\"isFailed\":false,\"reviewedPassKeys\":[],\"modelEvidenceFragment\":" + fragment + "}";
+        RunnerFileOutcome? outcome = null;
+        Assert.Null(
+            Record.Exception(() => outcome = JsonSerializer.Deserialize<RunnerFileOutcome>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
+        Assert.True(outcome!.IsComplete);
+        Assert.NotNull(outcome.ModelEvidenceFragment);
+        Assert.False(outcome.ModelEvidenceFragment.IsBounded);
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("[null]")]
+    [InlineData("[{\"pullRequestPasses\":[{\"passes\":[{\"passKey\":\"p\",\"disposition\":\"not-an-enum\"}]}]}]")]
+    public void MalformedManifestCannotDiscardOtherwiseValidRunnerFileResults(string manifests)
+    {
+        var json =
+            "{\"sequence\":1,\"idempotencyKey\":\"b\",\"events\":[],\"spend\":[],\"fileResults\":[{\"filePath\":\"f.cs\",\"isComplete\":true,\"isFailed\":false,\"reviewedPassKeys\":[]}],\"modelManifests\":" +
+            manifests + "}";
+        RunnerIngestBatch? batch = null;
+        Assert.Null(Record.Exception(() => batch = JsonSerializer.Deserialize<RunnerIngestBatch>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
+        Assert.True(Assert.Single(batch!.FileResults).IsComplete);
+        Assert.Equal("model-proof-limit-exceeded", Assert.Single(batch.ModelManifests!).UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("{\"passes\":42}")]
+    [InlineData("{\"passes\":[null]}")]
+    public void MalformedOptionalProofCannotDiscardOtherwiseValidRunnerFindings(string proof)
+    {
+        var json =
+            "{\"filePath\":\"a.cs\",\"isComplete\":true,\"isFailed\":false,\"summary\":\"done\",\"reviewedPassKeys\":[],\"comments\":[{\"filePath\":\"a.cs\",\"lineNumber\":1,\"severity\":1,\"message\":\"finding\"}],\"modelEvidence\":" +
+            proof + "}";
+        RunnerFileOutcome? result = null;
+        Assert.Null(
+            Record.Exception(() => result = JsonSerializer.Deserialize<RunnerFileOutcome>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
+        Assert.Equal("finding", Assert.Single(result!.Comments!).Message);
+        Assert.NotNull(result.ModelEvidence);
+        Assert.Equal("model-proof-limit-exceeded", result.ModelEvidence.UnavailableReason);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task ModelProofIsRetainedBeforeReceiptAndRetriedEvenWhenAnEarlierReceiptExists(int expected)
+    {
+        var service = this.CreateService(expectedSequence: expected);
+        var batch = Batch(1) with { FileResults = [new("a.cs", false, false, null, null, [], ModelEvidence: new() { JobId = JobId })] };
+        await service.IngestAsync(Call, batch);
+        await this._writer.Received(1).WriteModelEvidenceAsync(
+            Call, batch.FileResults, Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>());
+        if (expected == 1)
+        {
+            Received.InOrder(() =>
+            {
+                this._writer.WriteModelEvidenceAsync(Call, batch.FileResults, Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>());
+                this._ledger.TryRecordAsync(JobId, 1, batch.IdempotencyKey, Arg.Any<CancellationToken>());
+            });
+        }
+    }
+
     private static readonly Guid JobId = Guid.Parse("77777777-7777-7777-7777-777777777777");
     private static readonly RunnerCallContext Call = new(JobId, 1, "runner-a");
 
@@ -47,6 +115,9 @@ public sealed class RunnerIngestServiceTests
         this._ledger.GetExpectedSequenceAsync(JobId, Arg.Any<CancellationToken>()).Returns(expectedSequence);
         this._ledger.TryRecordAsync(JobId, Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(recordWins);
+        this._writer.WriteModelEvidenceAsync(
+            Arg.Any<RunnerCallContext>(), Arg.Any<IReadOnlyList<RunnerFileOutcome>>(),
+            Arg.Any<IReadOnlyList<ModelReviewManifest>>(), Arg.Any<CancellationToken>()).Returns(true);
 
         return new RunnerIngestService(
             this._authorizer,

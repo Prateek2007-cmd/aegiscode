@@ -4,6 +4,8 @@
 using MeisterDev.ProPR.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using System.Text.Json;
+using MeisterDev.ProPR.Domain.ValueObjects;
 
 namespace MeisterDev.ProPR.Infrastructure.Data.Configurations;
 
@@ -12,6 +14,10 @@ internal sealed class RetainedThreadConfiguration : IEntityTypeConfiguration<Ret
     public void Configure(EntityTypeBuilder<RetainedThread> builder)
     {
         builder.ToTable("retained_threads");
+        builder.Property(thread => thread.ConcernAnchor).HasColumnName("concern_anchor_json").HasColumnType("jsonb")
+            .HasConversion(
+                value => value == null ? null : JsonSerializer.Serialize(value, (JsonSerializerOptions?)null),
+                json => json == null ? null : JsonSerializer.Deserialize<ReviewConcernAnchor>(json, (JsonSerializerOptions?)null));
 
         builder.HasKey(thread => thread.Id);
         builder.Property(thread => thread.Id).HasColumnName("id").ValueGeneratedNever();

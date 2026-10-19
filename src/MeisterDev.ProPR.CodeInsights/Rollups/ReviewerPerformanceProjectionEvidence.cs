@@ -16,7 +16,11 @@ internal sealed record ReviewerPerformanceDispositionEvidence(
 
 internal sealed record ReviewerPerformanceTagEvidence(Guid CodeInsightFindingId, string? CoreSlug);
 
-internal sealed record ReviewerPerformanceExposureEvidence(DateTimeOffset ObservedAt, string ProviderScope);
+internal sealed record ReviewerPerformanceExposureEvidence(
+    DateTimeOffset ObservedAt,
+    string ProviderScope,
+    string? ModelId = null,
+    string? LogicalModelName = null);
 
 internal sealed record ReviewerPerformanceFindingEvidence(
     Guid Id,

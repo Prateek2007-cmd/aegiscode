@@ -10,6 +10,9 @@ namespace MeisterDev.ProPR.Domain.Entities;
 /// </summary>
 public sealed class RetainedThread
 {
+    /// <summary>Original native issue position and origin, independent of the current observation revision.</summary>
+    public MeisterDev.ProPR.Domain.ValueObjects.ReviewConcernAnchor? ConcernAnchor { get; set; }
+
     /// <summary>Unique identifier for this retained thread.</summary>
     public Guid Id { get; init; }
 

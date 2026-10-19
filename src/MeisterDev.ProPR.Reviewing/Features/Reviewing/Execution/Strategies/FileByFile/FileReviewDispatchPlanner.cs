@@ -69,6 +69,29 @@ internal sealed class FileReviewDispatchPlanner(
         // file-index dictionary and downstream lookups do not throw on duplicate keys (which would
         // make the review retry loop unrecoverable).
         var allChangedFiles = DedupeChangedFiles(pr.ChangedFiles, job.Id, logger);
+        var manifest = new ModelReviewManifest
+        {
+            JobId = job.Id, Attempt = job.RetryCount + 1,
+            LeaseGeneration = baseContext.CapturedLeaseGeneration ?? (job.LeaseGeneration > 0 ? job.LeaseGeneration : null),
+            ProviderScope = baseContext.ProviderScope ?? string.Empty,
+            SourceConnectionId = baseContext.SourceConnectionId,
+            Files = allChangedFiles.Take(10_000).Select(file => file.Path).ToArray(),
+            InventoryComplete = allChangedFiles.Count <= 10_000, CapturedAt = DateTimeOffset.UtcNow,
+        };
+        if (!manifest.IsBounded)
+        {
+            manifest = manifest with { Files = [], InventoryComplete = false, UnavailableReason = "model-proof-limit-exceeded" };
+        }
+
+        job.RecordModelEvidenceManifest(manifest);
+        try
+        {
+            await jobRepository.RecordModelManifestAsync(job.Id, job.RetryCount + 1, manifest, ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning("Model inventory retention unavailable for job {JobId}: {FailureType}", job.Id, exception.GetType().Name);
+        }
 
         var selection = ReviewFileSelectionService.SelectFilesForReview(
             allChangedFiles,
@@ -136,6 +159,25 @@ internal sealed class FileReviewDispatchPlanner(
                         "Skipped file {FilePath} in job {JobId}: per-increment budget soft cap reached",
                         file.Path,
                         job.Id);
+                    var skippedContext = executionContext.CloneForPass();
+                    skippedContext.ModelEvidenceScope = ModelReviewCapture.Scope(job, file, skippedContext);
+                    var skippedProof = skippedContext.ModelEvidenceScope with
+                    {
+                        InventoryComplete = false,
+                        Passes = [ModelReviewCapture.Pass(skippedContext, 1, DateTimeOffset.UtcNow, ModelGenerationDisposition.Skipped, [])],
+                    };
+                    // An analytics-only skip must not create an incomplete ordinary review checkpoint.
+                    try
+                    {
+                        await jobRepository.RecordModelManifestAsync(
+                            job.Id, job.RetryCount + 1,
+                            manifest with { PullRequestPasses = [skippedProof] }, ct);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException || !ct.IsCancellationRequested)
+                    {
+                        logger.LogWarning("Skipped model opportunity retention unavailable for job {JobId}: {FailureType}", job.Id, exception.GetType().Name);
+                    }
+
                     return;
                 }
 
@@ -226,6 +268,7 @@ internal sealed class FileReviewDispatchPlanner(
         if (existingResult is { IsComplete: false })
         {
             existingResult.ResetForRetry();
+            existingResult.RecordModelEvidence(ModelReviewCapture.Scope(job, file, context));
             existingResult.MarkExcluded(exclusionReason);
             await jobRepository.UpdateFileResultAsync(existingResult, ct);
             fileResult = existingResult;
@@ -233,6 +276,7 @@ internal sealed class FileReviewDispatchPlanner(
         else
         {
             fileResult = new ReviewFileResult(job.Id, file.Path);
+            fileResult.RecordModelEvidence(ModelReviewCapture.Scope(job, file, context));
             fileResult.MarkExcluded(exclusionReason);
             await jobRepository.AddFileResultAsync(fileResult, ct);
         }

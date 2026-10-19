@@ -25,7 +25,7 @@ internal sealed class GitHubReviewThreadStatusProvider(
     // Read across pages from pageInfo, as the fetcher's copy of this query is. The comment connection inside
     // each thread is still one page, so a thread past a hundred comments contributes its first hundred.
     private const string GitHubReviewThreadsQuery =
-        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt author { login ... on User { databaseId } ... on Bot { databaseId } } } } } } } } }";
+        "query ReviewThreads($owner: String!, $name: String!, $pullRequestNumber: Int!, $after: String) { repository(owner: $owner, name: $name) { pullRequest(number: $pullRequestNumber) { reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line originalLine originalStartLine diffSide startDiffSide subjectType comments(first: 100) { pageInfo { hasNextPage endCursor } nodes { databaseId body createdAt path originalLine originalStartLine originalCommit { oid } publishedAt replyTo { databaseId } author { login ... on User { databaseId } ... on Bot { databaseId } } } } } } } } }";
 
     public ScmProvider Provider => ScmProvider.GitHub;
 
@@ -104,8 +104,27 @@ internal sealed class GitHubReviewThreadStatusProvider(
                 ProviderSnapshotCommentIdentity.FromLogin(comment.Author?.Login), comment.DatabaseId ?? 0, comment.CreatedAt,
                 AuthorNativeId: comment.Author?.DatabaseId?.ToString(CultureInfo.InvariantCulture))).ToArray(),
             thread.IsResolved == true ? "Fixed" : "Active", SourceAnchor: JsonSerializer.Serialize(new { thread.Path, thread.Line, thread.IsOutdated }),
-            CodeChangedSinceRaised: thread.IsOutdated == false ? ThreadAnchorCodeChange.Unchanged : ThreadAnchorCodeChange.Unknown)).ToArray();
+            CodeChangedSinceRaised: thread.IsOutdated == false ? ThreadAnchorCodeChange.Unchanged : ThreadAnchorCodeChange.Unknown,
+            ConcernAnchor: OriginalConcernAnchor(thread))).ToArray();
         return new PullRequestThreadSnapshot(observedAt, raw, statuses) { AuthenticatedIdentity = ownership.Identity };
+    }
+
+    private static ReviewConcernAnchor OriginalConcernAnchor(GitHubReviewThreadNode thread)
+    {
+        var root = thread.Comments.Nodes.FirstOrDefault(comment => comment.ReplyTo is null);
+        var head = root?.OriginalCommit?.Oid;
+        var end = root?.OriginalLine ?? thread.OriginalLine;
+        var side = thread.DiffSide;
+        var anchor = new ReviewConcernAnchor
+        {
+            RootCommentId = root is { DatabaseId: > 0 } ? root.DatabaseId.Value.ToString(CultureInfo.InvariantCulture) : null,
+            OriginAt = root?.PublishedAt, FilePath = root?.Path, Side = side,
+            StartLine = root?.OriginalStartLine ?? thread.OriginalStartLine ?? end, EndLine = end,
+            HeadSha = head, CommitSha = side == "RIGHT" ? head : null, NativeRevisionId = side == "RIGHT" ? head : null,
+            OriginalScopeProven = side == "RIGHT" && thread.SubjectType == "LINE"
+                                                  && (thread.StartDiffSide is null || thread.StartDiffSide == side) && !string.IsNullOrWhiteSpace(head),
+        };
+        return anchor.IsKnown ? anchor : anchor with { OriginalScopeProven = false };
     }
 
     private async Task<string> ResolveRepositoryPathAsync(
@@ -308,7 +327,17 @@ internal sealed class GitHubReviewThreadStatusProvider(
         [property: JsonPropertyName("path")] string? Path,
         [property: JsonPropertyName("line")] int? Line,
         [property: JsonPropertyName("comments")]
-        GitHubReviewCommentsConnection Comments);
+        GitHubReviewCommentsConnection Comments,
+        [property: JsonPropertyName("originalLine")]
+        int? OriginalLine = null,
+        [property: JsonPropertyName("originalStartLine")]
+        int? OriginalStartLine = null,
+        [property: JsonPropertyName("diffSide")]
+        string? DiffSide = null,
+        [property: JsonPropertyName("startDiffSide")]
+        string? StartDiffSide = null,
+        [property: JsonPropertyName("subjectType")]
+        string? SubjectType = null);
 
     private sealed record GitHubReviewCommentsConnection(
         [property: JsonPropertyName("nodes")] IReadOnlyList<GitHubReviewCommentNode> Nodes,
@@ -321,7 +350,24 @@ internal sealed class GitHubReviewThreadStatusProvider(
         [property: JsonPropertyName("body")] string? Body,
         [property: JsonPropertyName("createdAt")]
         DateTimeOffset CreatedAt,
-        [property: JsonPropertyName("author")] GitHubActorNode? Author);
+        [property: JsonPropertyName("author")] GitHubActorNode? Author,
+        [property: JsonPropertyName("path")] string? Path = null,
+        [property: JsonPropertyName("originalLine")]
+        int? OriginalLine = null,
+        [property: JsonPropertyName("originalStartLine")]
+        int? OriginalStartLine = null,
+        [property: JsonPropertyName("originalCommit")]
+        GitHubCommitNode? OriginalCommit = null,
+        [property: JsonPropertyName("publishedAt")]
+        DateTimeOffset? PublishedAt = null,
+        [property: JsonPropertyName("replyTo")]
+        GitHubCommentReference? ReplyTo = null);
+
+    private sealed record GitHubCommitNode([property: JsonPropertyName("oid")] string? Oid);
+
+    private sealed record GitHubCommentReference(
+        [property: JsonPropertyName("databaseId")]
+        long? DatabaseId);
 
     private sealed record GitHubActorNode(
         [property: JsonPropertyName("login")] string? Login,

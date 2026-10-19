@@ -13,6 +13,8 @@ namespace MeisterDev.ProPR.Infrastructure.Features.Providers.GitHub.Support;
 internal sealed class GitHubReviewSourcePolicy : ReviewSourcePolicyBase, IReviewSourcePolicy
 {
     public override ScmProvider Provider => ScmProvider.GitHub;
+
+    public string? CreateCapturedReviewUrl(CapturedReviewUrlCoordinates coordinates) => CapturedReviewWebUrls.Repository(coordinates, "pull");
     public bool RequiresOrganizationScope => false;
 
     public bool IsSelectedScopeCompatible(string connectionHost, string scope) =>

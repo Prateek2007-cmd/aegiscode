@@ -138,7 +138,9 @@ public sealed class RunnerJobManifestResolverTests
         AiReviewOptions? reviewOptions = null,
         ILicensingCapabilityService? licensing = null,
         IReviewJobExecutionStore? executionStore = null,
-        ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null)
+        ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null,
+        IClientScmConnectionRepository? scmConnections = null,
+        IReviewFileResultStore? resultStore = null)
     {
         return new RunnerJobManifestResolver(
             this._clients,
@@ -154,7 +156,84 @@ public sealed class RunnerJobManifestResolverTests
             reviewOptions: reviewOptions,
             licensing: licensing,
             executionStore: executionStore,
-            reasoningCapturePolicies: reasoningCapturePolicies);
+            reasoningCapturePolicies: reasoningCapturePolicies,
+            scmConnections: scmConnections,
+            resultStore: resultStore);
+    }
+
+    [Fact]
+    public async Task RetainedDispatchDescribesTheActualOrdinalScopeLensAndShadowAssignment()
+    {
+        var job = JobWithRevision();
+        this._clients.GetReviewPassesAsync(job.ClientId, Arg.Any<CancellationToken>()).Returns<IReadOnlyList<ReviewPassSpec>>(_ =>
+        [
+            new(Guid.NewGuid(), LogicalModelName: "reviewer-medium", Lens: ReviewPassLens.Security),
+            new(Guid.NewGuid(), LogicalModelName: "reviewer-wide", Scope: ReviewPassScope.PrWide, Shadow: true)
+        ]);
+        var store = Substitute.For<IReviewFileResultStore>();
+        ModelReviewManifest? retained = null;
+        store.RecordModelManifestAsync(job.Id, 1, Arg.Do<ModelReviewManifest>(value => retained = value), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+
+        var result = await this.CreateResolver(resultStore: store).ResolveAsync(RequestFor(job));
+
+        Assert.NotNull(result.Manifest);
+        Assert.NotNull(retained);
+        Assert.Collection(
+            retained.AllowedModels,
+            baseline =>
+            {
+                Assert.Equal(1, baseline.Ordinal);
+                Assert.Equal(ReviewPassScope.PerFile, baseline.Scope);
+                Assert.False(baseline.Shadow);
+            },
+            file =>
+            {
+                Assert.Equal(2, file.Ordinal);
+                Assert.Equal(ReviewPassScope.PerFile, file.Scope);
+                Assert.Equal(ReviewPassLens.Security, file.Lens);
+            },
+            wide =>
+            {
+                Assert.Equal(3, wide.Ordinal);
+                Assert.Equal(ReviewPassScope.PrWide, wide.Scope);
+                Assert.True(wide.Shadow);
+            });
+    }
+
+    [Fact]
+    public async Task OptionalSourceLookupFailureKeepsTheOrdinaryManifestAndUnknownSourceProof()
+    {
+        var job = JobWithRevision();
+        var connections = Substitute.For<IClientScmConnectionRepository>();
+        connections.GetByClientIdAsync(job.ClientId, Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("private connection lookup failed"));
+        var store = Substitute.For<IReviewFileResultStore>();
+
+        var result = await this.CreateResolver(scmConnections: connections, resultStore: store).ResolveAsync(RequestFor(job));
+
+        Assert.NotNull(result.Manifest);
+        Assert.Equal("head-sha", result.Manifest.Target.HeadSha);
+        Assert.Null(result.Manifest.Target.SourceConnectionId);
+        await store.Received(1).RecordModelManifestAsync(
+            job.Id, 1,
+            Arg.Is<ModelReviewManifest>(proof => proof.SourceConnectionId == null && proof.Files.Count == 1), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task OptionalSourceLookupPreservesCallerCancellation()
+    {
+        var job = JobWithRevision();
+        using var cancellation = new CancellationTokenSource();
+        var connections = Substitute.For<IClientScmConnectionRepository>();
+        connections.GetByClientIdAsync(job.ClientId, cancellation.Token).Returns<IReadOnlyList<ClientScmConnectionDto>>(_ =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            this.CreateResolver(scmConnections: connections).ResolveAsync(RequestFor(job), cancellation.Token));
     }
 
     // A runner binds its own reasoning-capture switch, so a manifest that left the field out would let the
@@ -348,7 +427,7 @@ public sealed class RunnerJobManifestResolverTests
 
         Assert.True(resolution.Succeeded);
         Assert.Null(resolution.Manifest!.LinkedItems);
-        Assert.Empty(registry.ReceivedCalls());
+        registry.DidNotReceive().GetLinkedItemProvider(Arg.Any<ScmProvider>());
     }
 
     // The in-process path reviews without linked items when discovery fails; refusing the dispatch here
