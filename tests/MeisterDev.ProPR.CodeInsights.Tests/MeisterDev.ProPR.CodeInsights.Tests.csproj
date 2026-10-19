@@ -22,7 +22,7 @@
         <PackageReference Include="NSubstitute" Version="5.3.0"/>
         <PackageReference Include="Testcontainers.PostgreSql" Version="4.11.0"/>
         <!-- Pinned to override a vulnerable transitive, as the other test projects do. -->
-        <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10"/>
+        <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.13"/>
         <PackageReference Include="xunit" Version="2.9.3"/>
         <PackageReference Include="Xunit.SkippableFact" Version="1.4.13"/>
         <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
