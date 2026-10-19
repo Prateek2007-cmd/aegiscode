@@ -1,6 +1,5 @@
 # Build stage
-# mcr.microsoft.com/dotnet/sdk:10.0
-FROM mcr.microsoft.com/dotnet/sdk@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS build
 WORKDIR /source
 
 # The release version, stamped into the assembly so the running product can report it on the Usage Statistics
@@ -87,8 +86,7 @@ RUN dotnet publish src/MeisterDev.DataProtection.AzureKeyVaultAddIn/MeisterDev.D
     -c Release -o /app/data-protection-add-ins/MeisterDev.DataProtection.AzureKeyVaultAddIn --no-restore
 
 # Minimal Kerberos runtime slice for Azure DevOps client auth support.
-# ubuntu:24.04
-FROM ubuntu@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254 AS kerberos
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS kerberos
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
     && rm -rf /var/lib/apt/lists/*
@@ -112,8 +110,7 @@ RUN mkdir -p /kerberos-root/usr/lib/x86_64-linux-gnu \
 # approach used for Kerberos above. Ubuntu 24.04 (Noble) matches the chiseled
 # base's glibc, so the copied libraries are ABI-compatible. perl is intentionally
 # excluded: the fetch/worktree/rev-parse plumbing never invokes perl subcommands.
-# ubuntu:24.04
-FROM ubuntu@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254 AS gittools
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS gittools
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -144,8 +141,7 @@ RUN set -eux; \
          done
 
 # Runtime stage
-# mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
-FROM mcr.microsoft.com/dotnet/aspnet@sha256:00e0ad6a7ef8c0c1391b87f05c7ac757a15740455688f2bfcd146a3f4b987efd AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra@sha256:3ed6558056b54d5c9dfefb7ff473728e022ff2bf1d976cbf8ee07b05ec594374 AS runtime
 WORKDIR /app
 
 COPY --from=kerberos /kerberos-root/usr/lib/x86_64-linux-gnu/ /usr/lib/x86_64-linux-gnu/

@@ -4,6 +4,17 @@ This page covers what ProPR does with your credentials and your code, and how si
 vulnerability, see
 [SECURITY.md](../../SECURITY.md).
 
+## Container dependencies
+
+ProPR's Dockerfiles pin official base images by release tag and immutable digest. Dependabot checks
+these references weekly. The API, runner and ProCursor use the same .NET runtime base, and the frontend
+updates its TLS, regular-expression and compression libraries during its image build.
+
+CI scans the API, frontend and runner images with Grype and publishes the findings to GitHub code
+scanning. Release builds scan ProCursor as well. Package findings without a vendor fix remain visible.
+Install patched images by rebuilding or upgrading the affected services; see
+[running published images](../operate/deploy.md#running-published-images).
+
 ## Where your code goes
 
 ProPR reads pull requests from your SCM host and sends the relevant content to the AI provider **you**

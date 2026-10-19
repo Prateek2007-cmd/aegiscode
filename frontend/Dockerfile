@@ -1,7 +1,6 @@
 # Build context: repository root (example/docker-compose sets context: ../..)
 # Stage 1: Build
-# node:26-alpine
-FROM node@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS builder
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS builder
 WORKDIR /app
 # Copy openapi.json from repo root for code generation
 COPY openapi.json ./openapi.json
@@ -17,17 +16,15 @@ RUN npx openapi-typescript ./openapi.json -o src/services/generated/openapi.ts
 RUN npm run build
 
 # Stage 2: Serve
-# docker.io/library/nginx:alpine-slim
 # The slim variant omits the image-filter/dav/xslt/geoip modules and their
 # native library closure (libtiff, freetype, libgd, nghttp2). Serving the built
 # SPA needs none of them, and dropping them clears the libtiff CVEs (no Alpine
 # fix available) that the full alpine tag carries.
-FROM docker.io/library/nginx@sha256:f761b94f2cb9e8e05e2943d5f773609596113ef69b54e2433a996d109a8f78b7
-# Alpine 3.24 ships openssl 3.5.9 and pcre2 10.49 with the current security
-# fixes, and the pinned nginx image still carries 3.5.8 and 10.48. This step
-# installs the fixed versions before nginx:alpine-slim is rebuilt. Remove it
-# once the pinned digest ships these versions itself.
-RUN apk add --no-cache --upgrade libssl3 libcrypto3 pcre2
+FROM docker.io/library/nginx:alpine-slim@sha256:ebd058041a732a2b2dc0b606e34572dd8e0034de6a4aa4d50d8c13a240ac6005
+# Apply available security fixes to the TLS, regular-expression and compression
+# libraries used by nginx. The zlib minimum prevents a failed repository refresh
+# from retaining a vulnerable installed version.
+RUN apk add --no-cache --upgrade libssl3 libcrypto3 pcre2 'zlib>=1.3.2-r1'
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 # Run as the unprivileged nginx user (uid 101, already present in the base image)

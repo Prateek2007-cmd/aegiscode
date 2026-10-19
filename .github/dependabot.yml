@@ -1,11 +1,11 @@
-# Keeps the digest-pinned base images (and CI actions) current. Without this,
-# pinning would freeze the images on a digest that goes stale/vulnerable.
-# Docker updates rewrite the @sha256 pins in Dockerfile / procursor.dockerfile /
-# frontend/Dockerfile; grouped so a base-image bump is one PR, not many.
+# Image tags identify the supported release streams; digests pin immutable builds.
+# Weekly Docker updates refresh these pins in Dockerfile, Dockerfile.runner,
+# procursor.dockerfile and frontend/Dockerfile, grouped into one PR per directory.
+# CI actions and application dependencies are updated on the same schedule.
 version: 2
 updates:
   - package-ecosystem: docker
-    directory: "/"            # Dockerfile + procursor.dockerfile
+    directory: "/"            # Dockerfile + Dockerfile.runner + procursor.dockerfile
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
