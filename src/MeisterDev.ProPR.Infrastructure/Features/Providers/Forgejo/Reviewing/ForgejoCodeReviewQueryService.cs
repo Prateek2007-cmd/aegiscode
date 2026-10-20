@@ -70,7 +70,14 @@ internal sealed class ForgejoCodeReviewQueryService(
             payload.Title ?? $"Pull Request #{review.Number}",
             payload.HtmlUrl,
             payload.Head?.Ref,
-            payload.Base?.Ref);
+            payload.Base?.Ref,
+            Creator: payload.User is { Id: > 0 } author
+                ? new PullRequestAuthor(
+                    review.Repository.Host,
+                    author.Id.ToString(CultureInfo.InvariantCulture),
+                    author.Login,
+                    author.FullName)
+                : null);
     }
 
     public async Task<ReviewRevision?> GetLatestRevisionAsync(

@@ -5,6 +5,9 @@ using System.Globalization;
 using MeisterDev.Ai.Providers.Usage;
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
+using MeisterDev.ProPR.Application.Interfaces;
+using MeisterDev.ProPR.Extensibility.Execution;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
@@ -96,7 +99,13 @@ public sealed class RunnerAiRelayTests
                 new ReviewScopeSpend(alreadySpent, false), ReviewScopeSpend.None));
     }
 
-    private RunnerAiRelay CreateRelay(bool authorized = true, BudgetScope? budget = null, decimal? costPerCall = 1m)
+    private RunnerAiRelay CreateRelay(
+        bool authorized = true,
+        BudgetScope? budget = null,
+        decimal? costPerCall = 1m,
+        IExecutionScopeAccessor? executionScopes = null,
+        IExecutionAdmission? executionAdmission = null,
+        IClientRegistry? clients = null)
     {
         this._authorizer.AuthorizeAsync(Arg.Any<RunnerCallContext>(), Arg.Any<CancellationToken>())
             .Returns(
@@ -126,7 +135,34 @@ public sealed class RunnerAiRelayTests
             this._models,
             this._usage,
             this._replays,
-            this._reasoningCapture);
+            this._reasoningCapture,
+            executionScopes,
+            executionAdmission,
+            clients);
+    }
+
+    // The relayed call runs under the execution scope of the review it belongs to, so the usage it reports names
+    // the review and a stop the execution authority answers with reaches the review.
+    [Fact]
+    public async Task ARelayedCall_RunsUnderTheExecutionScopeOfItsReview()
+    {
+        var scopes = new ExecutionScopeAccessor();
+        var admission = Substitute.For<IExecutionAdmission>();
+        admission.IsActive.Returns(true);
+        var clients = Substitute.For<IClientRegistry>();
+        clients.GetTenantIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(Guid.NewGuid());
+        var relay = this.CreateRelay(budget: Budget(null, 0m), executionScopes: scopes, executionAdmission: admission, clients: clients);
+        ExecutionIdentity? seen = null;
+        this._client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                seen = scopes.Current?.Identity;
+                return new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")) { Usage = new UsageDetails() };
+            });
+
+        await relay.CompleteAsync(Call, Request());
+
+        Assert.Equal(new ExecutionIdentity(ExecutionKind.Review, JobId, 1), seen);
     }
 
     [Fact]

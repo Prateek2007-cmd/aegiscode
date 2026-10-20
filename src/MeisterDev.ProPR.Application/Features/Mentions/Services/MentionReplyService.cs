@@ -4,12 +4,14 @@
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.Interfaces;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Extensibility.Execution;
 using Microsoft.Extensions.Logging;
 
 namespace MeisterDev.ProPR.Application.Services;
@@ -42,7 +44,10 @@ public sealed partial class MentionReplyService(
     IBudgetCapsProvider? budgetCapsProvider = null,
     IReviewSpendAccumulator? spendAccumulator = null,
     IBudgetScopeAccessor? budgetScopeAccessor = null,
-    IBudgetEventPublisher? budgetEventPublisher = null) : IMentionReplyService
+    IBudgetEventPublisher? budgetEventPublisher = null,
+    IExecutionAdmission? executionAdmission = null,
+    IExecutionScopeAccessor? executionScopeAccessor = null,
+    IClientRegistry? clientRegistry = null) : IMentionReplyService
 {
     /// <summary>
     ///     What a developer is told when their question was not answered because the client's budget is used
@@ -73,6 +78,7 @@ public sealed partial class MentionReplyService(
         // records a reached hard cap on the scope before it throws, and that lets a budget cut still be
         // recognized as one when an intervening layer wraps the exception.
         BudgetScope? budgetScope = null;
+        ExecutionScope? executionScope = null;
 
         try
         {
@@ -103,11 +109,33 @@ public sealed partial class MentionReplyService(
                 await this.AnnounceSoftCapAsync(job, softCapBreach, cancellationToken);
             }
 
+            // A reply cannot wait for a later cycle: the question was asked now, and an answer posted much later
+            // replies to a conversation that has moved on. A hold therefore ends the reply as a refusal does.
+            if (executionAdmission is { IsActive: true })
+            {
+                var admission = await executionAdmission.AdmitMentionReplyAsync(job, cancellationToken);
+                if (admission.Outcome != AdmissionOutcome.Allow)
+                {
+                    LogReplyNotAdmitted(logger, job.Id, admission.Outcome, admission.Reason ?? string.Empty);
+                    await jobRepository.SetFailedAsync(job.Id, admission.Message!, cancellationToken);
+                    return;
+                }
+            }
+
             using var budgetScopeHandle = budgetScope is null
                 ? null
                 : budgetScopeAccessor!.BeginScope(budgetScope);
 
+            executionScope = await this.TryCreateExecutionScopeAsync(job, cancellationToken);
+            using var executionScopeHandle = executionScope is null
+                ? null
+                : executionScopeAccessor!.BeginScope(executionScope);
+
             await this.AnswerAsync(job, iterationId, cancellationToken);
+        }
+        catch (ExecutionStoppedException ex)
+        {
+            await this.HandleExecutionStopAsync(job, ex.StopMessage, cancellationToken);
         }
         catch (BudgetHardCapReachedException ex)
         {
@@ -127,6 +155,12 @@ public sealed partial class MentionReplyService(
                 return;
             }
 
+            if (executionScope?.StopMessage is { } stopMessage)
+            {
+                await this.HandleExecutionStopAsync(job, stopMessage, cancellationToken);
+                return;
+            }
+
             LogJobFailed(logger, job.Id, ex);
 
             await jobRepository.SetFailedAsync(
@@ -134,6 +168,30 @@ public sealed partial class MentionReplyService(
                 ex.Message,
                 cancellationToken);
         }
+    }
+
+    /// <summary>
+    ///     Opens the scope the AI calls of this reply report their usage under. Only an installation with a
+    ///     registered execution authority has one.
+    /// </summary>
+    private async Task<ExecutionScope?> TryCreateExecutionScopeAsync(MentionReplyJob job, CancellationToken ct)
+    {
+        if (executionScopeAccessor is null || clientRegistry is null || executionAdmission is not { IsActive: true })
+        {
+            return null;
+        }
+
+        var tenantId = await clientRegistry.GetTenantIdAsync(job.ClientId, ct);
+        return tenantId is { } tenant
+            ? new ExecutionScope(new ExecutionIdentity(ExecutionKind.MentionReply, job.Id, 1), tenant, job.ClientId)
+            : null;
+    }
+
+    /// <summary>Records a stop of the execution authority as the reason the reply failed.</summary>
+    private async Task HandleExecutionStopAsync(MentionReplyJob job, string stopMessage, CancellationToken ct)
+    {
+        LogReplyStoppedByAuthority(logger, job.Id, stopMessage);
+        await jobRepository.SetFailedAsync(job.Id, $"The execution authority stopped this reply: {stopMessage}", ct);
     }
 
     /// <summary>
@@ -200,6 +258,11 @@ public sealed partial class MentionReplyService(
         // pull request. A publication failure that also lost the spend would leave a client billed for
         // nothing anybody can see.
         await this.RecordSpendAsync(job, answer, cancellationToken);
+
+        // A stop the execution authority answered to the usage of this answer's AI call ends the reply here. No
+        // later AI call would notice it, and posting is the step the stop exists to prevent; the spend of the
+        // call is already recorded above.
+        executionScopeAccessor?.Current?.ThrowIfStopped();
 
         // The question text is passed with the answer. Adapters that reply inside the thread ignore it;
         // those that post a new comment on the pull request open it with a blockquote of the question.

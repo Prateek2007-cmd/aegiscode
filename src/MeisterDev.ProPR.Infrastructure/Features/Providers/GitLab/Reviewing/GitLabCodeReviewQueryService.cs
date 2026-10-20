@@ -70,7 +70,15 @@ internal sealed class GitLabCodeReviewQueryService(
             payload.Title ?? $"Merge Request !{review.Number}",
             payload.WebUrl,
             payload.SourceBranch,
-            payload.TargetBranch);
+            payload.TargetBranch,
+            Creator: payload.Author is { Id: > 0 } author
+                ? new PullRequestAuthor(
+                    review.Repository.Host,
+                    author.Id.ToString(CultureInfo.InvariantCulture),
+                    author.Username,
+                    author.Name,
+                    author.Bot)
+                : null);
     }
 
     public async Task<ReviewRevision?> GetLatestRevisionAsync(

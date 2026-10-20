@@ -4209,6 +4209,12 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("client_id");
 
+                    b.Property<long>("ConfigurationRevision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L)
+                        .HasColumnName("configuration_revision");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -4571,6 +4577,100 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.ToTable("ai_purpose_bindings", (string)null);
                 });
 
+            modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.AiUsageReportRecord", b =>
+                {
+                    b.Property<long>("Sequence")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("sequence");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Sequence"));
+
+                    b.Property<long>("CacheWriteTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("cache_write_tokens");
+
+                    b.Property<long>("CachedInputTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("cached_input_tokens");
+
+                    b.Property<Guid?>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTimeOffset>("CompletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at");
+
+                    b.Property<Guid>("ConnectionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("connection_id");
+
+                    b.Property<long>("ConnectionRevision")
+                        .HasColumnType("bigint")
+                        .HasColumnName("connection_revision");
+
+                    b.Property<long>("DurationMilliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<int?>("ExecutionAttempt")
+                        .HasColumnType("integer")
+                        .HasColumnName("execution_attempt");
+
+                    b.Property<Guid?>("ExecutionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("execution_id");
+
+                    b.Property<int?>("ExecutionKind")
+                        .HasColumnType("integer")
+                        .HasColumnName("execution_kind");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("input_tokens");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("model_id");
+
+                    b.Property<int>("Operation")
+                        .HasColumnType("integer")
+                        .HasColumnName("operation");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("output_tokens");
+
+                    b.Property<string>("ProviderKind")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("provider_kind");
+
+                    b.Property<long>("ReasoningTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("reasoning_tokens");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<Guid?>("TenantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("tenant_id");
+
+                    b.Property<bool>("UsageIncomplete")
+                        .HasColumnType("boolean")
+                        .HasColumnName("usage_incomplete");
+
+                    b.HasKey("Sequence");
+
+                    b.ToTable("ai_usage_reports", (string)null);
+                });
+
             modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.AiVerificationSnapshotRecord", b =>
                 {
                     b.Property<Guid>("ConnectionProfileId")
@@ -4807,6 +4907,12 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("admission_max_reviews_per_pull_request_per_hour");
 
+                    b.Property<long>("AiRoutingRevision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("ai_routing_revision");
+
                     b.Property<string>("AutoResolveSeverities")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -4944,6 +5050,12 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(false)
                         .HasColumnName("withhold_out_of_scope_findings");
+
+                    b.Property<bool>("WorkspaceAiSelectionInitialized")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("workspace_ai_selection_initialized");
 
                     b.HasKey("Id");
 

@@ -197,6 +197,30 @@ public sealed class AiConnectionRepositoryTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task UpdateAsync_AdvancesTheConfigurationRevisionOnlyWhenTheEndpointChanges(bool changeEndpoint)
+    {
+        await using var db = CreateContext();
+        var clientId = Guid.NewGuid();
+        var profile = MakeProfile(clientId, true, true);
+        profile.AuthMode = "ApiKey";
+        db.Add(profile);
+        await db.SaveChangesAsync();
+        var repository = CreateRepository(db);
+        var original = (await repository.GetByIdAsync(profile.Id))!;
+        var request = new AiConnectionWriteRequestDto(
+            "Renamed", original.ProviderKind, changeEndpoint ? original.BaseUrl.TrimEnd('/') + "/other" : original.BaseUrl,
+            original.AuthMode, original.DiscoveryMode, original.ConfiguredModels, original.PurposeBindings);
+
+        Assert.True(await repository.UpdateAsync(profile.Id, request));
+
+        var stored = (await repository.GetByIdAsync(profile.Id))!;
+        Assert.Equal("Renamed", stored.DisplayName);
+        Assert.Equal(changeEndpoint ? original.ConfigurationRevision + 1 : original.ConfigurationRevision, stored.ConfigurationRevision);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task VerifyUpdateAsync_PromotesOnlySuccessfulVerification(bool successful)
     {
         await using var db = CreateContext();
@@ -287,6 +311,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var first = MakeProfile(clientId, true, true, "First");
         var second = MakeProfile(
             scenario == "foreign" ? Guid.NewGuid() : clientId,
@@ -355,6 +380,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var first = MakeProfile(clientId, true, true, "First");
         var second = MakeProfile(clientId, false, true, "Second");
         first.AuthMode = second.AuthMode = "ApiKey";
@@ -396,6 +422,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var selected = MakeProfile(clientId, false, true, "Selected");
         var unrelated = MakeProfile(clientId, active, true, "Unrelated", AiPurpose.ProRVPrefilter);
         selected.AuthMode = unrelated.AuthMode = "ApiKey";
@@ -427,6 +454,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var profile = MakeProfile(clientId, true, true);
         profile.ProviderKind = AzureKey;
         profile.AuthMode = AzureApiKey;
@@ -474,6 +502,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var managed = MakeProfile(clientId, true, true, "A Managed");
         var selected = MakeProfile(clientId, false, true, "B BYOK");
         selected.AuthMode = "ApiKey";
@@ -559,6 +588,7 @@ public sealed class AiConnectionRepositoryTests
     {
         await using var db = CreateContext();
         var clientId = Guid.NewGuid();
+        db.Clients.Add(new ClientRecord { Id = clientId, TenantId = Guid.NewGuid(), DisplayName = "Owner" });
         var profile = MakeProfile(clientId, true, true);
         profile.AuthMode = "ApiKey";
         var chat = profile.ConfiguredModels.Single(m => m.OperationKinds.Contains("Chat"));

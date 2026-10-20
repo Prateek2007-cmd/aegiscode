@@ -427,6 +427,12 @@ public sealed class LogicalModelCatalogRepository(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(logicalModelName);
 
+        await using var routing = await ClientAiRoutingMutation.BeginAsync(db, clientId, ct);
+        if (routing.Client is null)
+        {
+            throw new InvalidOperationException("The client no longer exists.");
+        }
+
         var existing = await db.ClientPurposeLogicalModels
             .FirstOrDefaultAsync(x => x.ClientId == clientId && x.Purpose == purpose, ct);
         if (existing is null)
@@ -446,14 +452,22 @@ public sealed class LogicalModelCatalogRepository(
         }
 
         await db.SaveChangesAsync(ct);
+        await routing.CommitAsync(ct);
     }
 
     /// <inheritdoc />
     public async Task<bool> RemovePurposeRoleAsync(Guid clientId, AiPurpose purpose, CancellationToken ct)
     {
+        await using var routing = await ClientAiRoutingMutation.BeginAsync(db, clientId, ct);
+        if (routing.Client is null)
+        {
+            return false;
+        }
+
         var deleted = await db.ClientPurposeLogicalModels
             .Where(x => x.ClientId == clientId && x.Purpose == purpose)
             .ExecuteDeleteAsync(ct);
+        await routing.CommitAsync(ct);
         return deleted > 0;
     }
 

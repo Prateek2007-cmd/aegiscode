@@ -2,7 +2,6 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Infrastructure.Data;
-using MeisterDev.ProPR.Infrastructure.Data.Models;
 using MeisterDev.ProPR.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -26,10 +25,14 @@ public sealed class HistoricalProviderEvidenceMigrationTests(PostgresContainerFi
             await fixture.CreateDatabaseAtMigrationAsync(database, "RetainWithheldReviewFindings");
             await using (var before = Context(scratch))
             {
-                before.AddRange(
-                    new TenantRecord { Id = tenant, Slug = tenant.ToString("N"), DisplayName = "Migration", CreatedAt = DateTimeOffset.UtcNow },
-                    new ClientRecord { Id = client, TenantId = tenant, DisplayName = "Migration", CreatedAt = DateTimeOffset.UtcNow });
-                await before.SaveChangesAsync();
+                var now = DateTimeOffset.UtcNow;
+                await before.Database.ExecuteSqlInterpolatedAsync(
+                    $"""
+                     INSERT INTO tenants (id, slug, display_name, is_active, created_at, updated_at)
+                     VALUES ({tenant}, {tenant.ToString("N")}, 'Migration', true, {now}, {now});
+                     INSERT INTO clients (id, tenant_id, display_name, is_active, created_at)
+                     VALUES ({client}, {tenant}, 'Migration', true, {now})
+                     """);
                 await before.Database.ExecuteSqlInterpolatedAsync(
                     $"""
                      INSERT INTO code_insight_pull_requests

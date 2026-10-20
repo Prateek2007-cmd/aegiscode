@@ -71,6 +71,10 @@ Automatic judge effort requires both model and transport support. The provider c
 model effort facts; the driver port confirms the selected transport. Resolved runtimes and optional
 runner bindings carry that capability. Unknown or incompatible bindings use provider defaults.
 
+Client model selection saves verified purpose bindings in one transaction. Explicit logical-purpose
+mappings take precedence. A conflicting selection returns 409 and preserves the saved bindings.
+See [client model selection](ai/credentials.md#client-model-selection).
+
 The local ProCursor SCM broker validates client existence before delegating credential and SDK work
 through the existing bounded broker port. Azure DevOps owns the native backend. Review-context tools
 consume neutral prepared symbol coordinates; absent coordinates remain unavailable and do not enable

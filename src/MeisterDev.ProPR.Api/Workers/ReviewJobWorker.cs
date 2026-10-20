@@ -9,6 +9,8 @@ using System.Diagnostics;
 using MeisterDev.ProPR.Api.Telemetry;
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
+using MeisterDev.ProPR.Extensibility.Execution;
 using MeisterDev.ProPR.Application.Features.Licensing.Models;
 using MeisterDev.ProPR.Application.Features.Licensing.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
@@ -194,6 +196,7 @@ public sealed partial class ReviewJobWorker(
         var spendAccumulator = tickScope.ServiceProvider.GetService<IReviewSpendAccumulator>();
         var budgetEventPublisher = tickScope.ServiceProvider.GetService<IBudgetEventPublisher>();
         var clientRegistry = tickScope.ServiceProvider.GetService<IClientRegistry>();
+        var executionAdmission = tickScope.ServiceProvider.GetService<IExecutionAdmission>();
 
         // Whether a client's pass list forces in-process execution, read once per client per tick: the
         // same client tends to fill a window with many jobs.
@@ -290,6 +293,31 @@ public sealed partial class ReviewJobWorker(
                                 stoppingToken);
                         }
 
+                        continue;
+                    }
+                }
+
+                // Asked after the native limits, so a review a budget or the burst bound already holds does not
+                // reach the execution authority. Without a registered authority this asks nothing.
+                if (executionAdmission is { IsActive: true })
+                {
+                    try
+                    {
+                        var admission = await executionAdmission.AdmitQueuedReviewAsync(
+                            job,
+                            jobRepository,
+                            () => tickScope.ServiceProvider.GetService<IReviewAdmissionNotice>(),
+                            stoppingToken);
+                        if (admission.Outcome != AdmissionOutcome.Allow)
+                        {
+                            LogExecutionAuthorityDecision(logger, job.Id, job.PullRequestId, admission.Outcome, admission.Reason ?? string.Empty);
+                            continue;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // The same outcome as an undecided burst hold: the job stays queued for a later tick.
+                        LogAdmissionUndecided(logger, job.Id, job.PullRequestId, ex);
                         continue;
                     }
                 }
@@ -571,6 +599,16 @@ public sealed partial class ReviewJobWorker(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "ReviewJobWorker started")]
     private static partial void LogWorkerStarted(ILogger logger);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "The execution authority answered {Outcome} ({Reason}) for review job {JobId} on pull request {PullRequestId}")]
+    private static partial void LogExecutionAuthorityDecision(
+        ILogger logger,
+        Guid jobId,
+        int pullRequestId,
+        AdmissionOutcome outcome,
+        string reason);
 
     [LoggerMessage(
         Level = LogLevel.Information,

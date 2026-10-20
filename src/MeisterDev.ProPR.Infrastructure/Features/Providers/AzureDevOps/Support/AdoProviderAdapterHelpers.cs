@@ -242,7 +242,14 @@ internal static class AdoProviderAdapterHelpers
                 : $"{organizationUrl.TrimEnd('/')}/{Uri.EscapeDataString(ResolveProjectId(repository))}/_git/{Uri.EscapeDataString(repository.ExternalRepositoryId)}/pullrequest/{pullRequest.PullRequestId}",
             StripRefsHeads(pullRequest.SourceRefName),
             StripRefsHeads(pullRequest.TargetRefName),
-            ReviewOverviewPresentation.AuthorName(pullRequest.CreatedBy?.DisplayName, pullRequest.CreatedBy?.UniqueName));
+            ReviewOverviewPresentation.AuthorName(pullRequest.CreatedBy?.DisplayName, pullRequest.CreatedBy?.UniqueName),
+            Creator: !string.IsNullOrWhiteSpace(pullRequest.CreatedBy?.Id)
+                ? new PullRequestAuthor(
+                    repository.Host,
+                    pullRequest.CreatedBy.Id,
+                    pullRequest.CreatedBy.UniqueName,
+                    pullRequest.CreatedBy.DisplayName)
+                : null);
     }
 
     public static ReviewerIdentity? SelectRequestedReviewer(ProviderHostRef host, GitPullRequest pullRequest)

@@ -4,6 +4,9 @@
 
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
+using MeisterDev.ProPR.Application.Features.Admission;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
+using MeisterDev.ProPR.Extensibility.Execution;
 using MeisterDev.ProPR.Application.Features.Licensing.Models;
 using MeisterDev.ProPR.Application.Features.Licensing.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
@@ -49,7 +52,9 @@ public sealed partial class RunnerLeaseOfferService(
     ILicenseLimitResolver? limits = null,
     IReviewJobExecutionStore? executionStore = null,
     IClientRegistry? clients = null,
-    ILicensingCapabilityService? licensing = null) : IRunnerLeaseOfferService
+    ILicensingCapabilityService? licensing = null,
+    IExecutionAdmission? executionAdmission = null,
+    IServiceProvider? services = null) : IRunnerLeaseOfferService
 {
     /// <inheritdoc />
     public async Task<RunnerLeaseOffer> OfferAsync(RunnerLeaseRequest request, CancellationToken ct = default)
@@ -143,6 +148,37 @@ public sealed partial class RunnerLeaseOfferService(
             {
                 LogSkippedPublishingPrWide(logger, job.Id, job.ClientId);
                 continue;
+            }
+
+            // The point the in-process worker asks at too, before the claim, so a held review costs neither a
+            // generation nor a repository preparation.
+            if (executionAdmission is { IsActive: true })
+            {
+                if (executionStore is null)
+                {
+                    // The decision cannot be recorded without the job store, and a job offered unasked would run
+                    // although the authority might hold or refuse it.
+                    LogExecutionAdmissionWithoutStore(logger, job.Id);
+                    continue;
+                }
+
+                try
+                {
+                    var admission = await executionAdmission
+                        .AdmitQueuedReviewAsync(job, executionStore, () => services?.GetService(typeof(IReviewAdmissionNotice)) as IReviewAdmissionNotice, ct)
+                        .ConfigureAwait(false);
+                    if (admission.Outcome != AdmissionOutcome.Allow)
+                    {
+                        LogExecutionAuthorityDecision(logger, job.Id, admission.Outcome.ToString(), admission.Reason ?? string.Empty);
+                        continue;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Left queued for a later offer, as an undecided admission is on the in-process worker.
+                    LogExecutionAdmissionUndecided(logger, job.Id, ex);
+                    continue;
+                }
             }
 
             ReviewJobLease? lease;
@@ -299,6 +335,24 @@ public sealed partial class RunnerLeaseOfferService(
         cache[clientId] = hasPublishingPrWide;
         return hasPublishingPrWide;
     }
+
+    [LoggerMessage(
+        EventId = 5407,
+        Level = LogLevel.Information,
+        Message = "The execution authority answered {Outcome} ({Reason}) for review job {JobId}; it is not offered")]
+    private static partial void LogExecutionAuthorityDecision(ILogger logger, Guid jobId, string outcome, string reason);
+
+    [LoggerMessage(
+        EventId = 5408,
+        Level = LogLevel.Warning,
+        Message = "The execution authority could not be asked about review job {JobId}; it stays queued")]
+    private static partial void LogExecutionAdmissionUndecided(ILogger logger, Guid jobId, Exception exception);
+
+    [LoggerMessage(
+        EventId = 5409,
+        Level = LogLevel.Error,
+        Message = "Review job {JobId} is not offered: an execution authority is registered, but no review job store is, so its decision cannot be recorded")]
+    private static partial void LogExecutionAdmissionWithoutStore(ILogger logger, Guid jobId);
 
     [LoggerMessage(EventId = 5401, Level = LogLevel.Information, Message = "Leased review job {JobId} to runner {RunnerId} at generation {Generation}")]
     private static partial void LogLeaseGranted(ILogger logger, Guid jobId, Guid runnerId, int generation);

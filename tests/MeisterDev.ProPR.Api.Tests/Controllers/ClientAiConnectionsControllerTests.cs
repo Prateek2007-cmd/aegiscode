@@ -17,6 +17,7 @@ using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 
 namespace MeisterDev.ProPR.Api.Tests.Controllers;
 
@@ -282,11 +283,18 @@ public sealed class ClientAiConnectionsControllerTests(ClientsControllerTests.Cl
     [Fact]
     public async Task SelectPurposes_AppliesAllSlotsAcrossConnections()
     {
-        var first = await this.SeedConnectionAsync("Default selection", verify: true);
-        var second = await this.SeedConnectionAsync("High selection", verify: true);
+        var clientId = factory.ClientId;
+        using (var ownershipScope = factory.Services.CreateScope())
+        {
+            var registry = ownershipScope.ServiceProvider.GetRequiredService<MeisterDev.ProPR.Application.Interfaces.IClientRegistry>();
+            registry.GetTenantIdAsync(clientId, Arg.Any<CancellationToken>()).Returns((Guid?)factory.TenantId);
+        }
+
+        var first = await this.SeedConnectionAsync("Default selection", verify: true, clientId: clientId);
+        var second = await this.SeedConnectionAsync("High selection", verify: true, clientId: clientId);
         var client = this.CreateAuthorizedClient();
         var response = await client.PostAsJsonAsync(
-            $"/clients/{ClientId}/ai-connections/select-purposes", new
+            $"/clients/{clientId}/ai-connections/select-purposes", new
             {
                 @default = new { connectionId = first.Id, configuredModelId = first.ConfiguredModels.Single(m => m.SupportsChat).Id },
                 high = new { connectionId = second.Id, configuredModelId = second.ConfiguredModels.Single(m => m.SupportsChat).Id },
@@ -301,7 +309,7 @@ public sealed class ClientAiConnectionsControllerTests(ClientsControllerTests.Cl
                      AiPurpose.MemoryReconsideration, AiPurpose.EmbeddingDefault
                  })
         {
-            var resolved = (await repository.GetActiveBindingForPurposeAsync(ClientId, purpose))!;
+            var resolved = (await repository.GetActiveBindingForPurposeAsync(clientId, purpose))!;
             Assert.Equal(first.Id, resolved.Connection.Id);
             Assert.Equal(purpose, resolved.Binding.Purpose);
             Assert.Equal(
@@ -309,7 +317,7 @@ public sealed class ClientAiConnectionsControllerTests(ClientsControllerTests.Cl
                 resolved.Binding.ConfiguredModelId);
         }
 
-        var high = (await repository.GetActiveBindingForPurposeAsync(ClientId, AiPurpose.ReviewHighEffort))!;
+        var high = (await repository.GetActiveBindingForPurposeAsync(clientId, AiPurpose.ReviewHighEffort))!;
         Assert.Equal(second.Id, high.Connection.Id);
         Assert.Equal(AiPurpose.ReviewHighEffort, high.Binding.Purpose);
         Assert.Equal(second.ConfiguredModels.Single(m => m.SupportsChat).Id, high.Binding.ConfiguredModelId);
@@ -898,11 +906,13 @@ public sealed class ClientAiConnectionsControllerTests(ClientsControllerTests.Cl
         string displayName,
         IReadOnlyList<string>? chatModels = null,
         bool verify = false,
-        bool includeEffortOverrides = true)
+        bool includeEffortOverrides = true,
+        Guid? clientId = null)
     {
+        var ownerId = clientId ?? ClientId;
         var client = this.CreateAuthorizedClient();
         var response = await client.PostAsJsonAsync(
-            $"/clients/{ClientId}/ai-connections",
+            $"/clients/{ownerId}/ai-connections",
             BuildCreatePayload(displayName, chatModels, includeEffortOverrides: includeEffortOverrides));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -911,7 +921,7 @@ public sealed class ClientAiConnectionsControllerTests(ClientsControllerTests.Cl
 
         if (verify)
         {
-            var verifyResponse = await client.PostAsync($"/clients/{ClientId}/ai-connections/{created.Id}/verify", null);
+            var verifyResponse = await client.PostAsync($"/clients/{ownerId}/ai-connections/{created.Id}/verify", null);
             Assert.Equal(HttpStatusCode.OK, verifyResponse.StatusCode);
         }
 

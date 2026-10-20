@@ -661,6 +661,17 @@ public sealed class InMemoryReviewJobRepository(IEnumerable<IReviewSourcePolicy>
 
     public Task SetStoppedAsync(Guid id, CancellationToken ct = default)
     {
+        return this.StopAsync(id, null);
+    }
+
+    public Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return this.StopAsync(id, reason);
+    }
+
+    private Task StopAsync(Guid id, string? reason)
+    {
         lock (this._statusLock)
         {
             if (this._jobs.TryGetValue(id, out var job) &&
@@ -669,6 +680,10 @@ public sealed class InMemoryReviewJobRepository(IEnumerable<IReviewSourcePolicy>
             {
                 job.Status = JobStatus.Stopped;
                 job.CompletedAt = DateTimeOffset.UtcNow;
+                if (reason is not null)
+                {
+                    job.ErrorMessage = reason;
+                }
             }
         }
 
@@ -743,6 +758,22 @@ public sealed class InMemoryReviewJobRepository(IEnumerable<IReviewSourcePolicy>
             }
 
             job.SetAdmissionRefusal(reason, policyFingerprint);
+            job.Status = JobStatus.AdmissionRefused;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            return Task.FromResult(true);
+        }
+    }
+
+    public Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        lock (this._statusLock)
+        {
+            if (!this._jobs.TryGetValue(id, out var job) || job.Status != JobStatus.Pending)
+            {
+                return Task.FromResult(false);
+            }
+
+            job.SetAdmissionRefusal(reason, null);
             job.Status = JobStatus.AdmissionRefused;
             job.CompletedAt = DateTimeOffset.UtcNow;
             return Task.FromResult(true);

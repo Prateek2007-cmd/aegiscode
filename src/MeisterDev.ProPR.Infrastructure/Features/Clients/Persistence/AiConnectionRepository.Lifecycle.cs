@@ -176,11 +176,18 @@ public sealed partial class AiConnectionRepository
         await using var transaction = dbContext.Database.IsRelational()
             ? await dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
-        var profiles = await dbContext.AiConnectionProfiles.AsNoTracking()
-            .Include(p => p.ConfiguredModels).Include(p => p.PurposeBindings).Include(p => p.VerificationSnapshot)
-            .Where(p => p.ClientId == clientId && p.TenantId == null).ToListAsync(ct);
+        var profiles = new List<AiConnectionProfileRecord>();
         try
         {
+            await using var routing = await ClientAiRoutingMutation.BeginAsync(dbContext, clientId, ct);
+            if (routing.Client is null)
+            {
+                return new(false, "The client no longer exists.");
+            }
+
+            profiles = await dbContext.AiConnectionProfiles.AsNoTracking()
+                .Include(p => p.ConfiguredModels).Include(p => p.PurposeBindings).Include(p => p.VerificationSnapshot)
+                .Where(p => p.ClientId == clientId && p.TenantId == null).ToListAsync(ct);
             var policy = await providerPolicies.GetForClientAsync(clientId, ct);
             var selections = DefaultWorkspacePurposes.ToDictionary(p => p, _ => selection.Default);
             selections[AiPurpose.ReviewHighEffort] = selection.High;
@@ -319,6 +326,7 @@ public sealed partial class AiConnectionRepository
                 profile.UpdatedAt = now;
             }
 
+            await routing.InitializeWorkspaceSelectionAsync(ct);
             await dbContext.SaveChangesAsync(ct);
             if (transaction is not null)
             {

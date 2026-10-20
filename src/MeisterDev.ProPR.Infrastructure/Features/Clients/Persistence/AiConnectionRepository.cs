@@ -281,6 +281,7 @@ public sealed partial class AiConnectionRepository(
             await this.GuardLogicalModelReferencesAsync([], removedModelIds, ct);
         }
 
+        var configurationBefore = ConfigurationOf(record);
         record.DisplayName = request.DisplayName;
 
         // A connection that is changing family keeps none of the vocabulary it held: the authentication mode is
@@ -301,6 +302,13 @@ public sealed partial class AiConnectionRepository(
             request,
             this.DeclaringKey(request.ProviderKind));
         record.UpdatedAt = now;
+
+        // A rename or a model change leaves the revision alone: a registered execution authority uses it to tell
+        // which provider, endpoint and credential a call used, and those did not change.
+        if (ConfigurationOf(record) != configurationBefore)
+        {
+            record.ConfigurationRevision = checked(record.ConfigurationRevision + 1);
+        }
 
         record.ConfiguredModels.Clear();
         foreach (var model in updatedModels)
@@ -1406,6 +1414,7 @@ public sealed partial class AiConnectionRepository(
             record.TenantId)
         {
             ConfigurationStamp = SnapshotStamp(record),
+            ConfigurationRevision = record.ConfigurationRevision,
             CreationRequestId = record.CreationRequestId,
             Availability = this.DescribeAvailability(identity, policy, record.BaseUrl, unresolvedValues),
             ProviderSettings = EffectiveDeclaredValues(record.ProviderSettings, this.StoredDeclaredFields(providerKind)),
@@ -1923,5 +1932,26 @@ public sealed partial class AiConnectionRepository(
                 null,
                 apiKey),
             ct);
+    }
+
+    /// <summary>
+    ///     The part of a profile that decides where its calls go and on whose credential, written as one comparable
+    ///     value. The configuration revision advances when it changes.
+    /// </summary>
+    private static string ConfigurationOf(AiConnectionProfileRecord record)
+    {
+        static string Map(IReadOnlyDictionary<string, string>? values) => values is null
+            ? string.Empty
+            : string.Join('\u001f', values.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Key + "=" + pair.Value));
+
+        return string.Join(
+            '\u001e',
+            record.ProviderKind,
+            record.AuthMode,
+            record.BaseUrl,
+            record.ProtectedSecret ?? string.Empty,
+            Map(record.DefaultHeaders),
+            Map(record.DefaultQueryParams),
+            Map(record.ProviderSettings));
     }
 }

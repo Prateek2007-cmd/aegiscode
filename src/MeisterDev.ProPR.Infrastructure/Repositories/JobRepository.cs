@@ -88,6 +88,9 @@ public sealed partial class JobRepository(
     private static readonly JobStatus[] ActiveJobStatuses =
         [JobStatus.Pending, JobStatus.Processing, JobStatus.BudgetHeld, JobStatus.BudgetExceeded, JobStatus.AdmissionHeld];
 
+    // The status of a job no worker or runner has claimed yet.
+    private static readonly JobStatus[] QueuedJobStatuses = [JobStatus.Pending];
+
     // The columns each conditional statement below decides. A tracked copy takes these from the row the
     // statement wrote even when its caller has edited them, because an edit left in place is saved back
     // afterwards and undoes the transition.
@@ -1239,7 +1242,19 @@ public sealed partial class JobRepository(
     }
 
     /// <inheritdoc />
-    public async Task SetStoppedAsync(Guid id, CancellationToken ct = default)
+    public Task SetStoppedAsync(Guid id, CancellationToken ct = default)
+    {
+        return this.StopAsync(id, null, ct);
+    }
+
+    /// <inheritdoc />
+    public Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return this.StopAsync(id, reason, ct);
+    }
+
+    private async Task StopAsync(Guid id, string? reason, CancellationToken ct)
     {
         var job = await dbContext.ReviewJobs.FindAsync([id], ct);
         if (job is null || job.Status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled or JobStatus.Superseded or JobStatus.Stopped
@@ -1250,6 +1265,11 @@ public sealed partial class JobRepository(
 
         job.Status = JobStatus.Stopped;
         job.CompletedAt = DateTimeOffset.UtcNow;
+        if (reason is not null)
+        {
+            job.ErrorMessage = reason;
+        }
+
         await dbContext.SaveChangesAsync(ct).ConfigureAwait(false);
         await this.ClearLeaseAsync(job, ct).ConfigureAwait(false);
         await this.CloseOpenProtocolsAsync(id).ConfigureAwait(false);
@@ -1348,14 +1368,30 @@ public sealed partial class JobRepository(
     }
 
     /// <inheritdoc />
-    public async Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default)
+    public Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default)
+    {
+        return this.RefuseAdmissionAsync(id, reason, policyFingerprint, ActiveJobStatuses, ct);
+    }
+
+    /// <inheritdoc />
+    public Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        return this.RefuseAdmissionAsync(id, reason, null, QueuedJobStatuses, ct);
+    }
+
+    private async Task<bool> RefuseAdmissionAsync(
+        Guid id,
+        string reason,
+        string? policyFingerprint,
+        JobStatus[] refusableStatuses,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (!dbContext.Database.IsRelational())
         {
             var tracked = await dbContext.ReviewJobs.FindAsync([id], ct);
-            if (tracked is null || !ActiveJobStatuses.Contains(tracked.Status))
+            if (tracked is null || !refusableStatuses.Contains(tracked.Status))
             {
                 return false;
             }
@@ -1376,7 +1412,7 @@ public sealed partial class JobRepository(
         // that: exactly one caller sees a row change, so a re-dispatch of the same revision posts no second
         // notice.
         var affected = await dbContext.ReviewJobs
-            .Where(j => j.Id == id && ActiveJobStatuses.Contains(j.Status))
+            .Where(j => j.Id == id && refusableStatuses.Contains(j.Status))
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(j => j.Status, JobStatus.AdmissionRefused)

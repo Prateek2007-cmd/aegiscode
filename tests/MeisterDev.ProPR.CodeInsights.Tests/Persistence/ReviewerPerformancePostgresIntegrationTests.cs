@@ -594,10 +594,13 @@ public sealed class ReviewerPerformancePostgresIntegrationTests(PostgresContaine
             var client = Guid.NewGuid();
             var pr = Guid.NewGuid();
             var job = Guid.NewGuid();
-            db.AddRange(
-                new TenantRecord { Id = tenant, Slug = tenant.ToString("N"), DisplayName = "Exposure upgrade", IsActive = true, CreatedAt = now },
-                new ClientRecord { Id = client, TenantId = tenant, DisplayName = "Exposure upgrade", IsActive = true, CreatedAt = now });
-            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                 INSERT INTO tenants (id, slug, display_name, is_active, created_at, updated_at)
+                 VALUES ({tenant}, {tenant.ToString("N")}, 'Exposure upgrade', true, {now}, {now});
+                 INSERT INTO clients (id, tenant_id, display_name, is_active, created_at)
+                 VALUES ({client}, {tenant}, 'Exposure upgrade', true, {now})
+                 """);
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                  INSERT INTO code_insight_pull_requests

@@ -4,6 +4,7 @@
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Services;
@@ -229,6 +230,56 @@ public sealed class MentionReplyServiceTests
                 Arg.Any<CancellationToken>(),
                 Arg.Any<string?>());
         await this._jobRepository.Received(1).SetCompletedAsync(job.Id, Arg.Any<string?>(), Arg.Any<CancellationToken>());
+    }
+
+    // A stop the execution authority answers to the usage of the reply's only AI call ends the reply before it is
+    // posted. No later AI call would notice the stop, and the spend of the call is recorded, because the provider
+    // was paid for it.
+    [Fact]
+    public async Task ProcessAsync_AStopAnsweredToTheOnlyAiCall_EndsTheReplyBeforePublication()
+    {
+        var job = MakeJob();
+        this.SetupAnsweredMention(job, "An answer.");
+        var scopes = new ExecutionScopeAccessor();
+        var admission = Substitute.For<IExecutionAdmission>();
+        admission.IsActive.Returns(true);
+        admission.AdmitMentionReplyAsync(job, Arg.Any<CancellationToken>()).Returns(ExecutionAdmissionResult.Allowed);
+        var clients = Substitute.For<IClientRegistry>();
+        clients.GetTenantIdAsync(job.ClientId, Arg.Any<CancellationToken>()).Returns(Guid.NewGuid());
+        this._answerService.AnswerAsync(default!, default, default!, default!, default).ReturnsForAnyArgs(_ =>
+        {
+            scopes.Current!.RequestStop("The plan of this organization has ended.");
+            return MakeAnswer("An answer.");
+        });
+        var sut = new MentionReplyService(
+            this._prFetcher,
+            this._jobRepository,
+            this._answerService,
+            this._providerRegistry,
+            NullLogger<MentionReplyService>.Instance,
+            this._providerActivationService,
+            this._originStore,
+            this._protocolRecorder,
+            this._iterationResolver,
+            this._capsProvider,
+            this._spendAccumulator,
+            this._scopeAccessor,
+            this._budgetEventPublisher,
+            admission,
+            scopes,
+            clients);
+
+        await sut.ProcessAsync(job);
+
+        await this._threadReplier.DidNotReceiveWithAnyArgs().ReplyAsync(default, default!, default!, default, default);
+        await this._jobRepository.DidNotReceiveWithAnyArgs().SetCompletedAsync(default, default, default);
+        await this._jobRepository.Received(1).SetFailedAsync(
+            job.Id,
+            Arg.Is<string>(message => message.Contains("The plan of this organization has ended.", StringComparison.Ordinal)),
+            Arg.Any<CancellationToken>());
+        Assert.Contains(
+            this._protocolRecorder.ReceivedCalls(),
+            call => call.GetMethodInfo().Name == nameof(IProtocolRecorder.RecordAiCallAsync));
     }
 
     [Fact]

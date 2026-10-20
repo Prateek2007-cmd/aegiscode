@@ -21,6 +21,9 @@ public sealed partial class ReviewOrchestrationService
             "Review job {JobId} reached the {Scope} hard budget cap of {ThresholdUsd} USD (spent {SpentUsd} USD) — stopping and marking budget-exceeded")]
     private static partial void LogBudgetHardCapReached(ILogger logger, Guid jobId, BudgetScopeKind? scope, decimal? thresholdUsd, decimal? spentUsd);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "The execution authority stopped review job {JobId}: {StopMessage}")]
+    private static partial void LogExecutionStopped(ILogger logger, Guid jobId, string stopMessage);
+
     [LoggerMessage(
         Level = LogLevel.Warning,
         Message = "Reviewer identity not configured for client {ClientId} — failing job {JobId}")]

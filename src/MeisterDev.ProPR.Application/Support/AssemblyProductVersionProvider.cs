@@ -20,9 +20,13 @@ public sealed class AssemblyProductVersionProvider : IProductVersionProvider
 
     private readonly string version;
 
-    /// <summary>Creates a provider reading the version stamped into the entry assembly.</summary>
+    /// <summary>Creates a provider reading the version stamped into the ProPR assemblies.</summary>
+    /// <remarks>
+    ///     The release build stamps every ProPR assembly with the same version. The entry assembly is not read,
+    ///     because the process can start from another assembly, such as a test host, that carries a version of its own.
+    /// </remarks>
     public AssemblyProductVersionProvider()
-        : this(Assembly.GetEntryAssembly() ?? typeof(AssemblyProductVersionProvider).Assembly)
+        : this(typeof(AssemblyProductVersionProvider).Assembly)
     {
     }
 

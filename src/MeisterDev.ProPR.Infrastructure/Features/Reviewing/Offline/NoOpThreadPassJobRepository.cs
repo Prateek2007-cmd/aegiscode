@@ -36,6 +36,11 @@ public sealed class NoOpThreadPassJobRepository : IThreadPassJobRepository
     }
 
     /// <inheritdoc />
+    public Task DeferAsync(Guid jobId, DateTimeOffset notBefore, CancellationToken ct = default)
+    {
+        return Task.CompletedTask;
+    }
+
     public Task<bool> TryBeginAttemptAsync(Guid jobId, CancellationToken ct = default)
     {
         return Task.FromResult(false);

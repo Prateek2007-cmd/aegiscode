@@ -4,6 +4,7 @@
         <ProjectReference Include="..\MeisterDev.ProPR.CodeInsights.Contracts\MeisterDev.ProPR.CodeInsights.Contracts.csproj"/>
         <ProjectReference Include="..\MeisterDev.Ai.Providers\MeisterDev.Ai.Providers.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.Domain\MeisterDev.ProPR.Domain.csproj"/>
+        <ProjectReference Include="..\MeisterDev.ProPR.Extensibility\MeisterDev.ProPR.Extensibility.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.CodeAnalysis\MeisterDev.ProPR.CodeAnalysis.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.Licensing\MeisterDev.ProPR.Licensing.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.ProCursor.Contracts\MeisterDev.ProPR.ProCursor.Contracts.csproj"/>

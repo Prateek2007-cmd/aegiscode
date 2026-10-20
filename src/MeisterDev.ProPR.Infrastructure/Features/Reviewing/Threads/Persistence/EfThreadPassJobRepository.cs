@@ -107,6 +107,15 @@ public sealed class EfThreadPassJobRepository(MeisterProPRDbContext dbContext) :
     }
 
     /// <inheritdoc />
+    public async Task DeferAsync(Guid jobId, DateTimeOffset notBefore, CancellationToken ct = default)
+    {
+        // The same delay a failed attempt sets, without the attempt: the pending query and the claim both honor it.
+        await dbContext.ThreadPassJobs
+            .Where(job => job.Id == jobId && job.Status == ThreadPassJobStatus.Pending)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(job => job.NextAttemptAt, (DateTimeOffset?)notBefore), ct);
+    }
+
+    /// <inheritdoc />
     public async Task<bool> TryBeginAttemptAsync(Guid jobId, CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;

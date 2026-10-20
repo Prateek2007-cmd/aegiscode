@@ -321,6 +321,11 @@ public sealed class ReviewingDiagnosticsServiceCollectionExtensionsTests
             return Task.FromResult(false);
         }
 
+        public Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task SetStoppedAsync(Guid id, CancellationToken ct = default)
         {
             return Task.CompletedTask;
@@ -354,6 +359,11 @@ public sealed class ReviewingDiagnosticsServiceCollectionExtensionsTests
         }
 
         public Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default)
+        {
+            return Task.FromResult(false);
+        }
+
+        public Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default)
         {
             return Task.FromResult(false);
         }

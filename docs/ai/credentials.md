@@ -33,14 +33,14 @@ which work is decided by logical models, not by which connection was activated l
 
 The client API provides `POST /clients/{clientId}/ai-connections/{connectionId}/verify-update` for profile edits
 that must retain working routing. It accepts the same optional settings as the profile PATCH operation.
-Only client-owned customer-writable provider and authentication combinations can use this operation;
-tenant and managed-authentication profiles remain under cell administrator control.
+Only client-owned profiles with supported provider and authentication combinations can use this operation;
+tenant and managed-authentication profiles require administrator configuration.
 Omitted or blank credential fields reuse the protected saved credential. ProPR validates and verifies the
 unsaved candidate before replacing the saved configuration and verification snapshot. A failed verification
 leaves the saved profile and active bindings unchanged. A concurrent credential, model or profile edit returns
 409; reload the connection before retrying.
 
-### Workspace model selection
+### Client model selection
 
 `POST /clients/{clientId}/ai-connections/select-purposes` accepts `default`, `high` and `embedding`, each with
 `connectionId` and `configuredModelId`. All selected connections must belong to the client and be verified.
@@ -52,8 +52,12 @@ ProPR applies Review default, Triage, Verification, Low effort, Medium effort an
 Default. High effort uses High, and Embedding default uses Embedding. ProPR activates selected connections and
 updates these bindings in one transaction. It preserves other purposes, logical models, tenant connections and
 client connections that use managed authentication. A conflicting logical purpose mapping or higher-priority
-managed binding returns 409 with a safe action and the affected purposes. Update those mappings in the cell
-console before applying the workspace selection.
+managed binding returns 409 with a safe action and the affected purposes. Update those mappings in the ProPR
+console before applying the client selection.
+
+Selected models remain in effect after a restart. Explicit logical-purpose mappings take precedence over
+connection bindings. A conflicting selection returns 409 and preserves the saved bindings. Reload the
+current configuration before retrying.
 
 Tenant machine credentials can call these client-scoped operations after current client ownership is checked.
 They cannot modify logical-model mappings or inherited connections through these operations.

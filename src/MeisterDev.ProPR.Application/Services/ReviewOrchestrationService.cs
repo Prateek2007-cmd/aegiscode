@@ -30,6 +30,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MeisterDev.ProPR.CodeInsights.Contracts;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
+using MeisterDev.ProPR.Extensibility.Execution;
 using MeisterDev.ProPR.Application.Features.Providers.Identity;
 
 namespace MeisterDev.ProPR.Application.Services;
@@ -67,7 +69,9 @@ public sealed partial class ReviewOrchestrationService(
     IReviewJobLeaseStore? leaseStore = null,
     IOptions<PublicApplicationOptions>? publicApplicationOptions = null,
     ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null,
-    IReviewAdmissionNotice? admissionNotice = null) : IReviewJobProcessor, IReviewResultPublisher
+    IReviewAdmissionNotice? admissionNotice = null,
+    IExecutionScopeAccessor? executionScopeAccessor = null,
+    IExecutionAdmission? executionAdmission = null) : IReviewJobProcessor, IReviewResultPublisher
 {
     private const string LocalWorkspacePreparedEventName = "local_workspace_prepared";
     private const string LocalWorkspaceFailedEventName = "local_workspace_failed";
@@ -111,6 +115,9 @@ public sealed partial class ReviewOrchestrationService(
         var budgetScope = await this.TryCreateBudgetScopeAsync(job, ct);
         using var budgetScopeHandle = budgetScope is null ? null : budgetScopeAccessor!.BeginScope(budgetScope);
 
+        var executionScope = await this.TryCreateExecutionScopeAsync(job, ct);
+        using var executionScopeHandle = executionScope is null ? null : executionScopeAccessor!.BeginScope(executionScope);
+
         ReviewPipelineResult? pipelineResult = null;
 
         try
@@ -132,12 +139,24 @@ public sealed partial class ReviewOrchestrationService(
             await this.HandleBudgetCutAsync(job, ex.ResolveBreach(budgetScope?.TrippedBreach), ct);
             return;
         }
+        catch (ExecutionStoppedException ex)
+        {
+            // The stop is already recorded on the job, the way an administrator's stop is, so nothing is written.
+            LogExecutionStopped(logger, job.Id, ex.StopMessage);
+            return;
+        }
         catch (PartialReviewFailureException ex)
         {
             // A hard-cap trip can surface wrapped as a partial failure; treat it as budget-exceeded if the scope
             // tripped, otherwise fall back to the normal partial-failure handling.
             if (await this.TryHandleBudgetCutAsync(job, budgetScope, ct))
             {
+                return;
+            }
+
+            if (executionScope?.StopRequested == true)
+            {
+                LogExecutionStopped(logger, job.Id, executionScope.StopMessage ?? string.Empty);
                 return;
             }
 
@@ -148,6 +167,14 @@ public sealed partial class ReviewOrchestrationService(
         {
             if (await this.TryHandleBudgetCutAsync(job, budgetScope, ct))
             {
+                return;
+            }
+
+            // A stop surfaces here wrapped, or as the cancellation the lease heartbeat raises once it reads the
+            // stopped status. Either way the job is stopped, not failed.
+            if (executionScope?.StopRequested == true)
+            {
+                LogExecutionStopped(logger, job.Id, executionScope.StopMessage ?? string.Empty);
                 return;
             }
 
@@ -187,6 +214,23 @@ public sealed partial class ReviewOrchestrationService(
             DateOnly.FromDateTime(DateTime.UtcNow),
             ct);
         return new BudgetScope(caps, baseline);
+    }
+
+    /// <summary>
+    ///     Opens the scope the AI calls of this review report their usage under. Only an installation with a
+    ///     registered execution authority has one.
+    /// </summary>
+    private async Task<ExecutionScope?> TryCreateExecutionScopeAsync(ReviewJob job, CancellationToken ct)
+    {
+        if (executionScopeAccessor is null || executionAdmission is not { IsActive: true })
+        {
+            return null;
+        }
+
+        var tenantId = await clientRegistry.GetTenantIdAsync(job.ClientId, ct);
+        return tenantId is { } tenant
+            ? new ExecutionScope(new ExecutionIdentity(ExecutionKind.Review, job.Id, job.RetryCount + 1), tenant, job.ClientId)
+            : null;
     }
 
     private async Task<bool> TryHandleBudgetCutAsync(ReviewJob job, BudgetScope? budgetScope, CancellationToken ct)

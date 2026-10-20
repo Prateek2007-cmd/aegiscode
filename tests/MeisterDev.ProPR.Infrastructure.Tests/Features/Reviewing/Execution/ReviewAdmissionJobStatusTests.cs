@@ -212,6 +212,38 @@ public sealed class ReviewAdmissionJobStatusTests(PostgresContainerFixture fixtu
     }
 
     [Fact]
+    public async Task SetQueuedAdmissionRefusedAsync_LeavesAJobAnotherCallerClaimed_InProcessing()
+    {
+        var job = MakeJob();
+        await this._repo.AddAsync(job);
+        // The claim another worker or a runner won while the execution authority was still answering this caller.
+        Assert.True(await this._repo.TryTransitionAsync(job.Id, JobStatus.Pending, JobStatus.Processing));
+
+        Assert.False(await this._repo.SetQueuedAdmissionRefusedAsync(job.Id, "The plan's author limit is reached."));
+
+        this._dbContext.ChangeTracker.Clear();
+        var stored = await this._dbContext.ReviewJobs.SingleAsync(j => j.Id == job.Id);
+        Assert.Equal(JobStatus.Processing, stored.Status);
+        Assert.Null(stored.AdmissionRefusalReason);
+        Assert.Null(stored.CompletedAt);
+    }
+
+    [Fact]
+    public async Task SetQueuedAdmissionRefusedAsync_EndsAQueuedJobOnce()
+    {
+        var job = MakeJob();
+        await this._repo.AddAsync(job);
+
+        Assert.True(await this._repo.SetQueuedAdmissionRefusedAsync(job.Id, "The plan's author limit is reached."));
+        Assert.False(await this._repo.SetQueuedAdmissionRefusedAsync(job.Id, "The plan's author limit is reached."));
+
+        this._dbContext.ChangeTracker.Clear();
+        var stored = await this._dbContext.ReviewJobs.SingleAsync(j => j.Id == job.Id);
+        Assert.Equal(JobStatus.AdmissionRefused, stored.Status);
+        Assert.Equal("The plan's author limit is reached.", stored.AdmissionRefusalReason);
+    }
+
+    [Fact]
     public async Task SetAdmissionHeldAsync_LeavesAJobAnotherWorkerClaimed_InProcessing()
     {
         var job = MakeJob();

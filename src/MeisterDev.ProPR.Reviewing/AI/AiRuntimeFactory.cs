@@ -10,6 +10,7 @@ using MeisterDev.ProPR.Application.AI;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Exceptions;
 using MeisterDev.ProPR.Application.Features.Budgeting;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Application.Options;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -34,7 +35,9 @@ public sealed class AiRuntimeFactory(
     TimeProvider? timeProvider = null,
     AiProviderMetrics? metrics = null,
     ProviderThrottleGate? throttleGate = null,
-    IProviderConnectionContextFactory? hostContexts = null) : IAiRuntimeFactory
+    IProviderConnectionContextFactory? hostContexts = null,
+    IExecutionScopeAccessor? executionScopes = null,
+    IExecutionUsageSink? usageSink = null) : IAiRuntimeFactory
 {
     public IResolvedAiChatRuntime CreateChatRuntime(
         AiConnectionDto connection,
@@ -204,6 +207,18 @@ public sealed class AiRuntimeFactory(
             decorators.Add(new BudgetEnforcingChatClientDecorator(budgetScopeAccessor, _ => ToPricing(model)));
         }
 
+        // Only an installation with a registered execution authority reports usage; without one the stage is left
+        // out and a call costs nothing extra.
+        if (executionScopes is not null && usageSink is { IsActive: true })
+        {
+            decorators.Add(
+                new ExecutionAuthorityChatClientDecorator(
+                    executionScopes,
+                    usageSink,
+                    ExecutionAuthorityConnection.For(connection, model),
+                    timeProvider ?? TimeProvider.System));
+        }
+
         return new ProviderRuntimePipeline(decorators)
             .Compose(client, connection.ToProviderEndpoint(), model.ToProviderModel());
     }
@@ -220,6 +235,17 @@ public sealed class AiRuntimeFactory(
         var metered = budgetScopeAccessor is null
             ? generator
             : new BudgetEnforcingEmbeddingGenerator(generator, budgetScopeAccessor, ToPricing(model));
+
+        // Inside the retry stage like the budget, so each attempt that returns is reported once.
+        if (executionScopes is not null && usageSink is { IsActive: true })
+        {
+            metered = new ExecutionAuthorityEmbeddingGenerator(
+                metered,
+                executionScopes,
+                usageSink,
+                ExecutionAuthorityConnection.For(connection, model),
+                timeProvider ?? TimeProvider.System);
+        }
 
         var retrying = new ProviderRetryEmbeddingGenerator(
             metered,

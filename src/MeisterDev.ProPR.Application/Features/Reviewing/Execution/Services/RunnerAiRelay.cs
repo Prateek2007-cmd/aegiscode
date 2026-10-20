@@ -7,9 +7,12 @@ using System.Reflection;
 using MeisterDev.Ai.Providers.Usage;
 using MeisterDev.ProPR.Application.AI;
 using MeisterDev.ProPR.Application.Features.Budgeting;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Ports;
+using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Services;
+using MeisterDev.ProPR.Extensibility.Execution;
 using Microsoft.Extensions.AI;
 
 namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
@@ -23,7 +26,10 @@ public sealed class RunnerAiRelay(
     IRunnerRelayModelResolver models,
     IRunnerRelayUsageRecorder usage,
     RunnerRelayReplayCache replays,
-    IRunnerJobReasoningCapturePolicy reasoningCapture) : IRunnerAiRelay
+    IRunnerJobReasoningCapturePolicy reasoningCapture,
+    IExecutionScopeAccessor? executionScopes = null,
+    IExecutionAdmission? executionAdmission = null,
+    IClientRegistry? clients = null) : IRunnerAiRelay
 {
     // object.MemberwiseClone, bound once. It is protected, so reflection is what reaches it; the binding
     // happens at type load and every call after that is an ordinary delegate invocation.
@@ -99,6 +105,12 @@ public sealed class RunnerAiRelay(
 
         var options = request.OptionsFor(capturesReasoning);
 
+        // The call reports its usage under the review it belongs to. A stop the execution authority answers with
+        // marks the review stopped, and the authorizer then refuses the runner's next call for it.
+        // Begun here, not inside the helper: a value an async method sets on the ambient context does not flow
+        // back to its caller, so a scope begun there would end before the call.
+        var executionScope = await this.CreateExecutionScopeAsync(authorization, call, ct);
+        using var executionScopeHandle = executionScope is null ? null : executionScopes!.BeginScope(executionScope);
         var response = await model.Client.GetResponseAsync(request.Messages, options, ct);
 
         // The counters the family's driver mapped, which the runtime pipeline has already put on the response.
@@ -148,6 +160,32 @@ public sealed class RunnerAiRelay(
     ///     the tool exchange the next turn continues stays intact. The counters stay, because budgets are
     ///     computed from them and the spend happened.
     /// </remarks>
+    /// <summary>
+    ///     Creates the execution scope a relayed call reports its usage under, or returns null when no execution
+    ///     authority is registered.
+    /// </summary>
+    private async Task<ExecutionScope?> CreateExecutionScopeAsync(
+        RunnerCallAuthorization authorization,
+        RunnerCallContext call,
+        CancellationToken ct)
+    {
+        if (executionScopes is null || clients is null || executionAdmission is not { IsActive: true })
+        {
+            return null;
+        }
+
+        var tenantId = await clients.GetTenantIdAsync(authorization.ClientId, ct);
+        if (tenantId is not { } tenant)
+        {
+            return null;
+        }
+
+        return new ExecutionScope(
+            new ExecutionIdentity(ExecutionKind.Review, call.JobId, authorization.Attempt),
+            tenant,
+            authorization.ClientId);
+    }
+
     private static ChatResponse WithoutReasoning(ChatResponse response)
     {
         var messages = response.Messages.Select(MessageWithoutReasoning).ToList();

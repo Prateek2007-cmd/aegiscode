@@ -48,6 +48,7 @@ internal sealed class AiConnectionProfileEntityTypeConfiguration : IEntityTypeCo
         // column width chosen for one API key, or for one service-account document, refuses a family that is
         // within the limits the host itself states.
         builder.Property(x => x.ProtectedSecret).HasColumnName("protected_secret");
+        builder.Property(x => x.ConfigurationRevision).HasColumnName("configuration_revision").HasDefaultValue(1L);
         builder.Property(x => x.DefaultHeaders)
             .HasColumnName("default_headers")
             .HasColumnType("jsonb")

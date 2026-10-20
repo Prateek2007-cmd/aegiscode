@@ -45,6 +45,6 @@ public sealed class RunnerCallAuthorizer(IReviewJobExecutionStore jobs) : IRunne
             return Task.FromResult(RunnerCallAuthorization.Refuse(RunnerCallRefusal.NotTheLeaseHolder));
         }
 
-        return Task.FromResult(RunnerCallAuthorization.Allow(job.ClientId));
+        return Task.FromResult(RunnerCallAuthorization.Allow(job.ClientId, job.RetryCount + 1));
     }
 }

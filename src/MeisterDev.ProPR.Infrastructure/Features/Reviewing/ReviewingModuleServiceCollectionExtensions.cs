@@ -47,6 +47,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MeisterDev.ProPR.Infrastructure.Features.Providers.Common.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using MeisterDev.ProPR.Infrastructure.Features.ExecutionAuthority;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -106,6 +107,10 @@ public static class ReviewingModuleServiceCollectionExtensions
 
         // Ambient wall-clock used by the budget consumption report to resolve the current monthly period.
         services.TryAddSingleton(TimeProvider.System);
+
+        // Inert until a host registers an execution authority: admission then asks it, and every AI call reports
+        // its usage to it.
+        services.AddExecutionAuthoritySupport(hasDatabase);
 
         if (hasDatabase)
         {

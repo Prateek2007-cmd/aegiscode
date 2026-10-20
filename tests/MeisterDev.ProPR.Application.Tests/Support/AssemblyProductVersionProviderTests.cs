@@ -45,4 +45,14 @@ public sealed class AssemblyProductVersionProviderTests
 
         Assert.False(string.IsNullOrWhiteSpace(provider.Version));
     }
+
+    // The entry assembly of this process is the test host, which is stamped with the version of the test
+    // platform. The default provider reads the ProPR assemblies instead, which no build in this repository stamps
+    // outside the release pipeline.
+    [Fact]
+    public void TheDefaultProvider_ReportsTheProPRBuild_NotTheEntryAssembly()
+    {
+        Assert.NotNull(System.Reflection.Assembly.GetEntryAssembly());
+        Assert.Equal(AssemblyProductVersionProvider.UnstampedVersion, new AssemblyProductVersionProvider().Version);
+    }
 }

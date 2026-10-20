@@ -20708,6 +20708,13 @@ export interface components {
              * @description Optional immutable client-scoped identifier supplied on creation for interrupted-request readback.
              */
             creationRequestId?: string | null;
+            /**
+             * Format: int64
+             * @description The configuration revision of this connection, starting at 1. It increases when an administrator or a
+             *     client changes the provider, endpoint, authentication, credential or provider settings of the connection.
+             *     ProPR renewing a credential on its own leaves it unchanged.
+             */
+            configurationRevision?: number;
             availability?: components["schemas"]["AiConnectionAvailabilityDto"];
             /**
              * @description The non-secret configuration values this connection's provider family declared, by declared field name,

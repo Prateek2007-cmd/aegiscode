@@ -61,6 +61,17 @@ public sealed record AiConnectionDto(
     public Guid? CreationRequestId { get; init; }
 
     /// <summary>
+    ///     The configuration revision of this connection, starting at 1. It increases when an administrator or a
+    ///     client changes the provider, endpoint, authentication, credential or provider settings of the connection.
+    ///     ProPR renewing a credential on its own leaves it unchanged.
+    /// </summary>
+    /// <remarks>
+    ///     A registered execution authority receives the revision with every admission request and usage report, so
+    ///     it can tell which configuration a call used.
+    /// </remarks>
+    public long ConfigurationRevision { get; init; } = 1;
+
+    /// <summary>
     ///     Whether this profile can be used as it is stored, and what stands in the way when it cannot.
     /// </summary>
     /// <remarks>

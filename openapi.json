@@ -29843,6 +29843,11 @@
             "format": "uuid",
             "nullable": true
           },
+          "configurationRevision": {
+            "type": "integer",
+            "description": "The configuration revision of this connection, starting at 1. It increases when an administrator or a\nclient changes the provider, endpoint, authentication, credential or provider settings of the connection.\nProPR renewing a credential on its own leaves it unchanged.",
+            "format": "int64"
+          },
           "availability": {
             "$ref": "#/components/schemas/AiConnectionAvailabilityDto"
           },

@@ -30,6 +30,13 @@ public sealed class AiConnectionProfileRecord
 
     public string? ProtectedSecret { get; set; }
 
+    /// <summary>
+    ///     The configuration revision, starting at 1. Advanced when a write by an administrator or a client changes
+    ///     the provider, endpoint, authentication, credential, headers, query parameters or declared settings. A
+    ///     credential the provider family renews on its own leaves it unchanged.
+    /// </summary>
+    public long ConfigurationRevision { get; set; } = 1;
+
     public Dictionary<string, string> DefaultHeaders { get; set; } = [];
 
     public Dictionary<string, string> DefaultQueryParams { get; set; } = [];

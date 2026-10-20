@@ -147,7 +147,11 @@ public sealed class ProviderCredentialSession : IProviderCredentialSession
                         .SetProperty(profile => profile.UpdatedAt, writtenAt)
                         .SetProperty(profile => profile.CredentialOwnerAdminId, ownerAdminId)
                         .SetProperty(profile => profile.CredentialOwnerDisplayName, ownerDisplayName)
-                        .SetProperty(profile => profile.CredentialAuthorizedAt, writtenAt),
+                        .SetProperty(profile => profile.CredentialAuthorizedAt, writtenAt)
+
+                        // An administrator put a new credential on the connection, which is a configuration change.
+                        // A renewal the family makes on its own takes the branch above and keeps the revision.
+                        .SetProperty(profile => profile.ConfigurationRevision, profile => profile.ConfigurationRevision + 1),
                     ct)
                 .ConfigureAwait(false);
 
@@ -182,6 +186,7 @@ public sealed class ProviderCredentialSession : IProviderCredentialSession
             .ExecuteUpdateAsync(
                 update => update
                     .SetProperty(profile => profile.ProtectedSecret, (string?)null)
+                    .SetProperty(profile => profile.ConfigurationRevision, profile => profile.ConfigurationRevision + 1)
                     .SetProperty(profile => profile.CredentialHealth, (string?)null)
                     .SetProperty(profile => profile.CredentialHealthCause, (string?)null)
                     .SetProperty(profile => profile.CredentialHealthChangedAt, (DateTimeOffset?)null)

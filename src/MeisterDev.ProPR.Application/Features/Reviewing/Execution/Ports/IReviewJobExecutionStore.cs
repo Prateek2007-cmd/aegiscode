@@ -167,6 +167,16 @@ public interface IReviewJobExecutionStore
     Task SetStoppedAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>
+    ///     Marks a review job as stopped by the registered execution authority, recording the authority's text as
+    ///     the error message. No-op if the job is already terminal.
+    /// </summary>
+    /// <param name="id">The review job identifier.</param>
+    /// <param name="reason">The text the execution authority gave with the stop.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default);
+
+    /// <summary>
     ///     Marks a review job budget-exceeded because a hard cap was reached mid-review, recording the binding
     ///     scope, cap kind, threshold, and spend as the reason. No-op if the job is already terminal.
     /// </summary>
@@ -227,6 +237,17 @@ public interface IReviewJobExecutionStore
     /// <param name="ct">The cancellation token.</param>
     /// <returns>Whether this call was the one that refused the job.</returns>
     Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default);
+
+    /// <summary>
+    ///     Ends a review job that no worker or runner has claimed yet, because the execution authority refused it.
+    ///     A job in any other status keeps it: a refusal that arrives after another caller claimed the job leaves
+    ///     the running review alone.
+    /// </summary>
+    /// <param name="id">The review job identifier.</param>
+    /// <param name="reason">The authority's text, which is posted on the pull request.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>Whether this call was the one that refused the job.</returns>
+    Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default);
 
     /// <summary>
     ///     Returns every job held by review admission whose wait has passed to the queue, and answers how many

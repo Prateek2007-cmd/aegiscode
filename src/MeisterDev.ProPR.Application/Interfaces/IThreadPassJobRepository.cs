@@ -46,6 +46,15 @@ public interface IThreadPassJobRepository
     Task<bool> TryBeginAttemptAsync(Guid jobId, CancellationToken ct = default);
 
     /// <summary>
+    ///     Keeps a pending pass waiting until <paramref name="notBefore" /> without spending an attempt, because the
+    ///     execution authority holds it. No-op unless the pass is pending.
+    /// </summary>
+    /// <param name="jobId">The pass identifier.</param>
+    /// <param name="notBefore">When the pass is offered again.</param>
+    /// <param name="ct">A token to monitor for cancellation requests.</param>
+    Task DeferAsync(Guid jobId, DateTimeOffset notBefore, CancellationToken ct = default);
+
+    /// <summary>
     ///     Marks the pass completed, unless it is no longer the pass that is running: a row cancelled while
     ///     this attempt was in flight stays cancelled.
     /// </summary>

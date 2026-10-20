@@ -154,6 +154,11 @@ public sealed class ReviewJobExecutionStoreAdapter(IJobRepository inner) : IRevi
         return inner.SetStoppedAsync(id, ct);
     }
 
+    public Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        return inner.SetStoppedAsync(id, reason, ct);
+    }
+
     public Task SetBudgetExceededAsync(
         Guid id,
         BudgetScopeKind? scope,
@@ -184,6 +189,11 @@ public sealed class ReviewJobExecutionStoreAdapter(IJobRepository inner) : IRevi
     public Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default)
     {
         return inner.SetAdmissionRefusedAsync(id, reason, policyFingerprint, ct);
+    }
+
+    public Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default)
+    {
+        return inner.SetQueuedAdmissionRefusedAsync(id, reason, ct);
     }
 
     public Task<int> ReleaseDueAdmissionHoldsAsync(DateTimeOffset now, CancellationToken ct = default)

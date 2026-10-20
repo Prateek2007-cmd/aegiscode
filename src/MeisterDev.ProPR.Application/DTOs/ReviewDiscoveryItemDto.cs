@@ -7,6 +7,10 @@ using MeisterDev.ProPR.Domain.ValueObjects;
 namespace MeisterDev.ProPR.Application.DTOs;
 
 /// <summary>Normalized review discovery item surfaced from a provider adapter.</summary>
+/// <remarks>
+///     <see cref="Creator" /> carries the stable provider identity of the account that opened the review request,
+///     where the adapter reads one. <see cref="AuthorName" /> stays a display label.
+/// </remarks>
 public sealed record ReviewDiscoveryItemDto(
     ScmProvider Provider,
     RepositoryRef Repository,
@@ -18,4 +22,5 @@ public sealed record ReviewDiscoveryItemDto(
     string? WebUrl,
     string? SourceBranch,
     string? TargetBranch,
-    string? AuthorName = null);
+    string? AuthorName = null,
+    PullRequestAuthor? Creator = null);

@@ -93,7 +93,15 @@ internal sealed class GitHubCodeReviewQueryService(
             payload.Title ?? $"Pull Request #{review.Number}",
             payload.HtmlUrl,
             payload.Head?.Ref,
-            payload.Base?.Ref);
+            payload.Base?.Ref,
+            Creator: payload.User is { Id: > 0 } author
+                ? new PullRequestAuthor(
+                    review.Repository.Host,
+                    author.Id.ToString(CultureInfo.InvariantCulture),
+                    author.Login,
+                    author.Name,
+                    IsBot(author))
+                : null);
     }
 
     public async Task<ReviewRevision?> GetLatestRevisionAsync(
@@ -191,7 +199,8 @@ internal sealed class GitHubCodeReviewQueryService(
         [property: JsonPropertyName("head")] GitHubRefResponse? Head,
         [property: JsonPropertyName("base")] GitHubRefResponse? Base,
         [property: JsonPropertyName("requested_reviewers")]
-        IReadOnlyList<GitHubReviewerResponse>? RequestedReviewers);
+        IReadOnlyList<GitHubReviewerResponse>? RequestedReviewers,
+        [property: JsonPropertyName("user")] GitHubReviewerResponse? User = null);
 
     private sealed record GitHubRefResponse(
         [property: JsonPropertyName("ref")] string? Ref,

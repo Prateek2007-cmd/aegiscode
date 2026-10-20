@@ -39,15 +39,19 @@ public enum RunnerCallRefusal
 /// <summary>The outcome of authorizing a proxied call.</summary>
 /// <param name="Refusal">Why the call was refused, or <see cref="RunnerCallRefusal.None" /> when it was allowed.</param>
 /// <param name="ClientId">The client the job belongs to, resolved once so callers do not re-read it.</param>
-public sealed record RunnerCallAuthorization(RunnerCallRefusal Refusal, Guid ClientId)
+/// <param name="Attempt">
+///     The attempt of the job the call belongs to, starting at 1, so usage reported for the call names the same
+///     attempt the in-process path names.
+/// </param>
+public sealed record RunnerCallAuthorization(RunnerCallRefusal Refusal, Guid ClientId, int Attempt = 1)
 {
     /// <summary>Whether the call may be served.</summary>
     public bool IsAuthorized => this.Refusal == RunnerCallRefusal.None;
 
     /// <summary>An authorized call against the given client's job.</summary>
-    public static RunnerCallAuthorization Allow(Guid clientId)
+    public static RunnerCallAuthorization Allow(Guid clientId, int attempt = 1)
     {
-        return new RunnerCallAuthorization(RunnerCallRefusal.None, clientId);
+        return new RunnerCallAuthorization(RunnerCallRefusal.None, clientId, attempt);
     }
 
     /// <summary>A refusal. Carries no client id, because a refused caller learns nothing about the job.</summary>

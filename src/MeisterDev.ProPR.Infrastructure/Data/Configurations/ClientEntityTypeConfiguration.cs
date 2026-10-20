@@ -42,6 +42,14 @@ internal sealed class ClientEntityTypeConfiguration : IEntityTypeConfiguration<C
             .HasColumnName("display_name")
             .IsRequired();
 
+        builder.Property(c => c.WorkspaceAiSelectionInitialized)
+            .HasColumnName("workspace_ai_selection_initialized")
+            .HasDefaultValue(false);
+
+        builder.Property(c => c.AiRoutingRevision)
+            .HasColumnName("ai_routing_revision")
+            .HasDefaultValue(0L);
+
         builder.Property(c => c.IsActive)
             .HasColumnName("is_active")
             .HasDefaultValue(true);

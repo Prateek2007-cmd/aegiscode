@@ -24,6 +24,17 @@ public sealed partial class MentionReplyService
     private static partial void LogJobFailed(ILogger logger, Guid jobId, Exception ex);
 
     [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "MentionReplyService: the execution authority answered {Outcome} ({Reason}) for job {JobId}; the reply is not written")]
+    private static partial void LogReplyNotAdmitted(
+        ILogger logger, Guid jobId, MeisterDev.ProPR.Extensibility.Execution.AdmissionOutcome outcome, string reason);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "MentionReplyService: the execution authority stopped job {JobId}: {StopMessage}")]
+    private static partial void LogReplyStoppedByAuthority(ILogger logger, Guid jobId, string stopMessage);
+
+    [LoggerMessage(
         Level = LogLevel.Warning,
         Message =
             "MentionReplyService: recording posted-comment provenance failed for job {JobId} — the reply is unaffected")]

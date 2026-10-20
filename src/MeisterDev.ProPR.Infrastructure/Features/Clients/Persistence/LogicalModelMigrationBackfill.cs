@@ -94,6 +94,12 @@ public sealed class LogicalModelMigrationBackfill(
     /// <inheritdoc />
     public async Task<int> BackfillClientPurposesAsync(Guid clientId, CancellationToken ct)
     {
+        await using var routing = await ClientAiRoutingMutation.BeginAsync(db, clientId, ct);
+        if (routing.Client is null || routing.Client.WorkspaceAiSelectionInitialized)
+        {
+            return 0;
+        }
+
         // Purposes already mapped to a logical model are skipped (idempotent). Every other purpose that still has an
         // active connection binding is migrated: synthesize/reuse a per-client logical model matching the binding, then
         // map the purpose to it — so the purpose no longer depends on the (editor-less) legacy purpose-binding fallback.
@@ -149,6 +155,7 @@ public sealed class LogicalModelMigrationBackfill(
             migrated++;
         }
 
+        await routing.CommitAsync(ct);
         return migrated;
     }
 

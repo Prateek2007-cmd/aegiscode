@@ -15,6 +15,7 @@
         <Project Path="src/MeisterDev.ProPR.Api/MeisterDev.ProPR.Api.csproj" />
         <Project Path="src/MeisterDev.ProPR.Application/MeisterDev.ProPR.Application.csproj" />
         <Project Path="src/MeisterDev.ProPR.Domain/MeisterDev.ProPR.Domain.csproj" />
+        <Project Path="src/MeisterDev.ProPR.Extensibility/MeisterDev.ProPR.Extensibility.csproj" />
         <Project Path="src/MeisterDev.ProPR.CodeInsights.Contracts/MeisterDev.ProPR.CodeInsights.Contracts.csproj" />
         <Project Path="src/MeisterDev.ProPR.CodeInsights/MeisterDev.ProPR.CodeInsights.csproj" />
         <Project Path="src/MeisterDev.ProPR.Infrastructure/MeisterDev.ProPR.Infrastructure.csproj" />

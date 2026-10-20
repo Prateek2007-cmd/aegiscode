@@ -15,6 +15,12 @@ public sealed class ClientRecord
     public Guid TenantId { get; set; }
     public string DisplayName { get; set; } = string.Empty;
 
+    /// <summary>Records successful workspace model selection without granting authority over logical roles.</summary>
+    public bool WorkspaceAiSelectionInitialized { get; set; }
+
+    /// <summary>Advances when client purpose routing is written to serialize routing decisions.</summary>
+    public long AiRoutingRevision { get; set; }
+
     /// <summary>
     ///     Determines how the reviewer behaves when automatically resolving its own comment threads.
     ///     Defaults to <see cref="Domain.Enums.CommentResolutionBehavior.Silent" />.

@@ -259,6 +259,13 @@ public interface IJobRepository : IReviewFileResultStore
     Task SetStoppedAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>
+    ///     Marks the job as stopped because the registered execution authority stopped it, recording the
+    ///     authority's text as the job's error message. No-op if the job does not exist or is already in a
+    ///     terminal state.
+    /// </summary>
+    Task SetStoppedAsync(Guid id, string reason, CancellationToken ct = default);
+
+    /// <summary>
     ///     Marks the job budget-exceeded because a hard cap was reached mid-review, recording the binding scope,
     ///     cap kind, threshold, and spend as the reason. No-op if the job does not exist or is already in a
     ///     deliberate terminal state (completed, failed, cancelled, superseded, or stopped).
@@ -310,6 +317,17 @@ public interface IJobRepository : IReviewFileResultStore
     /// <param name="ct">The cancellation token.</param>
     /// <returns>Whether this call was the one that refused the job.</returns>
     Task<bool> SetAdmissionRefusedAsync(Guid id, string reason, string? policyFingerprint, CancellationToken ct = default);
+
+    /// <summary>
+    ///     Ends a review job that no worker or runner has claimed yet, because the execution authority refused it.
+    ///     A job in any other status keeps it: a refusal that arrives after another caller claimed the job leaves
+    ///     the running review alone.
+    /// </summary>
+    /// <param name="id">The review job identifier.</param>
+    /// <param name="reason">The authority's text, which is posted on the pull request.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>Whether this call was the one that refused the job.</returns>
+    Task<bool> SetQueuedAdmissionRefusedAsync(Guid id, string reason, CancellationToken ct = default);
 
     /// <summary>
     ///     Returns the pull request head that review admission last refused for this client, together with the

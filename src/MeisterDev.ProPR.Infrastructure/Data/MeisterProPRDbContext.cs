@@ -284,6 +284,9 @@ public sealed class MeisterProPRDbContext(DbContextOptions<MeisterProPRDbContext
     /// <summary>Manual spend resets: each row grants a period extra allowance and records who granted it.</summary>
     public DbSet<BudgetSpendReset> BudgetSpendResets => this.Set<BudgetSpendReset>();
 
+    /// <summary>Usage reports kept for a registered execution authority, appended in sequence.</summary>
+    public DbSet<AiUsageReportRecord> AiUsageReports => this.Set<AiUsageReportRecord>();
+
     /// <summary>Code-insight pull requests (the per-PR purge unit for collected quality facts).</summary>
     public DbSet<CodeInsightPullRequest> CodeInsightPullRequests => this.Set<CodeInsightPullRequest>();
 

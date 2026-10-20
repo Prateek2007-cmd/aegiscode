@@ -235,6 +235,11 @@ returns 409 without updating the existing profile or replaying 201. Retrieve the
 an uncertain result. The identifier is not a credential or TTL-based idempotency ledger; physical
 profile deletion permits later reuse. Omitted correlation remains null.
 
+Every profile carries `configurationRevision`, which starts at 1. ProPR advances it when an update
+changes the provider, base URL, authentication mode, credential, default headers, default query
+parameters or provider settings. A rename, a model change and a credential the provider family renews
+on its own keep the revision.
+
 ### Purpose bindings
 
 | Field | Contract |
@@ -244,6 +249,10 @@ profile deletion permits later reuse. Omitted correlation remains null.
 | `protocolMode`, `isEnabled` | Defaults are `Auto` and true. Embedding purposes require an embedding-capable model and `Auto` or `Embeddings`; other purposes require chat capability. |
 
 Logical-model selection takes precedence over profile bindings.
+
+Client model selection saves verified purpose bindings atomically and preserves them across restarts.
+Explicit logical-purpose mappings take precedence. A conflicting selection returns 409 and preserves the
+saved bindings. See [client model selection](../ai/credentials.md#client-model-selection).
 
 ### Per-model inputs
 

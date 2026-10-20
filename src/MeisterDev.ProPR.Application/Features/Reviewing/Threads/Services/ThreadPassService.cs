@@ -5,6 +5,7 @@ using System.Globalization;
 using MeisterDev.ProPR.Application.Features.Budgeting;
 using MeisterDev.ProPR.Application.Features.Budgeting.Models;
 using MeisterDev.ProPR.Application.Features.Crawling.Webhooks.Ports;
+using MeisterDev.ProPR.Application.Features.ExecutionAuthority;
 using MeisterDev.ProPR.Application.Features.ReviewArchive;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Features.Reviewing.Threads.Ports;
@@ -13,6 +14,7 @@ using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
+using MeisterDev.ProPR.Extensibility.Execution;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
@@ -50,7 +52,9 @@ public sealed partial class ThreadPassService(
     IBudgetCapsProvider? budgetCapsProvider = null,
     IReviewSpendAccumulator? spendAccumulator = null,
     IBudgetScopeAccessor? budgetScopeAccessor = null,
-    IBudgetEventPublisher? budgetEventPublisher = null) : IThreadPassService
+    IBudgetEventPublisher? budgetEventPublisher = null,
+    IExecutionAdmission? executionAdmission = null,
+    IExecutionScopeAccessor? executionScopeAccessor = null) : IThreadPassService
 {
     /// <inheritdoc />
     public async Task ProcessAsync(ThreadPassJob job, CancellationToken ct = default)
@@ -79,6 +83,30 @@ public sealed partial class ThreadPassService(
             return;
         }
 
+        // Asked after the budget, before an attempt is spent. A hold keeps the pass pending until the delay has
+        // passed; a refusal ends it as skipped.
+        if (executionAdmission is { IsActive: true })
+        {
+            var admission = await executionAdmission.AdmitThreadPassAsync(job, ct);
+            if (admission.Outcome == AdmissionOutcome.Hold)
+            {
+                LogPassHeldByAuthority(logger, job.Id, admission.Reason ?? string.Empty, admission.RetryAt!.Value);
+                await threadPassJobs.DeferAsync(job.Id, admission.RetryAt.Value, ct);
+                return;
+            }
+
+            if (admission.Outcome == AdmissionOutcome.Refuse)
+            {
+                LogPassRefusedByAuthority(logger, job.Id, admission.Reason ?? string.Empty);
+                if (await threadPassJobs.TryBeginAttemptAsync(job.Id, ct))
+                {
+                    await threadPassJobs.SetSkippedAsync(job.Id, admission.Message!, ct);
+                }
+
+                return;
+            }
+        }
+
         if (!await threadPassJobs.TryBeginAttemptAsync(job.Id, ct))
         {
             LogPassAlreadyClaimed(logger, job.Id);
@@ -87,9 +115,19 @@ public sealed partial class ThreadPassService(
 
         using var budgetScopeHandle = budgetScope is null ? null : budgetScopeAccessor!.BeginScope(budgetScope);
 
+        ExecutionScope? executionScope = null;
+        IDisposable? executionScopeHandle = null;
         try
         {
+            // Opened inside the attempt, so a lookup that fails is recorded as a failed attempt like any other
+            // failure, and the pass follows the normal retry delay.
+            executionScope = await this.TryCreateExecutionScopeAsync(job, ct);
+            executionScopeHandle = executionScope is null ? null : executionScopeAccessor!.BeginScope(executionScope);
             await this.RunAsync(job, ct);
+        }
+        catch (ExecutionStoppedException ex)
+        {
+            await this.HandleExecutionStopAsync(job, ex.StopMessage, ct);
         }
         catch (BudgetHardCapReachedException ex)
         {
@@ -107,9 +145,46 @@ public sealed partial class ThreadPassService(
                 return;
             }
 
+            if (executionScope?.StopMessage is { } stopMessage)
+            {
+                await this.HandleExecutionStopAsync(job, stopMessage, ct);
+                return;
+            }
+
             var retryable = await threadPassJobs.RecordAttemptFailureAsync(job.Id, ex.Message, ct);
             LogPassAttemptFailed(logger, job.Id, job.PullRequestId, retryable, ex);
         }
+        finally
+        {
+            executionScopeHandle?.Dispose();
+        }
+    }
+
+    /// <summary>
+    ///     Opens the scope the AI calls of this pass report their usage under. Only an installation with a registered
+    ///     execution authority has one. The attempt is the one just begun.
+    /// </summary>
+    private async Task<ExecutionScope?> TryCreateExecutionScopeAsync(ThreadPassJob job, CancellationToken ct)
+    {
+        if (executionScopeAccessor is null || executionAdmission is not { IsActive: true })
+        {
+            return null;
+        }
+
+        var tenantId = await clientRegistry.GetTenantIdAsync(job.ClientId, ct);
+        return tenantId is { } tenant
+            ? new ExecutionScope(new ExecutionIdentity(ExecutionKind.ThreadPass, job.Id, job.AttemptCount + 1), tenant, job.ClientId)
+            : null;
+    }
+
+    /// <summary>
+    ///     Records a stop of the execution authority as a failed attempt. The pass keeps its identifier, and a later
+    ///     attempt asks the authority again before it runs.
+    /// </summary>
+    private async Task HandleExecutionStopAsync(ThreadPassJob job, string stopMessage, CancellationToken ct)
+    {
+        LogPassStoppedByAuthority(logger, job.Id, stopMessage);
+        await threadPassJobs.RecordAttemptFailureAsync(job.Id, $"The execution authority stopped this pass: {stopMessage}", ct);
     }
 
     private static BudgetBreach? FindAdmissionBreach(BudgetScope budgetScope)
@@ -1087,6 +1162,24 @@ public sealed partial class ThreadPassService(
         Level = LogLevel.Debug,
         Message = "Thread pass {ThreadPassJobId} was already claimed by another executor.")]
     private static partial void LogPassAlreadyClaimed(ILogger logger, Guid threadPassJobId);
+
+    [LoggerMessage(
+        EventId = 6422,
+        Level = LogLevel.Information,
+        Message = "Thread pass {ThreadPassJobId} held by the execution authority ({Reason}) until {RetryAt}.")]
+    private static partial void LogPassHeldByAuthority(ILogger logger, Guid threadPassJobId, string reason, DateTimeOffset retryAt);
+
+    [LoggerMessage(
+        EventId = 6423,
+        Level = LogLevel.Information,
+        Message = "Thread pass {ThreadPassJobId} refused by the execution authority ({Reason}).")]
+    private static partial void LogPassRefusedByAuthority(ILogger logger, Guid threadPassJobId, string reason);
+
+    [LoggerMessage(
+        EventId = 6424,
+        Level = LogLevel.Information,
+        Message = "Thread pass {ThreadPassJobId} stopped by the execution authority: {StopMessage}")]
+    private static partial void LogPassStoppedByAuthority(ILogger logger, Guid threadPassJobId, string stopMessage);
 
     [LoggerMessage(
         EventId = 6402,

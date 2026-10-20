@@ -2,7 +2,6 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Infrastructure.Data;
-using MeisterDev.ProPR.Infrastructure.Data.Models;
 using MeisterDev.ProPR.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -45,10 +44,13 @@ public sealed class CodeInsightExposureRollbackPostgresTests(PostgresContainerFi
             var logical = string.Concat(Enumerable.Range(0, 128).Select(_ => (char)random.Next('a', 'z' + 1)));
             const string source = "completed-file-baseline";
             var changedModel = model[..^1] + 'a';
-            db.AddRange(
-                new TenantRecord { Id = tenant, Slug = tenant.ToString("N"), DisplayName = "Exposure rollback", IsActive = true, CreatedAt = now },
-                new ClientRecord { Id = client, TenantId = tenant, DisplayName = "Exposure rollback", IsActive = true, CreatedAt = now });
-            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                 INSERT INTO tenants (id, slug, display_name, is_active, created_at, updated_at)
+                 VALUES ({tenant}, {tenant.ToString("N")}, 'Exposure rollback', true, {now}, {now});
+                 INSERT INTO clients (id, tenant_id, display_name, is_active, created_at)
+                 VALUES ({client}, {tenant}, 'Exposure rollback', true, {now})
+                 """);
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                  INSERT INTO code_insight_pull_requests

@@ -157,6 +157,27 @@ public sealed class RunnerLeaseOfferServiceTests
         Assert.True(offer.Granted);
     }
 
+    // A registered authority whose decision cannot be recorded is not bypassed: the job is not offered.
+    [Fact]
+    public async Task AnActiveAuthorityWithoutAJobStore_OffersNothing()
+    {
+        var runner = this.EnrolledRunner();
+        var job = MakeJob();
+        this.WithCandidates(runner, job);
+        this.GrantClaimFor(job, runner);
+        this.PreparationSucceedsFor(job);
+        this.ManifestResolves();
+        var admission = Substitute.For<MeisterDev.ProPR.Application.Features.ExecutionAuthority.IExecutionAdmission>();
+        admission.IsActive.Returns(true);
+
+        var offer = await this.CreateService(executionAdmission: admission)
+            .OfferAsync(new RunnerLeaseRequest(runner.Id, 1, RunnerContractVersion.Current));
+
+        Assert.False(offer.Granted);
+        await this._leases.DidNotReceiveWithAnyArgs().TryClaimAsync(default, default!, default, default);
+        await admission.DidNotReceiveWithAnyArgs().AdmitReviewAsync(default!, default!, default);
+    }
+
     // The count is read before the claim, so a replica that claims in between makes it stale. The claim
     // itself carries the ceiling, and its refusal ends the offer rather than moving down the candidate list.
     [Fact]
@@ -643,7 +664,8 @@ public sealed class RunnerLeaseOfferServiceTests
         ILicenseLimitResolver? limits = null,
         IReviewJobExecutionStore? executionStore = null,
         MeisterDev.ProPR.Application.Interfaces.IClientRegistry? clients = null,
-        ILicensingCapabilityService? licensing = null)
+        ILicensingCapabilityService? licensing = null,
+        MeisterDev.ProPR.Application.Features.ExecutionAuthority.IExecutionAdmission? executionAdmission = null)
     {
         return new RunnerLeaseOfferService(
             this._runners,
@@ -661,6 +683,7 @@ public sealed class RunnerLeaseOfferServiceTests
             limits,
             executionStore,
             clients,
-            licensing);
+            licensing,
+            executionAdmission);
     }
 }
