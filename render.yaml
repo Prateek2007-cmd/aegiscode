@@ -1,0 +1,37 @@
+# Render blueprint: AegisCode API (Docker) + PostgreSQL (pgvector-capable).
+# Apply via the Render dashboard: New -> Blueprint -> connect this repo.
+#
+# After first deploy, open the database's "Connect -> PSQL" console and run:
+#   CREATE EXTENSION IF NOT EXISTS vector;
+# (Render's Postgres ships pgvector; the extension just needs enabling per DB.)
+
+services:
+  - type: web
+    name: aegiscode-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.deploy
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: DB_CONNECTION_STRING
+        fromDatabase:
+          name: aegiscode-db
+          property: connectionString
+      - key: MEISTER_JWT_SECRET
+        generateValue: true
+      - key: MEISTER_BOOTSTRAP_ADMIN_USER
+        value: admin
+      - key: MEISTER_BOOTSTRAP_ADMIN_PASSWORD
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://aegiscode.vercel.app
+        # <-- replace with your real Vercel URL after the frontend deploys,
+        #     then redeploy the API so browsers are allowed to call it.
+      - key: AEGIS_SECURITY_MAX_CONCURRENT_SCANS
+        value: "1"
+
+databases:
+  - name: aegiscode-db
+    plan: starter
+    postgresMajorVersion: "16"
