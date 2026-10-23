@@ -6633,6 +6633,215 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.ToTable("review_job_procursor_source_scopes", (string)null);
                 });
 
+            modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.SecurityFindingRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("category");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("Evidence")
+                        .HasColumnType("text")
+                        .HasColumnName("evidence");
+
+                    b.Property<string>("FilePath")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("file_path");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("fingerprint");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<Guid>("FirstSeenScanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("first_seen_scan_id");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<Guid>("LastSeenScanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("last_seen_scan_id");
+
+                    b.Property<int?>("Line")
+                        .HasColumnType("integer")
+                        .HasColumnName("line");
+
+                    b.Property<int>("PriorityScore")
+                        .HasColumnType("integer")
+                        .HasColumnName("priority_score");
+
+                    b.Property<string>("Remediation")
+                        .HasColumnType("text")
+                        .HasColumnName("remediation");
+
+                    b.Property<string>("RuleId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("rule_id");
+
+                    b.Property<Guid>("ScanId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("scan_id");
+
+                    b.Property<string>("Scanner")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("scanner");
+
+                    b.Property<string>("ScoreGapsJson")
+                        .HasColumnType("text")
+                        .HasColumnName("score_gaps_json");
+
+                    b.Property<int>("Severity")
+                        .HasColumnType("integer")
+                        .HasColumnName("severity");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer")
+                        .HasColumnName("status");
+
+                    b.Property<string>("SuppressionsJson")
+                        .HasColumnType("text")
+                        .HasColumnName("suppressions_json");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("title");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScanId");
+
+                    b.HasIndex("ClientId", "Fingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("ScanId", "Severity");
+
+                    b.ToTable("security_finding_records", (string)null);
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.SecurityScanRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("client_id");
+
+                    b.Property<string>("CoverageJson")
+                        .HasColumnType("text")
+                        .HasColumnName("coverage_json");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by_user_id");
+
+                    b.Property<int>("CriticalCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("critical_count");
+
+                    b.Property<string>("EngineVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("engine_version");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("error");
+
+                    b.Property<DateTimeOffset?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at");
+
+                    b.Property<int>("HighCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("high_count");
+
+                    b.Property<int>("InfoCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("info_count");
+
+                    b.Property<int>("LowCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("low_count");
+
+                    b.Property<int>("MediumCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("medium_count");
+
+                    b.Property<int>("ProgressPct")
+                        .HasColumnType("integer")
+                        .HasColumnName("progress_pct");
+
+                    b.Property<DateTimeOffset>("QueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("queued_at");
+
+                    b.Property<string>("Ref")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("ref");
+
+                    b.Property<string>("RepositoryUrl")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("repository_url");
+
+                    b.Property<string>("SbomPath")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("sbom_path");
+
+                    b.Property<string>("ScannerVersionsJson")
+                        .HasColumnType("text")
+                        .HasColumnName("scanner_versions_json");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientId", "QueuedAt");
+
+                    b.ToTable("security_scan_records", (string)null);
+                });
+
             modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.TenantAuditEntryRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -8112,6 +8321,17 @@ namespace MeisterDev.ProPR.Infrastructure.Migrations
                     b.Navigation("ProCursorSource");
 
                     b.Navigation("ReviewJob");
+                });
+
+            modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.SecurityFindingRecord", b =>
+                {
+                    b.HasOne("MeisterDev.ProPR.Infrastructure.Data.Models.SecurityScanRecord", "Scan")
+                        .WithMany()
+                        .HasForeignKey("ScanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Scan");
                 });
 
             modelBuilder.Entity("MeisterDev.ProPR.Infrastructure.Data.Models.TenantAuditEntryRecord", b =>

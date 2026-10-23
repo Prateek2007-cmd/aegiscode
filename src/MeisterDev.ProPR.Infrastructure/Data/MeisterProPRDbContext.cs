@@ -78,6 +78,12 @@ public sealed class MeisterProPRDbContext(DbContextOptions<MeisterProPRDbContext
     /// <summary>Thread passes over a pull request's reviewer-owned comment threads.</summary>
     public DbSet<ThreadPassJob> ThreadPassJobs => this.Set<ThreadPassJob>();
 
+    /// <summary>Deterministic security scan runs (AegisCode security scanning).</summary>
+    public DbSet<SecurityScanRecord> SecurityScans => this.Set<SecurityScanRecord>();
+
+    /// <summary>Normalized deterministic security findings (AegisCode security scanning).</summary>
+    public DbSet<SecurityFindingRecord> SecurityFindings => this.Set<SecurityFindingRecord>();
+
     /// <summary>Threads a pass has acted on, keyed by the comment count that made each due.</summary>
     public DbSet<ThreadPassHandledThread> ThreadPassHandledThreads => this.Set<ThreadPassHandledThread>();
 

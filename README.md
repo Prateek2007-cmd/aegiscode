@@ -16,19 +16,39 @@
 
 ## Overview
 
-**AegisCode** is an open, self-hosted developer security platform designed to intercept vulnerabilities, secret leaks, and architectural flaws directly in pull and merge requests before they reach production.
+**AegisCode** is a self-hosted, AI-powered code review platform for pull and merge requests, evolving toward
+deterministic developer-security guardrails (secret detection, dependency vulnerability scanning, SBOM generation).
 
-Operating across **GitHub**, **GitLab**, **Azure DevOps**, and **Forgejo**, AegisCode inspects code changes using deep AST analysis, semantically aware AI models, and policy guardrails, posting precise inline security findings and automated remediation patches.
+Operating across **GitHub**, **GitLab**, **Azure DevOps**, and **Forgejo**, AegisCode reviews code changes with
+semantically aware AI models (Roslyn and Tree-sitter assisted analysis where applicable), posting inline findings
+and review summaries directly in your SCM threads.
 
-## Key Security Pillars
+> **Honesty note:** deterministic security scanners — secret detection, CVE/dependency matching, SBOM export —
+> are **not yet implemented** in this build. They are tracked on the public
+> [security roadmap](docs/SECURITY_ROADMAP.md). Nothing in the UI implies a scan that did not run.
 
-- 🛡️ **Zero-Exposure Secret Scanning:** Intercepts leaked API keys, database credentials, JWT secrets, and private keys within pull request diffs before code merge.
-- 🔍 **OWASP Top 10 & CWE Weakness Detection:** Enforces secure coding standards (SQL/Command Injection, SSRF, XSS, Path Traversal, Insecure Deserialization, Broken Access Control) with context-aware semantic analysis.
-- 📦 **Supply Chain & SBOM Guardrails:** Tracks dependencies, flags known CVEs, and prevents malicious or unlicensed package introductions.
-- 💡 **Automated Remediation Diffs:** Generates synthesized, copy-pasteable or one-click fix patches for security findings directly in SCM review threads.
-- 🔒 **Zero Code Exfiltration (Self-Hosted):** You control where code and data reside. AegisCode runs entirely within your perimeter, connecting directly to your SCM hosts and self-managed AI gateways.
-- 🤖 **Bring Your Own AI (BYO-AI):** Connect Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, Google Vertex AI, LiteLLM gateways, or local LLMs (e.g. Ollama, vLLM). No proprietary AI models or third-party training on your proprietary code.
-- 🏢 **Multi-Tenancy & Fleet Runners:** Scalable multi-tenant architecture with distributed runner fleet management, thread memory resolution, and tenant-scoped budgets.
+## Capabilities
+
+### Working today
+
+- 🤖 **AI Code Review:** Automated PR/MR reviews with inline findings, summaries, and review history.
+- 🔒 **Self-Hosted (Zero Code Exfiltration):** You control where code and data reside. AegisCode runs within your
+  perimeter, connecting directly to your SCM hosts and self-managed AI gateways.
+- 🧠 **Bring Your Own AI (BYO-AI):** Connect Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, Google Vertex AI,
+  LiteLLM gateways, or local LLMs (e.g. Ollama, vLLM). No proprietary AI models or third-party training on your code.
+- 🏢 **Multi-Tenancy & Fleet Runners:** Multi-tenant architecture with distributed runner fleet management and
+  tenant-scoped budgets.
+- 📊 **Review Insights:** Aggregated code hotspots, insight survival across revisions, and remediation trends.
+
+### On the security roadmap
+
+- 🛡️ **Secret Scanning:** Detect leaked API keys, tokens, and credentials in diffs and repository files.
+- 📦 **Dependency & CVE Scanning:** Match manifests/lockfiles against OSV.dev, flag known CVEs, suggest fixes.
+- 📄 **SBOM Generation:** CycloneDX/SPDX software bill of materials per scan, viewable and downloadable.
+- 💡 **Guided Remediation:** Human-approved fix patches for verified findings.
+
+See [docs/SECURITY_ROADMAP.md](docs/SECURITY_ROADMAP.md) and
+[docs/SECURITY_ENGINE_INTEGRATION.md](docs/SECURITY_ENGINE_INTEGRATION.md) for the plan and integration design.
 
 ## Quickstart
 
@@ -36,7 +56,7 @@ The fastest way to deploy AegisCode for evaluation is via the bundled Docker Com
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/meister-dev-ai/propr.git aegiscode
+git clone https://github.com/Prateek2007-cmd/aegiscode.git aegiscode
 cd aegiscode
 
 # 2. Configure the environment

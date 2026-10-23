@@ -8,8 +8,8 @@
       <div>
         <h1>Security &amp; Code Quality Insights</h1>
         <p class="page-copy">
-          Real-time visibility into software vulnerabilities (CWE), OWASP risk categories, code hotspots, and remediation
-          survival across repositories, continuously updated by AegisCode review guardrails.
+          Aggregated AI review insights — code hotspots, insight survival across revisions, and remediation trends
+          across repositories. Deterministic security scanning (secrets, CVEs, SBOM) is on the roadmap, not yet implemented.
         </p>
       </div>
     </header>

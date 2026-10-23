@@ -19,7 +19,7 @@
         <AppTopBar class="view-header">
             <div>
                 <h2 class="view-title">Review History</h2>
-                <p class="view-subtitle">Security guardrails, automated code analysis, and vulnerability mitigation across repositories.</p>
+                <p class="view-subtitle">Automated AI code reviews across repositories, with per-PR findings and full history.</p>
             </div>
             <button class="btn-primary" @click="handleRefresh" :disabled="isRefreshing" title="Refresh review history">
                 <i class="fi fi-rr-refresh"></i>

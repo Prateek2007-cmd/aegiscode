@@ -1,0 +1,231 @@
+{
+  "engine": "vulnveto security modules (AegisCode demo harness)",
+  "repoUrl": "demo://local/aegiscode-demo-fixture (vulnapp: lodash 4.17.20 + synthetic secrets)",
+  "scannedAt": "2026-10-23T15:52:43.012Z",
+  "durationMs": 1489,
+  "aiEnrichment": "disabled (VULNVETO_AI=none) — deterministic template guidance only",
+  "sbomPath": "vulnveto-sbom.json",
+  "summary": {
+    "critical": 0,
+    "high": 4,
+    "medium": 3,
+    "low": 1,
+    "info": 1
+  },
+  "findings": [
+    {
+      "id": "osv-lodash-4.17.20-GHSA-29mw-wpgm-hmr9",
+      "category": "vulnerable-dependency",
+      "severity": "medium",
+      "confidence": "high",
+      "title": "lodash@4.17.20: Regular Expression Denial of Service (ReDoS) in lodash",
+      "evidence": {
+        "summary": "lodash@4.17.20 is affected by GHSA-29mw-wpgm-hmr9 (CVE-2020-28500). All versions of package lodash prior to 4.17.21 are vulnerable to Regular Expression Denial of Service (ReDoS) via the `toNumber`, `trim` and `trimEnd` functions. \n\nSteps to reproduce (provided by reporter Liyuan Chen):\n```js\nvar lo = require('lodash');\n\nfunction build_blank(n) {",
+        "location": "lodash@4.17.20",
+        "references": [
+          "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9"
+        ]
+      },
+      "fix": {
+        "description": "Upgrade lodash from 4.17.20 to 4.17.21 (first fixed version per OSV)",
+        "confidence": "high",
+        "action": {
+          "type": "bump",
+          "ecosystem": "npm",
+          "package": "lodash",
+          "from": "4.17.20",
+          "to": "4.17.21"
+        }
+      },
+      "module": "dep-scan"
+    },
+    {
+      "id": "osv-lodash-4.17.20-GHSA-35jh-r3h4-6jhm",
+      "category": "vulnerable-dependency",
+      "severity": "high",
+      "confidence": "high",
+      "title": "lodash@4.17.20: Command Injection in lodash",
+      "evidence": {
+        "summary": "lodash@4.17.20 is affected by GHSA-35jh-r3h4-6jhm (CVE-2021-23337). `lodash` versions prior to 4.17.21 are vulnerable to Command Injection via the template function.",
+        "location": "lodash@4.17.20",
+        "references": [
+          "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm"
+        ]
+      },
+      "fix": {
+        "description": "Upgrade lodash from 4.17.20 to 4.17.21 (first fixed version per OSV)",
+        "confidence": "high",
+        "action": {
+          "type": "bump",
+          "ecosystem": "npm",
+          "package": "lodash",
+          "from": "4.17.20",
+          "to": "4.17.21"
+        }
+      },
+      "module": "dep-scan"
+    },
+    {
+      "id": "osv-lodash-4.17.20-GHSA-f23m-r3pf-42rh",
+      "category": "vulnerable-dependency",
+      "severity": "medium",
+      "confidence": "high",
+      "title": "lodash@4.17.20: lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+      "evidence": {
+        "summary": "lodash@4.17.20 is affected by GHSA-f23m-r3pf-42rh (CVE-2026-2950). ### Impact\n\nLodash versions 4.17.23 and earlier are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. The fix for [CVE-2025-13465](https://github.com/lodash/lodash/security/advisories/GHSA-xxjr-mmjv-4gpg) only guards against string key members, so an atta",
+        "location": "lodash@4.17.20",
+        "references": [
+          "https://osv.dev/vulnerability/GHSA-f23m-r3pf-42rh"
+        ]
+      },
+      "fix": {
+        "description": "Upgrade lodash from 4.17.20 to 4.18.0 (first fixed version per OSV)",
+        "confidence": "high",
+        "action": {
+          "type": "bump",
+          "ecosystem": "npm",
+          "package": "lodash",
+          "from": "4.17.20",
+          "to": "4.18.0"
+        }
+      },
+      "module": "dep-scan"
+    },
+    {
+      "id": "osv-lodash-4.17.20-GHSA-r5fr-rjxr-66jc",
+      "category": "vulnerable-dependency",
+      "severity": "high",
+      "confidence": "high",
+      "title": "lodash@4.17.20: lodash vulnerable to Code Injection via `_.template` imports key names",
+      "evidence": {
+        "summary": "lodash@4.17.20 is affected by GHSA-r5fr-rjxr-66jc (CVE-2026-4800). ### Impact\n\nThe fix for [CVE-2021-23337](https://github.com/advisories/GHSA-35jh-r3h4-6jhm) added validation for the `variable` option in `_.template` but did not apply the same validation to `options.imports` key names. Both paths flow into the same `Function()` constructor sink",
+        "location": "lodash@4.17.20",
+        "references": [
+          "https://osv.dev/vulnerability/GHSA-r5fr-rjxr-66jc"
+        ]
+      },
+      "fix": {
+        "description": "Upgrade lodash from 4.17.20 to 4.18.0 (first fixed version per OSV)",
+        "confidence": "high",
+        "action": {
+          "type": "bump",
+          "ecosystem": "npm",
+          "package": "lodash",
+          "from": "4.17.20",
+          "to": "4.18.0"
+        }
+      },
+      "module": "dep-scan"
+    },
+    {
+      "id": "osv-lodash-4.17.20-GHSA-xxjr-mmjv-4gpg",
+      "category": "vulnerable-dependency",
+      "severity": "medium",
+      "confidence": "high",
+      "title": "lodash@4.17.20: Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions",
+      "evidence": {
+        "summary": "lodash@4.17.20 is affected by GHSA-xxjr-mmjv-4gpg (CVE-2025-13465). ### Impact\n\nLodash versions 4.0.0 through 4.17.22 are vulnerable to prototype pollution in the `_.unset` and `_.omit` functions. An attacker can pass crafted paths which cause Lodash to delete methods from global prototypes. \n\nThe issue permits deletion of properties but does not",
+        "location": "lodash@4.17.20",
+        "references": [
+          "https://osv.dev/vulnerability/GHSA-xxjr-mmjv-4gpg"
+        ]
+      },
+      "fix": {
+        "description": "Upgrade lodash from 4.17.20 to 4.17.23 (first fixed version per OSV)",
+        "confidence": "high",
+        "action": {
+          "type": "bump",
+          "ecosystem": "npm",
+          "package": "lodash",
+          "from": "4.17.20",
+          "to": "4.17.23"
+        }
+      },
+      "module": "dep-scan"
+    },
+    {
+      "id": "secret-generic-api-key-0-config_deploy_env",
+      "category": "leaked-secret",
+      "severity": "high",
+      "confidence": "high",
+      "title": "Possible Detected a Generic API Key, potentially exposing access to various services and sensitive operations. in config/deploy.env",
+      "evidence": {
+        "summary": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations. matched in config/deploy.env:5 (commit 8a1aaff5). Value shape: *** — rotate this credential immediately.",
+        "location": "config/deploy.env:5@8a1aaff5",
+        "references": [
+          "https://github.com/gitleaks/gitleaks"
+        ]
+      },
+      "fix": {
+        "description": "Revoke/rotate the credential, purge it from git history (e.g. git-filter-repo), and add the file pattern to .gitignore",
+        "confidence": "high",
+        "action": {
+          "type": "manual",
+          "kind": "rotate-secret"
+        }
+      },
+      "module": "secret-scan"
+    },
+    {
+      "id": "secret-aws-access-token-1-config_deploy_env",
+      "category": "leaked-secret",
+      "severity": "high",
+      "confidence": "high",
+      "title": "Possible Identified a pattern that may indicate AWS credentials, risking unauthorized cloud resource access and data breaches on AWS platforms. in config/deploy.env",
+      "evidence": {
+        "summary": "Identified a pattern that may indicate AWS credentials, risking unauthorized cloud resource access and data breaches on AWS platforms. matched in config/deploy.env:4 (commit 8a1aaff5). Value shape: *** — rotate this credential immediately.",
+        "location": "config/deploy.env:4@8a1aaff5",
+        "references": [
+          "https://github.com/gitleaks/gitleaks"
+        ]
+      },
+      "fix": {
+        "description": "Revoke/rotate the credential, purge it from git history (e.g. git-filter-repo), and add the file pattern to .gitignore",
+        "confidence": "high",
+        "action": {
+          "type": "manual",
+          "kind": "rotate-secret"
+        }
+      },
+      "module": "secret-scan"
+    },
+    {
+      "id": "risk-busfactor-lodash",
+      "category": "risky-package",
+      "severity": "low",
+      "confidence": "high",
+      "title": "lodash has a bus factor of 1",
+      "evidence": {
+        "summary": "\"lodash\" lists 1 maintainer(s) on npm. Single-maintainer packages are higher-risk for abandonment or account-takeover supply-chain attacks.",
+        "location": "lodash@4.17.20"
+      },
+      "module": "package-risk",
+      "fix": {
+        "description": "Review whether this dependency is intentional and maintained.",
+        "confidence": "low",
+        "action": {
+          "type": "manual"
+        }
+      }
+    },
+    {
+      "id": "sbom-generated-1",
+      "category": "sbom",
+      "severity": "info",
+      "confidence": "high",
+      "title": "SBOM generated: 1 components",
+      "evidence": {
+        "summary": "CycloneDX 1.5 software bill of materials with 1 npm components written to vulnveto-sbom.json.",
+        "location": "vulnveto-sbom.json"
+      },
+      "module": "sbom",
+      "fix": {
+        "description": "No action needed.",
+        "confidence": "low",
+        "action": {
+          "type": "manual"
+        }
+      }
+    }
+  ]
+}

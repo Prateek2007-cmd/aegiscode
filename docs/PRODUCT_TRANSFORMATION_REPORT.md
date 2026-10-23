@@ -52,6 +52,15 @@ In the review dashboard ([`ReviewHistoryView.vue`](file:///c:/Users/Prateek/Down
    - 📦 **Supply Chain & SBOM Defense:** Real-time dependency and CVE guardrails.
    - ⚡ **1-Click AI Remediation:** Diff synthesis and remediation patches delivered in PR threads.
 
+> **Correction (2026-10-23 audit):** the banner described above displayed **hardcoded, fabricated metrics**
+> (a "98 / A+" score, "0 Leaks", "0 CVEs", "Active Defense") with no backing scan data — deterministic secret
+> scanning, dependency/CVE matching, and SBOM generation were never implemented in this codebase. Presenting
+> those numbers violated the project's own honesty rules. `SecurityPostureBanner.vue` has been rewritten as an
+> honest capability-status panel: AI code review is labelled **Active** (the real, working feature), while secret
+> scanning, dependency/CVE scanning, and SBOM generation are labelled **Planned** with a link to
+> `docs/SECURITY_ROADMAP.md`. No fabricated scores or counts remain in the UI. The view copy in
+> `ReviewHistoryView.vue` and `CodeQualityView.vue` and the README's capability section were corrected the same way.
+
 ### 3.2 Visual & Navigation Modernization
 
 - **Header ([`AppHeader.vue`](file:///c:/Users/Prateek/Downloads/yof/frontend/src/components/navigation/AppHeader.vue)):** Integrated `AegisLogo`, updated product titles, elevated edition badges ("Enterprise Shield" / "Community Shield"), and removed obsolete links.

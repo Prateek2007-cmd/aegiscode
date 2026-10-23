@@ -131,6 +131,14 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresClientAccess: true, requiresCapability: 'code-insights' },
     },
     {
+      path: '/security-scans',
+      name: 'security-scans',
+      component: () => import('@/features/security-scans/views/SecurityScansView.vue'),
+      // Deterministic scanning: client access is the bar, same as code-quality.
+      // The server denies what the role does not allow, so this guard is a courtesy.
+      meta: { requiresAuth: true, requiresClientAccess: true },
+    },
+    {
       path: '/reviewer-performance',
       name: 'reviewer-performance',
       component: () => import('@/features/code-insights/views/ReviewerPerformanceView.vue'),

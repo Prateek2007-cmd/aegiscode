@@ -31,6 +31,7 @@ using MeisterDev.ProPR.CodeInsights.Controllers;
 using MeisterDev.ProPR.CodeInsights.Support;
 using MeisterDev.ProPR.CodeInsights.Workers;
 using MeisterDev.ProPR.CodeInsights;
+using MeisterDev.ProPR.SecurityScanning;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Infrastructure.Auth;
@@ -196,6 +197,7 @@ public static class ProPRHost
             builder.Services.AddUsageStatisticsModule(builder.Configuration, builder.Environment);
             builder.Services.AddReviewArchiveModule(builder.Configuration, builder.Environment);
             builder.Services.AddCodeInsightsModule(builder.Configuration, builder.Environment);
+            builder.Services.AddSecurityScanningModule(builder.Configuration, builder.Environment);
             builder.Services.AddProCursorRemoteMode(builder.Configuration);
             // Decides which clients a code-insight read may aggregate over. Two audiences, two rules, one place: the
             // code-quality views take client access, reviewer performance takes tenant administration.

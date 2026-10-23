@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <!--
+      AegisCode deterministic security scanning: dependency/CVE matching (OSV.dev),
+      secret detection (gitleaks), and CycloneDX SBOM generation, integrated as a
+      sidecar engine invoked by a background worker. Findings persist via EF Core
+      and are served through client-scoped API endpoints.
+    -->
+    <ItemGroup>
+        <ProjectReference Include="..\MeisterDev.ProPR.Web\MeisterDev.ProPR.Web.csproj"/>
+        <ProjectReference Include="..\MeisterDev.ProPR.Domain\MeisterDev.ProPR.Domain.csproj"/>
+        <ProjectReference Include="..\MeisterDev.ProPR.Application\MeisterDev.ProPR.Application.csproj"/>
+        <ProjectReference Include="..\MeisterDev.ProPR.Infrastructure\MeisterDev.ProPR.Infrastructure.csproj"/>
+    </ItemGroup>
+
+    <!-- Controllers and hosted workers ship with the feature, so it needs the web framework. -->
+    <ItemGroup>
+        <FrameworkReference Include="Microsoft.AspNetCore.App"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.7"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="MeisterDev.ProPR.SecurityScanning.Tests"/>
+        <InternalsVisibleTo Include="DynamicProxyGenAssembly2"/>
+    </ItemGroup>
+
+    <!-- The Node sidecar harness ships next to the module assembly. -->
+    <ItemGroup>
+        <Content Include="Resources\scan-harness.mjs">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
+    </ItemGroup>
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+    </PropertyGroup>
+
+</Project>

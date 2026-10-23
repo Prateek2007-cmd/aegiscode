@@ -1,0 +1,29 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:f44d8e44-eab1-487e-8e25-61907b5dc0cb",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-23T15:52:41.572Z",
+    "component": {
+      "bom-ref": "aegiscode-demo-fixture (vulnapp: lodash 4.17.20 + synthetic secrets)",
+      "type": "application",
+      "name": "aegiscode-demo-fixture (vulnapp: lodash 4.17.20 + synthetic secrets)"
+    },
+    "tools": [
+      {
+        "name": "vulnveto",
+        "version": "0.1.0"
+      }
+    ]
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:npm/lodash@4.17.20",
+      "type": "library",
+      "name": "lodash",
+      "version": "4.17.20",
+      "purl": "pkg:npm/lodash@4.17.20"
+    }
+  ]
+}
