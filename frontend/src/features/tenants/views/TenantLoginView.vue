@@ -6,9 +6,9 @@
   <div class="login-container tenant-login-container">
     <div class="login-view tenant-login-view">
       <div class="login-brand tenant-login-brand">
-        <img :src="icon" alt="" aria-hidden="true" class="login-icon" />
+        <AegisLogo :size="48" />
         <div>
-          <p class="tenant-login-eyebrow">Tenant Sign-In</p>
+          <p class="tenant-login-eyebrow">AegisCode Tenant Sign-In</p>
           <h1>{{ vm.loginOptions.value?.tenantSlug ?? vm.tenantSlug }}</h1>
         </div>
       </div>
@@ -41,7 +41,7 @@
 import { RouterLink } from 'vue-router'
 import { useTenantLoginViewModel } from '@/features/tenants/view-models/useTenantLoginViewModel'
 import TenantLoginProviders from '@/features/tenants/components/TenantLoginProviders.vue'
-import icon from '@/assets/logo_standalone.png'
+import AegisLogo from '@/components/AegisLogo.vue'
 
 const vm = useTenantLoginViewModel()
 </script>

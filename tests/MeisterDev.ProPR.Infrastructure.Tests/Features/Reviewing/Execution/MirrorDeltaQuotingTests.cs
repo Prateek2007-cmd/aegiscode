@@ -38,9 +38,16 @@ public sealed class MirrorDeltaQuotingTests : IDisposable
     {
         try
         {
-            Directory.Delete(this._repoPath, recursive: true);
+            if (Directory.Exists(this._repoPath))
+            {
+                foreach (var file in Directory.EnumerateFiles(this._repoPath, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(this._repoPath, recursive: true);
+            }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A leftover temp directory is left for the operating system to clean. Failing the test run
             // over it would serve no purpose.

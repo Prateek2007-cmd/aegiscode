@@ -17,12 +17,16 @@
         </template>
 
         <AppTopBar class="view-header">
-            <h2 class="view-title">Review History</h2>
+            <div>
+                <h2 class="view-title">Review History</h2>
+                <p class="view-subtitle">Security guardrails, automated code analysis, and vulnerability mitigation across repositories.</p>
+            </div>
             <button class="btn-primary" @click="handleRefresh" :disabled="isRefreshing" title="Refresh review history">
                 <i class="fi fi-rr-refresh"></i>
                 {{ isRefreshing ? 'Refreshing…' : 'Refresh' }}
             </button>
         </AppTopBar>
+        <SecurityPostureBanner />
         <ReviewHistorySection ref="historySection" />
     </PageWithSidebar>
 </template>
@@ -31,6 +35,7 @@
 import { ref } from 'vue'
 import { AppNavDrawer, AppTopBar, PageWithSidebar } from '@/components'
 import ReviewHistorySection from '@/features/reviews/components/ReviewHistorySection.vue'
+import SecurityPostureBanner from '@/features/reviews/components/SecurityPostureBanner.vue'
 
 const historySection = ref<InstanceType<typeof ReviewHistorySection>>()
 const isRefreshing = ref(false)
@@ -51,12 +56,20 @@ async function handleRefresh() {
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
 .view-title {
     margin: 0;
-    flex: 1;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.view-subtitle {
+    margin: 0.35rem 0 0;
+    font-size: 0.88rem;
+    color: var(--color-text-muted);
 }
 
 .btn-primary {

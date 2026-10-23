@@ -6,8 +6,11 @@
   <div class="login-container">
     <div class="login-view">
       <div class="login-brand">
-        <img :src="icon" alt="" aria-hidden="true" class="login-icon"/>
-        <h1>Meister ProPR Admin</h1>
+        <AegisLogo :size="52" />
+        <div>
+          <h1>AegisCode</h1>
+          <p class="login-tagline">Enterprise Developer Security &amp; Code Review</p>
+        </div>
       </div>
       <div v-if="vm.authOptions.value" class="login-auth-summary">
         <span :class="['chip', vm.authOptions.value.edition === 'commercial' ? 'chip-success' : 'chip-muted']">
@@ -80,12 +83,19 @@
 
 <script setup lang="ts">
 import { useLoginViewModel } from '@/features/auth/view-models/useLoginViewModel'
-import icon from '@/assets/logo_standalone.png'
+import AegisLogo from '@/components/AegisLogo.vue'
 
 const vm = useLoginViewModel()
 </script>
 
 <style scoped>
+.login-tagline {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
 .login-auth-summary {
   margin-bottom: 1.25rem;
   text-align: center;

@@ -352,9 +352,16 @@ public sealed class ProviderHostPrimitiveHarness : IAsyncDisposable
 
         try
         {
-            Directory.Delete(this._keysDirectory, recursive: true);
+            if (Directory.Exists(this._keysDirectory))
+            {
+                foreach (var file in Directory.EnumerateFiles(this._keysDirectory, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(this._keysDirectory, recursive: true);
+            }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A key file still open leaves a temporary directory behind and nothing else.
         }

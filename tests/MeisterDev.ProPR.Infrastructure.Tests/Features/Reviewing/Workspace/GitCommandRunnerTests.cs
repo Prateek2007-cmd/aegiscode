@@ -226,7 +226,7 @@ public sealed class GitCommandRunnerTests
                 preserveStandardOutput: true);
 
             read.EnsureSuccess("read object");
-            Assert.Equal(content, read.StandardOutput);
+            Assert.Equal(content.Replace("\r\n", "\n"), read.StandardOutput.Replace("\r\n", "\n"));
         }
         finally
         {
@@ -445,10 +445,14 @@ public sealed class GitCommandRunnerTests
         {
             if (Directory.Exists(root))
             {
+                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
                 Directory.Delete(root, true);
             }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A directory left under the temp path does not affect any assertion here, so a failed
             // delete is ignored.

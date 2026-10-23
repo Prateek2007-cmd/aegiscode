@@ -1,6 +1,6 @@
-# Frontend
+# AegisCode Security Platform — Frontend
 
-This app is the active Vuetify-based frontend for Meister ProPR and is developed in `frontend/`.
+This app is the active Vuetify-based developer security console for AegisCode and is developed in `frontend/`.
 
 ## Runtime Modes
 

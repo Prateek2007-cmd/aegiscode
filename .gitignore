@@ -112,3 +112,8 @@ frontend/openapi.json
 frontend/src/services/generated/
 .vscode/mcp.json
 .zed/settings.json
+
+# Local dev and cache
+.vite/
+frontend/.vite/
+.dev-env/

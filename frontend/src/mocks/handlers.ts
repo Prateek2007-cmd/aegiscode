@@ -415,7 +415,7 @@ const mockTenantAccessToken = createMockJwt({ global_role: 'User', unique_name: 
 
 // Mock session cookie helpers — a real (non-httpOnly) document.cookie so the mock can demonstrate
 // cross-tab session sharing the way the real httpOnly backend cookie does.
-const MOCK_SESSION_COOKIE = 'meisterpropr_refresh'
+const MOCK_SESSION_COOKIE = 'aegiscode_refresh'
 function setMockSessionCookie(value: 'admin' | 'tenant' | 'sso'): void {
   document.cookie = `${MOCK_SESSION_COOKIE}=${value}; path=/; samesite=lax`
 }

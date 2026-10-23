@@ -6,10 +6,10 @@
   <div class="code-quality">
     <header class="page-header">
       <div>
-        <h1>Code Quality</h1>
+        <h1>Security &amp; Code Quality Insights</h1>
         <p class="page-copy">
-          Which problems a codebase keeps producing, and where they concentrate. Built from the findings reviews
-          have already produced on your pull requests, with no extra analysis. Nothing here judges the reviewer.
+          Real-time visibility into software vulnerabilities (CWE), OWASP risk categories, code hotspots, and remediation
+          survival across repositories, continuously updated by AegisCode review guardrails.
         </p>
       </div>
     </header>

@@ -236,6 +236,10 @@ internal sealed class GitReviewRepositoryWorkspaceManager(
         var workspaceRoot = Path.Combine(workspacesRoot, workspaceKey);
         if (Directory.Exists(workspaceRoot))
         {
+            foreach (var file in Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+            }
             Directory.Delete(workspaceRoot, true);
         }
 
@@ -417,6 +421,10 @@ internal sealed class GitReviewRepositoryWorkspaceManager(
         {
             if (Directory.Exists(path))
             {
+                foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
                 Directory.Delete(path, true);
             }
         }
@@ -455,7 +463,7 @@ internal sealed class GitReviewRepositoryWorkspaceManager(
     {
         var result = await this.RunTransferAsync(
             mirrorPath,
-            [.. transportArguments, "worktree", "add", "--detach", "--force", worktreePath, commitSha],
+            [.. transportArguments, "-c", "core.autocrlf=false", "worktree", "add", "--detach", "--force", worktreePath, commitSha],
             authEnvironment,
             worktreePath,
             CheckoutStage,

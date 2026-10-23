@@ -142,6 +142,22 @@ public static class ProPRHost
                 builder.Configuration.AddEnvironmentVariables();
             }
 
+            // Bridge AEGIS_* environment variables into MEISTER_* configuration keys for backwards-compatible fallback
+            var aegisBridge = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            {
+                if (entry.Key is string key && key.StartsWith("AEGIS_", StringComparison.OrdinalIgnoreCase))
+                {
+                    var mappedKey = "MEISTER_" + key["AEGIS_".Length..];
+                    aegisBridge[mappedKey] = entry.Value?.ToString();
+                    aegisBridge[key] = entry.Value?.ToString();
+                }
+            }
+            if (aegisBridge.Count > 0)
+            {
+                builder.Configuration.AddInMemoryCollection(aegisBridge);
+            }
+
             var hasDatabaseConnectionString = builder.Configuration.HasDatabaseConnectionString();
             var isTesting = builder.Environment.IsEnvironment("Testing");
             var disableHostedServices = builder.Configuration.GetValue<bool>("MEISTER_DISABLE_HOSTED_SERVICES");
@@ -603,7 +619,12 @@ public static class ProPRHost
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(options =>
             {
-                options.SwaggerDoc("v1", new OpenApiInfo { Title = "Meister DEV ProPR API", Version = "v1" });
+                options.SwaggerDoc("v1", new OpenApiInfo
+                {
+                    Title = "AegisCode Security API",
+                    Version = "v1",
+                    Description = "AegisCode — Enterprise Developer Security, Automated Code Review & Supply Chain Guardrails"
+                });
                 options.SchemaFilter<LicensingNullableReferenceSchemaFilter>();
                 options.SchemaFilter<NullableReferenceSchemaFilter>();
                 options.SchemaFilter<WithheldReviewFindingSchemaFilter>();
@@ -856,6 +877,7 @@ public static class ProPRHost
             // A host's own endpoints come after ProPR's, behind the same authentication and authorization middleware.
             options.MapEndpoints?.Invoke(app);
 
+            Log.Information("Starting AegisCode Security Platform (Intelligent Code Review & Security Guardrails)...");
             await app.RunAsync();
         }
         catch (Exception ex) when (ex is not HostAbortedException and not InvalidOperationException)
@@ -879,7 +901,7 @@ public static class ProPRHost
             .ReadFrom.Configuration(context.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext()
-            .Enrich.WithProperty("Application", "Meister DEV ProPR");
+            .Enrich.WithProperty("Application", "AegisCode Security Platform");
 
         SecretLogRedaction.Apply(configuration);
 
@@ -893,7 +915,7 @@ public static class ProPRHost
         {
             configuration.WriteTo.GrafanaLoki(
                 lokiUrl,
-                [new LokiLabel { Key = "app", Value = "meister-dev-propr" }]);
+                [new LokiLabel { Key = "app", Value = "aegiscode" }]);
         }
     }
 }

@@ -192,10 +192,14 @@ public sealed class GitReviewRepositoryWorkspaceDisposalTests
         {
             if (Directory.Exists(root))
             {
+                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
                 Directory.Delete(root, true);
             }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A directory left under the temp path does not affect any assertion here, so a failed
             // delete is ignored.

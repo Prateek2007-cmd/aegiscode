@@ -1,99 +1,109 @@
 <p align="center">
-  <img src="resources/images/logo.png" alt="ProPR" width="180">
+  <img src="frontend/src/assets/aegis_logo.svg" alt="AegisCode" width="120">
   <br>
-  <em>AI code review for Azure DevOps, GitHub, GitLab, and Forgejo</em>
+  <h1 align="center">AegisCode</h1>
+  <p align="center"><em>Intelligent Developer Security, Automated Code Review &amp; Supply Chain Guardrails</em></p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/meister-dev-ai/propr/actions/workflows/ci.yml"><img src="https://github.com/meister-dev-ai/propr/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-ELv2-blue.svg" alt="License: ELv2"></a>
   <img src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet" alt=".NET 10">
-  <a href="https://techcommunity.microsoft.com/blog/azure-events/announcing-the-ai-dev-days-hackathon-winners/4513528"><img src="https://img.shields.io/badge/🏆%20AI%20Dev%20Days-Best%20Enterprise%20Solution-gold" alt="AI Dev Days Hackathon - Best Enterprise Solution"></a>
+  <img src="https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs" alt="Vue 3.5">
+  <img src="https://img.shields.io/badge/Security-OWASP%20%7C%20CWE%20%7C%20Secrets-emerald" alt="Security Guardrails">
 </p>
 
 ---
 
-ProPR reviews your pull and merge requests with AI, on the SCM host you already use. It reads the
-changed files, comments on specific lines, and posts a summary, either automatically as pull
-requests come in or on demand from CI.
+## Overview
 
-## What we care about
+**AegisCode** is an open, self-hosted developer security platform designed to intercept vulnerabilities, secret leaks, and architectural flaws directly in pull and merge requests before they reach production.
 
-- **Your code stays where it is.** Reviews run against Azure DevOps, GitHub, GitLab, and
-  Forgejo-family hosts. ProPR reads each repository in place.
-- **Your AI, your keys.** Bring your own model: Azure OpenAI / AI Foundry, OpenAI, Anthropic, AWS
-  Bedrock, Google Gemini and Vertex AI, a LiteLLM gateway, or any OpenAI-compatible endpoint you point
-  it at, including ones you host yourself. ProPR ships no model of its own and sends your code only to
-  the endpoint you configure.
-- **Self-hosted.** You run the whole stack. Provider and AI credentials are scoped per client and
-  protected at rest.
-- **Every decision is on the record.** Reviews, AI calls, tool calls, filter decisions and timing are
-  stored, and the management UI shows them. Verification-withheld findings remain internal evidence;
-  enabled Code Insights collection records their nonpublication without assigning outcome credit.
-- **Tuned for cost and relevance.** Token-aware reviews, per-file passes and relevance filtering limit
-  what a review sends to the model and what it posts back.
+Operating across **GitHub**, **GitLab**, **Azure DevOps**, and **Forgejo**, AegisCode inspects code changes using deep AST analysis, semantically aware AI models, and policy guardrails, posting precise inline security findings and automated remediation patches.
 
-## Get started
+## Key Security Pillars
 
-The example Docker Compose stack in this repository is the fastest way to start. Clone the repository,
-copy the example environment file, and fill in the four required values the
-[quickstart](docs/quickstart.md) lists.
+- 🛡️ **Zero-Exposure Secret Scanning:** Intercepts leaked API keys, database credentials, JWT secrets, and private keys within pull request diffs before code merge.
+- 🔍 **OWASP Top 10 & CWE Weakness Detection:** Enforces secure coding standards (SQL/Command Injection, SSRF, XSS, Path Traversal, Insecure Deserialization, Broken Access Control) with context-aware semantic analysis.
+- 📦 **Supply Chain & SBOM Guardrails:** Tracks dependencies, flags known CVEs, and prevents malicious or unlicensed package introductions.
+- 💡 **Automated Remediation Diffs:** Generates synthesized, copy-pasteable or one-click fix patches for security findings directly in SCM review threads.
+- 🔒 **Zero Code Exfiltration (Self-Hosted):** You control where code and data reside. AegisCode runs entirely within your perimeter, connecting directly to your SCM hosts and self-managed AI gateways.
+- 🤖 **Bring Your Own AI (BYO-AI):** Connect Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, Google Vertex AI, LiteLLM gateways, or local LLMs (e.g. Ollama, vLLM). No proprietary AI models or third-party training on your proprietary code.
+- 🏢 **Multi-Tenancy & Fleet Runners:** Scalable multi-tenant architecture with distributed runner fleet management, thread memory resolution, and tenant-scoped budgets.
+
+## Quickstart
+
+The fastest way to deploy AegisCode for evaluation is via the bundled Docker Compose stack:
 
 ```bash
-git clone https://github.com/meister-dev-ai/propr.git
-cd propr
+# 1. Clone the repository
+git clone https://github.com/meister-dev-ai/propr.git aegiscode
+cd aegiscode
+
+# 2. Configure the environment
 cp example/docker-compose/.env.example example/docker-compose/.env
-# edit example/docker-compose/.env
+# Edit example/docker-compose/.env with your JWT secret and database credentials
+
+# 3. Launch the platform
 cd example/docker-compose
 docker compose up --build
 ```
 
-That builds the three ProPR images from the checkout. To run the published release images instead, see
-[Running published images](docs/operate/deploy.md#running-published-images).
+Access the AegisCode Security Console at **`https://localhost:5443`**.
 
-The [quickstart](docs/quickstart.md) covers the requirements, where to sign in, connecting your first
-provider and AI model, and getting a first review posted. The [deployment guide](docs/operate/deploy.md)
-covers what to change once you keep the installation. The compose stack is for evaluation;
-`example/azure/.azure/` deploys the same stack to Azure Container Apps.
+## Development Setup
 
-Guided crawl, webhook, mention and ProCursor configuration starts with a saved client connection.
-The connection supplies its accessible scopes, native hierarchy and source capabilities. ProCursor
-knowledge-source creation is available for connections with a registered knowledge-source capability.
+### Backend (.NET 10)
+```powershell
+# Restore dependencies and build solution
+dotnet restore MeisterDev.ProPR.slnx
+dotnet build MeisterDev.ProPR.slnx --no-restore
+
+# Run local API host
+dotnet run --project src/MeisterDev.ProPR.Api/MeisterDev.ProPR.Api.csproj
+```
+
+### Frontend (Vue 3 + Vuetify)
+```bash
+cd frontend
+npm install
+
+# Run in mock mode (MSW simulated security fixtures)
+npm run mock
+
+# Run against local live backend
+npm run dev
+
+# Run full test suite & type verification
+npm test
+npm run type-check
+npm run build
+```
+
+## Architecture & Configuration
+
+AegisCode supports flexible configuration through both modern `AEGIS_*` variables and backwards-compatible `MEISTER_*` environment bindings:
+
+| Variable | Description |
+|---|---|
+| `AEGIS_JWT_SECRET` | 256-bit cryptographic key used for HS256 authentication tokens |
+| `AEGIS_BOOTSTRAP_ADMIN_USER` | Initial administrative user seeded on empty database initialization |
+| `AEGIS_BOOTSTRAP_ADMIN_PASSWORD` | Initial password for the administrator account |
+| `AEGIS_PUBLIC_BASE_URL` | Public base endpoint advertised to SCM webhook listeners |
+| `DB_CONNECTION_STRING` | PostgreSQL connection string (with pgvector support enabled) |
 
 ## Documentation
 
-Open a pull request from **Reviews** to inspect its review history, discussion, and retained diffs. The
-**Browser** tab fills the content area with independently scrolling file and diff panes, file search, and
-finding filters. See [the PR review screen](docs/concepts/reviews.md#pr-review-screen).
+Full architectural and operational guides are organized under `docs/`:
+- [Quickstart Guide](docs/quickstart.md)
+- [Architecture & Boundaries](docs/architecture/scm-provider-boundaries.md)
+- [Code Insights & Hotspots](docs/architecture/code-insights.md)
+- [Security & Ingress Reference](docs/reference/security.md)
+- [Product Transformation Report](docs/PRODUCT_TRANSFORMATION_REPORT.md)
 
-All documentation is under [docs/](docs/index.md), which maps every page and gives a reading order.
-Start at one of these:
+## License & Attribution
 
-| Document | Read it when |
-|---|---|
-| [Quickstart](docs/quickstart.md) | You want ProPR running on one machine, with one review posted on a real pull request |
-| [How it works](docs/concepts/how-it-works.md) | You want to know what you deployed and how a review gets triggered |
-| [Reviews](docs/concepts/reviews.md) | You need to know what happens inside a review, or why a finding was not posted |
-| [Reviewer performance](docs/concepts/reviewer-performance.md) | You want score ranges over covered pull requests, qualified model recall/F1, overall precision, evidence recovery, or saved reports |
-| [SCM platforms](docs/platforms/index.md) | You are connecting Azure DevOps, GitHub, GitLab or Forgejo, on-prem included |
-| [AI providers](docs/ai/index.md) | You are choosing a model provider, or deciding between a native family and a gateway |
-| [Deploying](docs/operate/deploy.md) | You are past evaluation and need ingress, images, workers and persistence configured |
-| [API reference](docs/reference/api.md) | You are scripting setup, or triggering reviews from CI |
-| [Security](docs/reference/security.md) | You are reviewing where code goes, secrets, sessions, and tenant isolation |
-| [Editions](docs/reference/editions.md) | Something is refused and you suspect it needs a commercial license |
-| [Usage statistics](docs/reference/usage-statistics.md) | You need the field-by-field payload of the daily report, and how to switch it off |
-| [Code Insights architecture](docs/architecture/code-insights.md) | You need the analytics evidence, projection, authorization and report ownership boundaries |
+AegisCode contains and builds upon technology originally authored by **Andreas Rain** under the **Elastic License 2.0 (ELv2)**.
 
-SCM contract and adapter ownership is documented in [SCM provider boundaries](docs/architecture/scm-provider-boundaries.md).
-
-## License
-
-ProPR is distributed under the Elastic License 2.0. Some features in the tree require a commercial
-license to activate or use, self-hosted deployments included.
-
-- [LICENSE](LICENSE) - repository-wide source license
-- [LICENSING.md](LICENSING.md) - how source files are marked, and what a marking means
-- [COMMERCIAL.md](COMMERCIAL.md) - when a commercial license is required
-- [COMMERCIAL-LICENSE-POLICY.md](COMMERCIAL-LICENSE-POLICY.md) - which installations one license may be activated on
-- [SECURITY.md](SECURITY.md) - reporting vulnerabilities
-- [CONTRIBUTING.md](CONTRIBUTING.md) - how to contribute
+- Original Copyright (c) Andreas Rain. All rights reserved.
+- Distributed under the terms of the [Elastic License 2.0](LICENSE).
+- See [NOTICE](NOTICE) and [LICENSING.md](LICENSING.md) for complete license policies and attribution.

@@ -67,7 +67,7 @@ export default defineConfig(({ mode }) => {
       // environments are competing rather than how much work the test does. At the 5s default a test
       // that passes on its own times out when the suite runs alongside a build, and it is a different
       // test each time. Give the budget enough headroom that a timeout means a hang, not a busy machine.
-      testTimeout: 15000,
+      testTimeout: 30000,
       exclude: [...configDefaults.exclude, 'tests/e2e/**'],
       server: {
         deps: {

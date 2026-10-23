@@ -102,9 +102,16 @@ public sealed class ProviderAddInStartupTests : IDisposable
     {
         try
         {
-            Directory.Delete(this._directory, recursive: true);
+            if (Directory.Exists(this._directory))
+            {
+                foreach (var file in Directory.EnumerateFiles(this._directory, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(this._directory, recursive: true);
+            }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A loaded assembly can keep its file open, and a directory left in the temporary path is not worth
             // failing a test over.

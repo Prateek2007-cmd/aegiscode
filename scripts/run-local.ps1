@@ -623,11 +623,11 @@ if (-not $ProCursorDbConnectionString) {
 $apiDbTarget = Get-ConnectionTarget -ConnectionString $DbConnectionString
 $proCursorDbTarget = Get-ConnectionTarget -ConnectionString $ProCursorDbConnectionString
 if ($DbConnectionString -eq $ProCursorDbConnectionString) {
-    Write-RunLocalMessage -Message "Using shared local PostgreSQL target for ProPR and ProCursor ($apiDbTarget)" -Color Cyan
+    Write-RunLocalMessage -Message "Using shared local PostgreSQL target for AegisCode and auxiliary services ($apiDbTarget)" -Color Cyan
 }
 else {
-    Write-RunLocalMessage -Message "Using ProPR PostgreSQL target ($apiDbTarget)" -Color Cyan
-    Write-RunLocalMessage -Message "Using ProCursor PostgreSQL target ($proCursorDbTarget)" -Color Cyan
+    Write-RunLocalMessage -Message "Using AegisCode PostgreSQL target ($apiDbTarget)" -Color Cyan
+    Write-RunLocalMessage -Message "Using auxiliary service PostgreSQL target ($proCursorDbTarget)" -Color Cyan
 }
 
 Write-RunLocalMessage -Message "Using data protection key ring at $DataProtectionKeysDir" -Color DarkGray

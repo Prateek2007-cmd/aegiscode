@@ -52,6 +52,7 @@ public sealed class GitReviewRepositoryWorkspaceManagerTests : IAsyncLifetime
 
         // Serving a filtered fetch is opt-in for a local repository, and the blobless policy needs it.
         await GitAsync(this._originPath, "config", "uploadpack.allowFilter", "true");
+        await GitAsync(this._originPath, "config", "core.autocrlf", "false");
 
         await File.WriteAllTextAsync(Path.Combine(this._originPath, "kept.txt"), "kept\n");
         await File.WriteAllTextAsync(Path.Combine(this._originPath, "changed.txt"), "before\n");
@@ -892,8 +893,8 @@ public sealed class GitReviewRepositoryWorkspaceManagerTests : IAsyncLifetime
         // as arguments after the subcommand, where git would read them as paths.
         var checkout = git.Invocations.Single(arguments => arguments.Contains("add") && arguments.Contains("worktree"));
         Assert.Equal(
-            ["-c", "http.followRedirects=false", "-c", "http.curloptResolve=git.example.com:443:93.184.216.34", "worktree"],
-            checkout.Take(5));
+            ["-c", "http.followRedirects=false", "-c", "http.curloptResolve=git.example.com:443:93.184.216.34", "-c", "core.autocrlf=false", "worktree"],
+            checkout.Take(7));
     }
 
     // The opt-in leaves no address to pin, and a redirect off the remote still reaches a host nothing
@@ -1273,10 +1274,14 @@ public sealed class GitReviewRepositoryWorkspaceManagerTests : IAsyncLifetime
         {
             if (Directory.Exists(root))
             {
+                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
                 Directory.Delete(root, true);
             }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A directory left under the temp path does not affect any assertion here, so a failed
             // delete is ignored.

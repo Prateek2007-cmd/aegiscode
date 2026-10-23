@@ -95,6 +95,10 @@ public static class ClientsModuleServiceCollectionExtensions
             services.AddScoped<ILogicalModelResolver, LogicalModelResolver>();
             services.AddScoped<ILogicalModelMigrationBackfill, LogicalModelMigrationBackfill>();
         }
+        else
+        {
+            services.TryAddScoped<IScmProviderRegistry, MeisterDev.ProPR.Infrastructure.Features.Reviewing.Offline.NoOpScmProviderRegistry>();
+        }
 
         return services;
     }

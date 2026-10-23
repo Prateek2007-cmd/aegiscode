@@ -25,9 +25,16 @@ public sealed class GitUploadPackTransportTests : IDisposable
     {
         try
         {
-            Directory.Delete(this._root, true);
+            if (Directory.Exists(this._root))
+            {
+                foreach (var file in Directory.EnumerateFiles(this._root, "*", SearchOption.AllDirectories))
+                {
+                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                }
+                Directory.Delete(this._root, true);
+            }
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A leftover temp directory is not worth failing a test run over.
         }

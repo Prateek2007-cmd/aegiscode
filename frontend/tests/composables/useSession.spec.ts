@@ -3,12 +3,12 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const ACCESS_TOKEN_KEY = 'meisterpropr_access_token'
-const REFRESH_TOKEN_KEY = 'meisterpropr_refresh_token'
-const CLIENT_ROLES_KEY = 'meisterpropr_client_roles'
-const CAPABILITIES_KEY = 'meisterpropr_capabilities'
-const TENANT_ROLES_KEY = 'meisterpropr_tenant_roles'
-const LOCAL_PASSWORD_KEY = 'meisterpropr_has_local_password'
+const ACCESS_TOKEN_KEY = 'aegiscode_access_token'
+const REFRESH_TOKEN_KEY = 'aegiscode_refresh_token'
+const CLIENT_ROLES_KEY = 'aegiscode_client_roles'
+const CAPABILITIES_KEY = 'aegiscode_capabilities'
+const TENANT_ROLES_KEY = 'aegiscode_tenant_roles'
+const LOCAL_PASSWORD_KEY = 'aegiscode_has_local_password'
 
 function encodeBase64Url(value: string): string {
   return btoa(value)

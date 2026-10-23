@@ -8,13 +8,13 @@ import type { components } from '@/types'
 import { type RoleLevel } from '@/composables/roles'
 import { normalizeCapability, type PremiumCapability } from '@/services/licensingShared'
 
-const CLIENT_ROLES_KEY = 'meisterpropr_client_roles'
+const CLIENT_ROLES_KEY = 'aegiscode_client_roles'
 /** Cross-tab logout signal: writing it fires a `storage` event in other tabs (see main.ts). */
-export const LOGOUT_BROADCAST_KEY = 'meisterpropr_logout_signal'
-const EDITION_KEY = 'meisterpropr_installation_edition'
-const CAPABILITIES_KEY = 'meisterpropr_capabilities'
-const TENANT_ROLES_KEY = 'meisterpropr_tenant_roles'
-const LOCAL_PASSWORD_KEY = 'meisterpropr_has_local_password'
+export const LOGOUT_BROADCAST_KEY = 'aegiscode_logout_signal'
+const EDITION_KEY = 'aegiscode_installation_edition'
+const CAPABILITIES_KEY = 'aegiscode_capabilities'
+const TENANT_ROLES_KEY = 'aegiscode_tenant_roles'
+const LOCAL_PASSWORD_KEY = 'aegiscode_has_local_password'
 
 type InstallationEdition = components['schemas']['InstallationEdition']
 type PremiumCapabilityDto = components['schemas']['PremiumCapabilityDto']

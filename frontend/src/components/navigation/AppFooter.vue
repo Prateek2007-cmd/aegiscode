@@ -4,8 +4,7 @@
 <template>
   <footer class="app-footer-shell">
     <slot>
-      Powered by
-      <a href="https://meister-dev.ai" target="_blank" rel="noopener noreferrer" class="footer-link">meister-dev.ai</a>
+      <span>Powered by AegisCode Platform &middot; Intelligent Developer Security &amp; Automated Code Review Guardrails</span>
     </slot>
   </footer>
 </template>

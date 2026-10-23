@@ -30,7 +30,18 @@ public sealed class KeyRingProtectorAddInTests : IDisposable
     {
         if (Directory.Exists(this._stagingRoot))
         {
-            Directory.Delete(this._stagingRoot, true);
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(this._stagingRoot, "*", SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+                Directory.Delete(this._stagingRoot, true);
+            }
+            catch (Exception)
+            {
+                // Best-effort cleanup of temporary test directory on Windows
+            }
         }
     }
 

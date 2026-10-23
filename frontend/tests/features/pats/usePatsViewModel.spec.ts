@@ -98,7 +98,7 @@ describe('usePatsViewModel (FR-007, FR-008, FR-012)', () => {
     await vm.createToken()
     expect(service.create).toHaveBeenCalledWith(
       { Authorization: 'Bearer token-abc' },
-      expect.objectContaining({ label: 'pat', expiresAt: expect.stringMatching(/2027-01-01T1[12]:00:00\.000Z/) }),
+      expect.objectContaining({ label: 'pat', expiresAt: new Date('2027-01-01T12:00').toISOString() }),
     )
   })
 

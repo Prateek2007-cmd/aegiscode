@@ -224,9 +224,16 @@ public sealed class ConformanceKitTests
         {
             try
             {
-                Directory.Delete(this.Path, recursive: true);
+                if (Directory.Exists(this.Path))
+                {
+                    foreach (var file in Directory.EnumerateFiles(this.Path, "*", SearchOption.AllDirectories))
+                    {
+                        try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    }
+                    Directory.Delete(this.Path, recursive: true);
+                }
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
             }
         }

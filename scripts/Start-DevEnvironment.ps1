@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    Starts the ProPR dev environment (backend, frontend, nginx) without Docker.
+    Starts the AegisCode dev environment (backend, frontend, nginx) without Docker.
 
 .DESCRIPTION
     Builds the frontend, then runs nginx as a Podman container that proxies requests
@@ -264,7 +264,7 @@ if ($SkipBackend) {
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host '  ┌──────────────────────────────────────────────────┐' -ForegroundColor Cyan
-Write-Host '  │  MeisterProPR dev environment running            │' -ForegroundColor Cyan
+Write-Host '  │  AegisCode Platform dev environment running      │' -ForegroundColor Cyan
 Write-Host '  ├──────────────────────────────────────────────────┤' -ForegroundColor Cyan
 Write-Host "  │  Frontend  →  http://localhost:$ProxyPort/admin/        │" -ForegroundColor Cyan
 Write-Host "  │  API       →  http://localhost:$ProxyPort               │" -ForegroundColor Cyan

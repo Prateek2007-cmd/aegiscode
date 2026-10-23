@@ -8,20 +8,35 @@ import { aliases, mdi } from 'vuetify/iconsets/mdi'
 
 export const vuetify = createVuetify({
   theme: {
-    defaultTheme: 'meisterDark',
+    defaultTheme: 'aegisDark',
     themes: {
+      aegisDark: {
+        dark: true,
+        colors: {
+          background: '#090d16',
+          surface: '#111827',
+          'surface-variant': '#1e293b',
+          primary: '#0ea5e9',
+          secondary: '#64748b',
+          accent: '#06b6d4',
+          error: '#f43f5e',
+          info: '#38bdf8',
+          success: '#10b981',
+          warning: '#f59e0b',
+        },
+      },
       meisterDark: {
         dark: true,
         colors: {
-          background: '#0f1116',
-          surface: '#161a22',
-          primary: '#5b8def',
-          secondary: '#7c8aa8',
-          accent: '#9cdcfe',
-          error: '#e06c75',
-          info: '#56b6c2',
-          success: '#98c379',
-          warning: '#e5c07b',
+          background: '#090d16',
+          surface: '#111827',
+          primary: '#0ea5e9',
+          secondary: '#64748b',
+          accent: '#06b6d4',
+          error: '#f43f5e',
+          info: '#38bdf8',
+          success: '#10b981',
+          warning: '#f59e0b',
         },
       },
     },

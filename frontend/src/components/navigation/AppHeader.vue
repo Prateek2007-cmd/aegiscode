@@ -4,16 +4,16 @@
 
 <template>
   <header class="app-header">
-    <a href="https://meister-dev.ai" target="_blank" rel="noopener noreferrer" class="app-brand">
-      <img :src="icon" alt="" aria-hidden="true" class="app-icon"/>
+    <RouterLink :to="{ name: 'home' }" class="app-brand">
+      <AegisLogo :size="38" />
       <div>
-        <span class="app-title">ProPR</span>
-        <span class="app-subtitle">Admin Console</span>
+        <span class="app-title">AegisCode</span>
+        <span class="app-subtitle">Security &amp; Guardrails</span>
         <span :class="['app-edition-badge', edition === 'commercial' ? 'app-edition-badge-commercial' : 'app-edition-badge-community']">
-          {{ edition === 'commercial' ? 'Commercial' : 'Community' }}
+          {{ edition === 'commercial' ? 'Enterprise Shield' : 'Community Shield' }}
         </span>
       </div>
-    </a>
+    </RouterLink>
     <nav class="app-nav">
       <RouterLink v-if="canViewClients" :to="{ name: 'clients' }" class="nav-link" :class="{ 'router-link-active': $route.name === 'clients' || $route.name === 'client-detail' }"><i class="fi fi-rr-users"></i> Clients</RouterLink>
       <RouterLink :to="{ name: 'reviews' }" class="nav-link" :class="{ 'router-link-active': $route.name === 'reviews' || $route.name === 'job-protocol' || $route.name === 'pr-review' }"><i class="fi fi-rr-search"></i> Reviews</RouterLink>
@@ -87,7 +87,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { useSession } from '@/composables/useSession'
 import { useUsageStatistics } from '@/composables/useUsageStatistics'
-import icon from '@/assets/logo_standalone.png'
+import AegisLogo from '@/components/AegisLogo.vue'
 import githubMark from '@/assets/icons/github.svg?raw'
 import LicenseExpiryNotice from '@/features/licensing/components/LicenseExpiryNotice.vue'
 
