@@ -54,19 +54,33 @@ public sealed class SecurityScanEngineRunner(
         PropertyNameCaseInsensitive = true,
     };
 
+    /// <summary>
+    ///     Effective engine directory: the explicit <c>EngineDir</c> option when set,
+    ///     otherwise the bundled <c>tools/vulnveto</c> engine resolved relative to
+    ///     the checkout. Centralized so the dependency check and the scan run
+    ///     always agree on which engine they mean.
+    /// </summary>
+    internal static string? EffectiveEngineDir(SecurityScanningOptions opts) =>
+        string.IsNullOrWhiteSpace(opts.EngineDir)
+            ? SecurityScanningOptions.ResolveDefaultEngineDir()
+            : opts.EngineDir;
+
     /// <inheritdoc />
     public async Task<EngineDependencyCheck> CheckDependenciesAsync(CancellationToken ct)
     {
         var opts = options.Value;
-        var nodeVersion = await TryGetVersionAsync(opts.NodeBinary, ["--version"], ct);
-        var engineAvailable = !string.IsNullOrWhiteSpace(opts.EngineDir)
-            && Directory.Exists(Path.Combine(opts.EngineDir, "dist", "modules"));
+        var nodeVersion = await this.TryGetVersionAsync(opts.NodeBinary, ["--version"], ct);
+        var engineDir = SecurityScanEngineRunner.EffectiveEngineDir(opts);
+        var engineAvailable = engineDir is not null
+            && Directory.Exists(Path.Combine(engineDir, "dist", "modules"));
         var gitleaksBinary = string.IsNullOrWhiteSpace(opts.GitleaksBinary) ? "gitleaks" : opts.GitleaksBinary;
-        var gitleaksVersion = await TryGetVersionAsync(gitleaksBinary, ["version"], ct);
+        var gitleaksVersion = await this.TryGetVersionAsync(gitleaksBinary, ["version"], ct);
 
         var detail = engineAvailable
             ? null
-            : "Engine directory is not configured or missing dist/modules. Set AEGIS_SECURITY_ENGINE_DIR to a built vulnveto checkout (npm run build).";
+            : "Scan engine not found: no built bundled engine under tools/vulnveto and no AEGIS_SECURITY_ENGINE_DIR set. "
+            + "Build the bundled engine (cd tools/vulnveto && npm ci && npm run build, or scripts/Build-VulnvetoEngine.ps1 on Windows), "
+            + "or set AEGIS_SECURITY_ENGINE_DIR to a built engine directory containing dist/modules.";
 
         return new EngineDependencyCheck(
             nodeVersion is not null,
@@ -97,6 +111,8 @@ public sealed class SecurityScanEngineRunner(
         {
             throw new SecurityScanEngineException(deps.Detail ?? "Scan engine is not configured.");
         }
+        var engineDir = SecurityScanEngineRunner.EffectiveEngineDir(opts)
+            ?? throw new SecurityScanEngineException(deps.Detail ?? "Scan engine is not configured.");
 
         var normalizedUrl = SecurityScanUrlValidator.ValidateAndNormalize(repositoryUrl, opts.AllowedHosts);
 
@@ -117,7 +133,7 @@ public sealed class SecurityScanEngineRunner(
 
             var harnessPath = GetHarnessPath();
             var result = await this.RunHarnessAsync(
-                opts, harnessPath, workDir, sbomPath, scanners, opts.ScanTimeoutSeconds, progress, ct);
+                opts, engineDir, harnessPath, workDir, sbomPath, scanners, opts.ScanTimeoutSeconds, progress, ct);
             progress.Report(90);
 
             return this.ToEngineResult(result, sbomPath);
@@ -199,6 +215,7 @@ public sealed class SecurityScanEngineRunner(
 
     private async Task<HarnessOutput> RunHarnessAsync(
         SecurityScanningOptions opts,
+        string engineDir,
         string harnessPath,
         string workDir,
         string sbomPath,
@@ -218,7 +235,7 @@ public sealed class SecurityScanEngineRunner(
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add(harnessPath);
-        psi.ArgumentList.Add(opts.EngineDir);
+        psi.ArgumentList.Add(engineDir);
         psi.ArgumentList.Add(workDir);
         psi.ArgumentList.Add(sbomPath);
         psi.Environment["VULNVETO_AI"] = "none"; // deterministic only; never send code to AI

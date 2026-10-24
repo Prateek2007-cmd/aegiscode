@@ -221,16 +221,31 @@ public sealed class SecurityScanService(
             return false;
         }
 
-        var entry = JsonSerializer.Serialize(new
+        var newEntry = new
         {
             reason = reason.Trim(),
             byUserId = userId,
             at = DateTimeOffset.UtcNow,
-        }, JsonOptions);
+        };
 
-        finding.SuppressionsJson = string.IsNullOrEmpty(finding.SuppressionsJson)
-            ? $"[{entry}]"
-            : finding.SuppressionsJson.TrimEnd(']') + "," + entry + "]";
+        // Parse-then-append instead of string surgery: TrimEnd(']') corrupts
+        // payloads like "[]" into "[,{...}]" and breaks on any nested arrays.
+        List<object> history;
+        try
+        {
+            history = string.IsNullOrWhiteSpace(finding.SuppressionsJson)
+                ? []
+                : JsonSerializer.Deserialize<List<object>>(finding.SuppressionsJson, JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            // A corrupt history must not block suppression; start fresh rather
+            // than failing the request or writing malformed JSON.
+            history = [];
+        }
+
+        history.Add(newEntry);
+        finding.SuppressionsJson = JsonSerializer.Serialize(history, JsonOptions);
         finding.Status = (int)SecurityFindingStatus.Suppressed;
         await db.SaveChangesAsync(ct);
         return true;

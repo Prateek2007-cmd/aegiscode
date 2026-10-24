@@ -15,6 +15,98 @@ What remains unverified here: `dotnet test` (vstest testhost won't start in
 this VM — logic verified via console harness instead), and a live API run
 against Postgres (no Docker here).
 
+**Update 2026-10-24 — engine vendored into this repository.** The VulnVeto
+engine no longer requires a separate repository checkout. It lives at
+`tools/vulnveto/` (MIT, upstream `github.com/Prateek2007-cmd/vulnveto`
+revision `000a9b992599770e7f7431f3e09dfe6e01dc586a` — see
+`tools/vulnveto/VENDORED_FROM.md` and `docs/VULNVETO_INTEGRATION_REPORT.md`).
+The backend resolves the bundled engine automatically; the old
+`AEGIS_SECURITY_ENGINE_DIR`-to-external-checkout setup is superseded but the
+variable is retained as a development/testing override. A database-backed
+API run with **no** `AEGIS_SECURITY_ENGINE_DIR` set succeeded end to end
+(scan of `github.com/Prateek2007-cmd/vulnveto` → Succeeded, all 4 scanners
+ran, CycloneDX 1.5 SBOM with 3 components). `dotnet test` is still blocked
+in this VM (testhost cannot start); the suppression-history JSON fix now has
+regression tests (`tests/MeisterDev.ProPR.SecurityScanning.Tests/`) that
+compile here and await a run on a machine where the test runner works.
+
+## Setup: the bundled engine (no separate VulnVeto checkout)
+
+Prerequisites: Node.js 20+ on PATH. The engine has **no runtime npm
+dependencies** — only dev dependencies (TypeScript + Node types), installed
+from the vendored lockfile.
+
+```powershell
+# Windows PowerShell (from the repo root)
+scripts\Build-VulnvetoEngine.ps1
+# equivalent manual steps:
+cd tools\vulnveto; npm ci; npm run build; npm test; cd ..\..
+```
+
+```bash
+# Linux / macOS (from the repo root)
+scripts/build-vulnveto-engine.sh
+# equivalent manual steps:
+cd tools/vulnveto && npm ci && npm run build && npm test && cd ../..
+```
+
+The build script verifies the exact runtime files the harness imports
+(`dist/modules/{dep-scan,secret-scan,package-risk,sbom}.js`,
+`dist/ai/adapter.js`, `dist/config.js`) and fails early if any are missing.
+`node_modules/` and `dist/` are gitignored and never committed.
+
+**How the backend finds the engine.** `SecurityScanningOptions.Bind`
+uses `AEGIS_SECURITY_ENGINE_DIR` when set; otherwise
+`SecurityScanningOptions.ResolveDefaultEngineDir()` searches, in order:
+`tools/vulnveto` next to the application binaries (published/Docker layout),
+then walking up from the binaries (development layout:
+`src/MeisterDev.ProPR.Api/bin/Debug/net10.0/` up to the repo root), then
+walking up from the working directory. Only a directory containing a built
+`dist/modules` is accepted — an unbuilt checkout never masquerades as a
+working engine, and scans fail closed with a build instruction instead of
+reporting a false clean result. Paths go through `Path.Combine` and
+`ProcessStartInfo.ArgumentList` (no shell strings), so directories
+containing spaces work on Windows and Linux.
+
+**External binaries (not bundled).** Bundling the engine source does not
+bundle the executables it shells out to:
+
+| Tool | Required? | If missing | Install from |
+|---|---|---|---|
+| Node.js 20+ | Yes — runs the sidecar | Scans fail closed with an install message | https://nodejs.org |
+| git | Yes — safe shallow clones | Clone fails with a user-safe error | https://git-scm.com |
+| gitleaks | No — secret scanning only | `secret-scan` is reported **skipped**, the scan is marked **partial** (`isPartial: true` + reason naming gitleaks), never silently clean. The UI shows it under "Skipped". | https://github.com/gitleaks/gitleaks — download the release for your OS (Windows: the `windows_x64` zip), put the binary on PATH, or set `AEGIS_SECURITY_GITLEAKS_BINARY` to its full path |
+| OSV.dev API | No — dependency advisories only | `dep-scan` reports the fetch failure honestly in coverage | Network access at scan time; override via `AEGIS_SECURITY_OSV_BASE_URL` |
+
+Binaries are never committed to this repository and never downloaded or
+executed from an unverified source by the application itself. Docker
+deploys (`Dockerfile.deploy`) install gitleaks from the official GitHub
+release tarball (pinned version, Linux x64) and build the engine from the
+vendored copy — no external repository clone at deploy time either.
+
+## Engine contract (v1, as implemented)
+
+- **Invocation:** `node Resources/scan-harness.mjs <engineDir> <clonedRepo> <sbomOut>`
+  with `VULNVETO_AI=none` (deterministic only, never sends code to AI) and
+  `SCANNERS` as a comma list subset of `dep,secrets,risk,sbom`. The harness
+  (shipped next to the module assembly via the csproj `Content` entry)
+  dynamic-imports the built engine modules from `<engineDir>/dist/`.
+  Exit 0 on success (partial results included); non-zero only when nothing ran.
+- **Result output (stdout, single JSON):** `{ findings: [...], coverage:
+  { manifestsFound, filesScanned, scannersRun, scannersFailed,
+  scannersSkipped }, isPartial, partialReason, engineVersion,
+  scannerVersions }`.
+- **Finding shape (engine-native, normalized by the harness):**
+  `{ scanner, ruleId, severity, confidence, title, category, filePath, line,
+  evidence, remediation, packageName, packageVersion, fixedVersion }`
+  — see `docs/demo/aegiscode-demo-report.json` for a real example (9 findings).
+- **Secrets:** the engine redacts matched values (`--redact`) before they reach
+  stdout; the worker must treat stdout as untrusted and re-verify no raw secret
+  patterns persist before persistence.
+- **Resource limits:** workdir per scan (no cross-scan contamination), wall-clock
+  timeout (default 10 min), max repo size / file count (mirror vulnveto's
+  `assertSupportedRepoUrl`: https github.com only, until other hosts are vetted).
+
 ## Goal
 
 Wire deterministic security scanning — dependency/CVE matching (OSV.dev), secret
@@ -160,14 +252,22 @@ reachability are never invented.
 
 ## What remains to build (in order)
 
-1. `ScanSidecar` Node entrypoint (stdin/stdout JSON wrapper around the
-   existing modules) + pinned engine version.
-2. `MeisterDev.ProPR.SecurityScanning` .NET module: controller(s), worker,
-   EF entities + migration, prioritization scorer, cache.
+1. ~~`ScanSidecar` Node entrypoint (stdin/stdout JSON wrapper around the
+   existing modules) + pinned engine version.~~ **Superseded:** the argv-based
+   `Resources/scan-harness.mjs` sidecar is the implemented contract (see
+   "Engine contract" above), and the engine is now vendored + pinned at
+   `tools/vulnveto/` (see `tools/vulnveto/VENDORED_FROM.md`).
+2. ~~`MeisterDev.ProPR.SecurityScanning` .NET module: controller(s), worker,
+   EF entities + migration, prioritization scorer, cache.~~ **Done.**
 3. OpenAPI regeneration from code (`generate:api` workflow) — never hand-edit
    generated clients.
-4. Vue: scan initiation dialog, live progress, findings list/detail reusing
+4. ~~Vue: scan initiation dialog, live progress, findings list/detail reusing
    code-insights components, SBOM viewer + download, history + regression
-   badges, suppression dialogs with reason.
+   badges, suppression dialogs with reason.~~ **Done**
+   (`frontend/src/features/security-scans/`).
 5. Tests: fixture-based scanner tests (reuse `docs/demo/fixture`), API
-   authZ tests, cancellation tests, regression-diff tests.
+   authZ tests, cancellation tests, regression-diff tests. **Partially done:**
+   sidecar fixture checks (`docs/overnight-fixtures/`) + suppression-history
+   regression tests exist; `dotnet test` execution still awaits a machine
+   where the vstest testhost starts (blocked in this VM — see
+   `docs/VULNVETO_INTEGRATION_REPORT.md`).

@@ -27,14 +27,15 @@ RUN dotnet restore src/MeisterDev.ProPR.Api/MeisterDev.ProPR.Api.csproj
 RUN dotnet publish src/MeisterDev.ProPR.Api/MeisterDev.ProPR.Api.csproj \
     -c Release -o /app --no-restore
 
-# ---------- vulnveto engine build ----------
+# ---------- vulnveto engine build (vendored in tools/vulnveto; no separate clone) ----------
 FROM node:22-bookworm-slim AS engine-build
 WORKDIR /opt/vulnveto
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
-RUN git clone --depth 1 https://github.com/Prateek2007-cmd/vulnveto.git . \
-    && npm ci --no-audit --no-fund \
-    && npm run build
+COPY tools/vulnveto/package.json tools/vulnveto/package-lock.json tools/vulnveto/tsconfig.json ./
+COPY tools/vulnveto/src/ ./src/
+RUN npm ci --no-audit --no-fund \
+    && npm run build \
+    && rm -rf node_modules src
+# Only dist/ (built engine) + package.json (version probe) ship to runtime.
 
 # ---------- runtime ----------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
@@ -55,10 +56,13 @@ RUN curl -fsSL -o /tmp/gitleaks.tar.gz \
 
 WORKDIR /app
 COPY --from=dotnet-build /app .
-COPY --from=engine-build /opt/vulnveto /opt/vulnveto
+# Published layout: the backend resolves tools/vulnveto next to its binaries
+# automatically (SecurityScanningOptions.ResolveDefaultEngineDir), so no
+# AEGIS_SECURITY_ENGINE_DIR override is needed. The override still exists for
+# development/testing if a custom engine path is ever required.
+COPY --from=engine-build /opt/vulnveto /app/tools/vulnveto
 
-ENV AEGIS_SECURITY_ENGINE_DIR=/opt/vulnveto \
-    AEGIS_SECURITY_GITLEAKS_BINARY=/usr/local/bin/gitleaks \
+ENV AEGIS_SECURITY_GITLEAKS_BINARY=/usr/local/bin/gitleaks \
     AEGIS_SECURITY_WORK_ROOT=/tmp
 
 EXPOSE 8080
