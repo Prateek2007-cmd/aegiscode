@@ -94,6 +94,15 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresClientAccess: true },
     },
     {
+      // One full-page dashboard per client: scans, reviews, posture, fix queue
+      // and activity in a single scannable view. Same access bar as the client
+      // detail page; the server enforces the role, the guard is a courtesy.
+      path: '/clients/:id/dashboard',
+      name: 'client-dashboard',
+      component: () => import('@/features/clients/views/ClientDashboardView.vue'),
+      meta: { requiresAuth: true, requiresClientAccess: true, idParamIsClient: true },
+    },
+    {
       path: '/reviews',
       name: 'reviews',
       component: () => import('@/features/reviews/views/ReviewHistoryView.vue'),

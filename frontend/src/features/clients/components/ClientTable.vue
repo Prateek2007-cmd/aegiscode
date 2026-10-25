@@ -11,6 +11,7 @@
         <th>Status</th>
         <th>Tokens (30d)</th>
         <th>Created</th>
+        <th>Dashboard</th>
       </tr>
     </thead>
     <tbody>
@@ -42,6 +43,11 @@
           </span>
         </td>
         <td>{{ formatDate(client.createdAt) }}</td>
+        <td>
+          <RouterLink :to="{ name: 'client-dashboard', params: { id: client.id } }" @click.stop>
+            Dashboard
+          </RouterLink>
+        </td>
       </tr>
     </tbody>
   </table>

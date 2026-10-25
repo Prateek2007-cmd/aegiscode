@@ -18,6 +18,12 @@
                     <p class="detail-page-subtitle">Client Configuration</p>
                 </div>
 
+                <div v-if="!notFound && !loading && client" style="margin-bottom: 1.5rem">
+                    <RouterLink class="sidebar-nav-link" :to="{ name: 'client-dashboard', params: { id: client.id } }">
+                        <i class="fi fi-rr-dashboard"></i> Dashboard
+                    </RouterLink>
+                </div>
+
                 <div v-if="!notFound && !loading && client" class="sidebar-nav">
                     <div v-if="canManageClient" class="sidebar-nav-group">
                         <h4>Configuration</h4>
