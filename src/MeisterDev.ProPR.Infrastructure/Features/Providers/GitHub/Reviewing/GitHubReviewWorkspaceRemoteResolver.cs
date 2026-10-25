@@ -1,6 +1,7 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using System.Text;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Domain.Enums;
 using MeisterDev.ProPR.Domain.ValueObjects;
@@ -20,6 +21,7 @@ internal sealed class GitHubReviewWorkspaceRemoteResolver(GitHubConnectionVerifi
         var context = await connectionVerifier.VerifyAsync(request.ClientId, request.Repository.Host, ct);
         var repositoryPath = BuildRepositoryPath(request.Repository);
         var remoteUrl = $"{request.Repository.Host.HostBaseUrl.TrimEnd('/')}/{repositoryPath}.git";
+        var accessToken = await context.GetAccessTokenAsync(ct);
 
         return new ReviewWorkspaceRemoteRef(
             ScmProvider.GitHub,
@@ -29,7 +31,18 @@ internal sealed class GitHubReviewWorkspaceRemoteResolver(GitHubConnectionVerifi
             $"github:{context.Connection.Id:D}:{context.Connection.AuthenticationKind}",
             true,
             request.Repository.OwnerOrNamespace,
-            $"AUTHORIZATION: Bearer {await context.GetAccessTokenAsync(ct)}");
+            $"AUTHORIZATION: Basic {BuildBasicCredentials(accessToken)}");
+    }
+
+    // GitHub's git-over-HTTP endpoint rejects Bearer credentials for personal access
+    // tokens ("remote: invalid credentials") even though the same token authenticates
+    // REST calls; basic credentials with the token as the password are what git
+    // accepts. The username is ignored as long as the password carries the token, so
+    // use GitHub's x-access-token convention. This matches the GitLab resolver, whose
+    // git endpoint has the same basic-only requirement.
+    private static string BuildBasicCredentials(string token)
+    {
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes($"x-access-token:{token}"));
     }
 
     private static IReadOnlyList<string> BuildFetchRefSpecs(int pullRequestNumber, string sourceBranch, string targetBranch)

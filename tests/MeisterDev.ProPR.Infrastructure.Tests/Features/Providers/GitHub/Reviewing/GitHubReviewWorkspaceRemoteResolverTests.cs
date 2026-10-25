@@ -3,6 +3,7 @@
 
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Models;
 using MeisterDev.ProPR.Application.Interfaces;
@@ -40,7 +41,9 @@ public sealed class GitHubReviewWorkspaceRemoteResolverTests
         var result = await sut.ResolveAsync(CreateRequest(host, clientId), CancellationToken.None);
 
         Assert.Contains("refs/pull/42/head", string.Join(' ', result.FetchRefSpecs), StringComparison.Ordinal);
-        Assert.StartsWith("AUTHORIZATION: Bearer ", result.AuthorizationHeader, StringComparison.Ordinal);
+        Assert.StartsWith("AUTHORIZATION: Basic ", result.AuthorizationHeader, StringComparison.Ordinal);
+        var encodedCredentials = result.AuthorizationHeader!["AUTHORIZATION: Basic ".Length..];
+        Assert.Equal("x-access-token:token-value", Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials)));
     }
 
     private static ReviewRepositoryWorkspaceRequest CreateRequest(ProviderHostRef host, Guid clientId)
