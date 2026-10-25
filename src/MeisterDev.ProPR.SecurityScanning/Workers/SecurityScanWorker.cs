@@ -158,19 +158,30 @@ public sealed partial class SecurityScanWorker(
         var now = DateTimeOffset.UtcNow;
         var seenFingerprints = new HashSet<string>(StringComparer.Ordinal);
 
+        // Findings added earlier in this batch live only in the change tracker
+        // until SaveChanges runs, so the database lookup below cannot see them.
+        // A batch can contain the same fingerprint twice (e.g. the same package
+        // vulnerability reported from two manifests with no file location); without
+        // this map the second copy would be added again and SaveChanges would fail
+        // the whole scan on the unique (client, fingerprint) index.
+        var addedInBatch = new Dictionary<string, SecurityFindingRecord>(StringComparer.Ordinal);
+
         foreach (var finding in result.Findings)
         {
             var fingerprint = SecurityScanFingerprint.Compute(finding);
             seenFingerprints.Add(fingerprint);
             var (priority, gaps) = SecurityScanPrioritizer.Score(finding);
 
-            var existing = await db.SecurityFindings
-                .FirstOrDefaultAsync(
-                    f => f.ClientId == job.ClientId && f.Fingerprint == fingerprint, ct);
+            if (!addedInBatch.TryGetValue(fingerprint, out var existing))
+            {
+                existing = await db.SecurityFindings
+                    .FirstOrDefaultAsync(
+                        f => f.ClientId == job.ClientId && f.Fingerprint == fingerprint, ct);
+            }
 
             if (existing is null)
             {
-                db.SecurityFindings.Add(new SecurityFindingRecord
+                existing = new SecurityFindingRecord
                 {
                     Id = Guid.NewGuid(),
                     ClientId = job.ClientId,
@@ -193,7 +204,9 @@ public sealed partial class SecurityScanWorker(
                     LastSeenScanId = scan.Id,
                     FirstSeenAt = now,
                     LastSeenAt = now,
-                });
+                };
+                db.SecurityFindings.Add(existing);
+                addedInBatch[fingerprint] = existing;
             }
             else
             {
