@@ -41,6 +41,11 @@ public static class SecurityScanningModuleServiceCollectionExtensions
 
         services.AddScoped<ISecurityScanService, SecurityScanService>();
         services.AddScoped<ISecurityScanEngineRunner, SecurityScanEngineRunner>();
+
+        // Fix proposals: JSON-file store (no new table/migration) + the human-approval gate service.
+        services.AddSingleton<IFixProposalStore, JsonFileFixProposalStore>();
+        services.AddScoped<IFixProposalService, FixProposalService>();
+
         services.AddHostedService<SecurityScanWorker>();
 
         return services;

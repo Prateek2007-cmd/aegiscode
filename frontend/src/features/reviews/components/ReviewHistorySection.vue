@@ -87,6 +87,9 @@
                     <div
                         v-for="item in visibleItems(group)"
                         :key="item.id"
+                        class="review-row-wrap"
+                    >
+                    <div
                         class="review-list-item"
                         :class="rowClass(item)"
                     >
@@ -172,7 +175,30 @@
                             >
                                 Protocol ↗
                             </RouterLink>
+                            <button
+                                v-if="canInspectClient(props.clientId || item.clientId)"
+                                type="button"
+                                class="btn-ghost depth-btn"
+                                :aria-expanded="isDepthOpen(item.id)"
+                                :title="isDepthOpen(item.id) ? 'Hide review depth' : 'Show review depth: files, tokens, verification funnel and published findings'"
+                                @click="toggleDepth(item.id)"
+                            >
+                                {{ isDepthOpen(item.id) ? 'Depth ▴' : 'Depth ▾' }}
+                            </button>
                         </div>
+                    </div>
+                    <!--
+                        Mounted only once opened, so the page does not fetch a protocol trace per row.
+                        The panel carries the published findings with the lens filter and the per-finding
+                        Draft fix / Dismiss actions.
+                    -->
+                    <ReviewDepthPanel
+                        v-if="isDepthOpen(item.id)"
+                        :job-id="item.id ?? null"
+                        :client-id="props.clientId || item.clientId"
+                        :can-dismiss="canManageClient(props.clientId || item.clientId)"
+                        class="row-depth-panel"
+                    />
                     </div>
                 </div>
             </section>
@@ -216,9 +242,11 @@
 
 <script lang="ts" setup>
 import { RouterLink } from 'vue-router'
+import { ref } from 'vue'
 import ModalDialog from '@/components/dialogs/ModalDialog.vue'
 import OverflowMenu from '@/components/OverflowMenu.vue'
 import ProgressOrb from '@/components/ProgressOrb.vue'
+import ReviewDepthPanel from '@/features/reviews/components/ReviewDepthPanel.vue'
 import { useReviewHistoryViewModel, type PrGroup } from '@/features/reviews/view-models/useReviewHistoryViewModel'
 import { formatUsd } from '@/components/usageDashboardFormatters'
 import { formatFilesReviewed } from '@/utils/reviewProgress'
@@ -280,6 +308,25 @@ const {
 defineExpose({
     refresh,
 })
+
+// Which job rows have their depth panel open. The panel fetches the protocol trace, so it mounts only
+// for rows the person actually opened.
+const depthJobIds = ref(new Set<string>())
+
+function isDepthOpen(jobId: string | undefined): boolean {
+    return jobId != null && depthJobIds.value.has(jobId)
+}
+
+function toggleDepth(jobId: string | undefined): void {
+    if (!jobId) return
+    const next = new Set(depthJobIds.value)
+    if (next.has(jobId)) {
+        next.delete(jobId)
+    } else {
+        next.add(jobId)
+    }
+    depthJobIds.value = next
+}
 
 function formatItemDate(item: JobListItem): string {
     if (item.status === 'processing') {
@@ -628,6 +675,31 @@ function prReviewLink(group: PrGroup): object {
 
 .restart-error {
     margin-bottom: 1rem;
+}
+
+.depth-btn {
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
+    color: var(--color-accent);
+    border: 1px solid rgba(34, 211, 238, 0.3);
+    white-space: nowrap;
+}
+
+.depth-btn:hover {
+    background: rgba(34, 211, 238, 0.1);
+    border-color: rgba(34, 211, 238, 0.55);
+}
+
+.review-row-wrap {
+    border-bottom: 1px solid var(--color-border);
+}
+
+.review-row-wrap .review-list-item {
+    border-bottom: none;
+}
+
+.row-depth-panel {
+    margin: 0 1.5rem 1.25rem;
 }
 
 /* Status badge */

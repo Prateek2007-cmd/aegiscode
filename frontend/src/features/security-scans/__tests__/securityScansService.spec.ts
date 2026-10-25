@@ -14,6 +14,7 @@ vi.mock('@/app/runtime/runtimeContext', () => ({ getActiveRuntime: getActiveRunt
 
 import {
   getScanFindings,
+  getScanSbomJson,
   listSecurityScans,
   startSecurityScan,
   suppressFinding,
@@ -73,5 +74,19 @@ describe('securityScansService', () => {
     const [url, init] = authedFetchMock.mock.calls[0]
     expect(url).toContain('/findings/finding-1/suppress')
     expect(JSON.parse(init.body).reason).toBe('false positive: test fixture')
+  })
+
+  it('fetches the SBOM as parsed JSON', async () => {
+    const bom = { bomFormat: 'CycloneDX', specVersion: '1.5', components: [{ name: 'lodash', version: '4.17.21' }] }
+    authedFetchMock.mockResolvedValue(okJson(bom))
+    const res = await getScanSbomJson('client-1', 'scan-1')
+    expect(res).toEqual(bom)
+    expect(authedFetchMock.mock.calls[0][0]).toContain('/clients/client-1/security-scans/scan-1/sbom')
+  })
+
+  it('returns null when no SBOM was produced (404)', async () => {
+    authedFetchMock.mockResolvedValue(errJson(404, { error: 'No SBOM produced for this scan.' }))
+    const res = await getScanSbomJson('client-1', 'scan-1')
+    expect(res).toBeNull()
   })
 })

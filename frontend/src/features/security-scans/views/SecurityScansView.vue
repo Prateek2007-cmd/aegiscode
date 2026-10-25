@@ -97,6 +97,7 @@
             v-else
             :client-id="clientId"
             :scan="selectedScan"
+            :scans="scans"
             :can-manage="canStartScan"
             @refresh="loadScans"
             @cancelled="onScanCancelled"

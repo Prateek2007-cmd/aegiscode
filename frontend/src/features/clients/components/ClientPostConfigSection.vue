@@ -18,7 +18,7 @@
                     </select>
                     <p class="muted review-publication-copy">
                         Findings below this severity are not posted to the pull request. They stay visible in the
-                        ProPR review — only the pull request comment is suppressed. Severity order (high to low):
+                        AegisCode review — only the pull request comment is suppressed. Severity order (high to low):
                         Error, Warning, Suggestion, Info.
                     </p>
                 </div>
@@ -35,7 +35,7 @@
                     </label>
                     <p class="muted review-publication-copy">
                         Comments of the selected severities are posted and then immediately resolved, with a note
-                        that they were auto-resolved by ProPR. Use this to surface correct-but-low-priority
+                        that they were auto-resolved by AegisCode. Use this to surface correct-but-low-priority
                         findings without adding manual resolution work.
                     </p>
                 </div>
@@ -50,7 +50,7 @@
                     </label>
                     <p class="muted review-publication-copy">
                         A review reads whole files, so it can find something in pre-existing code far from the
-                        lines a pull request changed. Those findings stay in the ProPR review and the pull request
+                        lines a pull request changed. Those findings stay in the AegisCode review and the pull request
                         summary reports how many were held back.
                     </p>
                 </div>

@@ -102,7 +102,7 @@ const router = createRouter({
     {
       path: '/jobs/:id/protocol',
       name: 'job-protocol',
-      component: () => import('@/features/job-protocol/views/JobProtocolView.vue'),
+      component: () => import('@/views/JobProtocolView.vue'),
       meta: { requiresAuth: true, requiresClientAccess: true },
     },
     {

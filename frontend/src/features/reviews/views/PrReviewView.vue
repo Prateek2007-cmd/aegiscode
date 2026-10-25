@@ -125,6 +125,7 @@
                         v-for="job in data.jobs"
                         :key="job.jobId"
                         class="job-detail-item"
+                        @toggle="onJobToggle(job.jobId, $event)"
                     >
                         <summary class="job-summary-row">
                             <span :class="statusBadgeClass(job.status)">{{ statusLabel(job.status) }}</span>
@@ -146,6 +147,17 @@
                                 :breakdown="job.tokenBreakdown ?? []"
                             />
                             <p v-else class="empty-state-small">No per-tier breakdown available.</p>
+                            <!--
+                                Mounted only once the job is opened, so the page does not fetch a protocol
+                                trace per job. Shows files/tokens/cost, passes, the verification funnel and
+                                the published findings with lens filter, Draft fix and Dismiss actions.
+                            -->
+                            <ReviewDepthPanel
+                                v-if="openJobIds.has(job.jobId)"
+                                :job-id="job.jobId"
+                                :client-id="clientId"
+                                :can-dismiss="canManage"
+                            />
                         </div>
                     </details>
                 </div>
@@ -328,6 +340,7 @@ import { computed, ref, shallowRef, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import TokenBreakdownTable from '@/components/usage/TokenBreakdownTable.vue'
 import OverflowMenu from '@/components/OverflowMenu.vue'
+import ReviewDepthPanel from '@/features/reviews/components/ReviewDepthPanel.vue'
 import RetainedConversationTab from '@/features/reviews/components/RetainedConversationTab.vue'
 import RetainedBrowserTab from '@/features/reviews/components/RetainedBrowserTab.vue'
 import PrCodeQualityTab from '@/features/reviews/components/PrCodeQualityTab.vue'
@@ -608,6 +621,21 @@ watch(
 
 function protocolLink(jobId: string): string {
     return `/jobs/${jobId}/protocol${clientId.value ? '?clientId=' + clientId.value : ''}`
+}
+
+// Which job details are open, so the depth panel (which fetches the protocol trace) mounts only for
+// the job the person actually opened.
+const openJobIds = ref(new Set<string>())
+
+function onJobToggle(jobId: string, event: Event): void {
+    const open = (event.currentTarget as HTMLDetailsElement | null)?.open ?? false
+    const next = new Set(openJobIds.value)
+    if (open) {
+        next.add(jobId)
+    } else {
+        next.delete(jobId)
+    }
+    openJobIds.value = next
 }
 
 function formatTokens(n: number | null | undefined): string {

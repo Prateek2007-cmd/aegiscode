@@ -27,7 +27,30 @@
             </button>
         </AppTopBar>
         <SecurityPostureBanner />
-        <ReviewHistorySection ref="historySection" />
+        <div class="history-tabs" role="tablist" aria-label="Review history sections">
+            <button
+                type="button"
+                role="tab"
+                class="tab-btn"
+                :class="{ 'tab-active': activeTab === 'history' }"
+                :aria-selected="activeTab === 'history'"
+                @click="activeTab = 'history'"
+            >
+                History
+            </button>
+            <button
+                type="button"
+                role="tab"
+                class="tab-btn"
+                :class="{ 'tab-active': activeTab === 'fixQueue' }"
+                :aria-selected="activeTab === 'fixQueue'"
+                @click="activeTab = 'fixQueue'"
+            >
+                Fix Queue
+            </button>
+        </div>
+        <ReviewHistorySection v-show="activeTab === 'history'" ref="historySection" />
+        <FixQueueSection v-if="activeTab === 'fixQueue'" />
     </PageWithSidebar>
 </template>
 
@@ -35,10 +58,12 @@
 import { ref } from 'vue'
 import { AppNavDrawer, AppTopBar, PageWithSidebar } from '@/components'
 import ReviewHistorySection from '@/features/reviews/components/ReviewHistorySection.vue'
+import FixQueueSection from '@/features/reviews/components/FixQueueSection.vue'
 import SecurityPostureBanner from '@/features/reviews/components/SecurityPostureBanner.vue'
 
 const historySection = ref<InstanceType<typeof ReviewHistorySection>>()
 const isRefreshing = ref(false)
+const activeTab = ref<'history' | 'fixQueue'>('history')
 
 async function handleRefresh() {
     isRefreshing.value = true
@@ -77,5 +102,32 @@ async function handleRefresh() {
     align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
+}
+
+.history-tabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.history-tabs .tab-btn {
+    padding: 0.45rem 1rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.history-tabs .tab-btn:hover {
+    color: var(--color-text);
+}
+
+.history-tabs .tab-btn.tab-active {
+    color: var(--color-accent);
+    border-color: rgba(34, 211, 238, 0.35);
+    background: rgba(34, 211, 238, 0.08);
 }
 </style>

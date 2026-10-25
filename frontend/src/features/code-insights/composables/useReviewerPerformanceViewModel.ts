@@ -3,7 +3,7 @@
 // This file implements commercial-only functionality. A commercial license is required to activate or use that functionality.
 
 /**
- * State behind the Reviewer Performance area: whether ProPR is right and improving, whether humans want what it
+ * State behind the Reviewer Performance area: whether AegisCode is right and improving, whether humans want what it
  * says, and what it failed to raise.
  *
  * An operator surface. It aggregates across everything the caller administers by default, because the question

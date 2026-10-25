@@ -74,6 +74,34 @@ export interface PagedSecurityFindings {
   totalCount: number
 }
 
+/** Minimal CycloneDX 1.5 shape returned by GET /{scanId}/sbom. */
+export interface CycloneDxComponent {
+  type?: string
+  name?: string
+  version?: string
+  purl?: string
+}
+
+export interface CycloneDxBom {
+  bomFormat?: string
+  specVersion?: string
+  components?: CycloneDxComponent[]
+}
+
+/** One client-side poll snapshot. NOT an engine log — recorded in this browser session. */
+export interface PollSnapshot {
+  at: string
+  status: SecurityScanStatus
+  progressPct: number
+}
+
+export interface InferredLanguage {
+  language: string
+  manifests: string[]
+  /** Share of matched manifests, 0–1. */
+  share: number
+}
+
 export interface StartSecurityScanRequest {
   repositoryUrl: string
   ref?: string
@@ -88,6 +116,57 @@ export interface StartSecurityScanResponse {
 export const SECURITY_SCANNERS = ['dep-scan', 'secret-scan', 'package-risk', 'sbom'] as const
 
 export const SEVERITY_ORDER: SecurityFindingSeverity[] = ['Critical', 'High', 'Medium', 'Low', 'Info']
+
+/** Display metadata for the four deterministic scanners. */
+export const SCANNER_META: Record<string, { label: string; blurb: string }> = {
+  'dep-scan': { label: 'Dependencies', blurb: 'OSV.dev vulnerability scan' },
+  'secret-scan': { label: 'Secrets', blurb: 'Leaked credential sweep' },
+  'package-risk': { label: 'Package Risk', blurb: 'Supply-chain risk signals' },
+  sbom: { label: 'SBOM', blurb: 'CycloneDX inventory' },
+}
+
+export const SCANNER_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(SCANNER_META).map(([id, meta]) => [id, meta.label]),
+)
+
+/** True when a rule id is a real vulnerability identifier we can link to OSV.dev. */
+export function isOsvRuleId(ruleId: string): boolean {
+  return /^(GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}|CVE-\d{4}-\d{4,7}|OSV-\d{4}-\d+)$/i.test(ruleId.trim())
+}
+
+export function osvUrl(ruleId: string): string | null {
+  return isOsvRuleId(ruleId) ? `https://osv.dev/vulnerability/${ruleId.trim()}` : null
+}
+
+const MANIFEST_LANGUAGE_MAP: Array<[RegExp, string]> = [
+  [/^(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i, 'JavaScript/TypeScript'],
+  [/^(requirements\.txt|pyproject\.toml|Pipfile|setup\.py)$/i, 'Python'],
+  [/^(go\.mod|go\.sum)$/i, 'Go'],
+  [/^(Cargo\.toml|Cargo\.lock)$/i, 'Rust'],
+  [/^(composer\.json|composer\.lock)$/i, 'PHP'],
+  [/\.csproj$/i, 'C#'],
+]
+
+/**
+ * Infer languages from manifest file names only. Never invents languages the
+ * manifests don't evidence; manifests with no known mapping are ignored.
+ */
+export function inferLanguages(manifestsFound: string[]): InferredLanguage[] {
+  const byLanguage = new Map<string, string[]>()
+  for (const manifest of manifestsFound) {
+    const base = manifest.split('/').pop() ?? manifest
+    const match = MANIFEST_LANGUAGE_MAP.find(([re]) => re.test(base))
+    if (!match) continue
+    const list = byLanguage.get(match[1]) ?? []
+    list.push(manifest)
+    byLanguage.set(match[1], list)
+  }
+  const total = [...byLanguage.values()].reduce((n, list) => n + list.length, 0)
+  if (total === 0) return []
+  return [...byLanguage.entries()]
+    .map(([language, manifests]) => ({ language, manifests, share: manifests.length / total }))
+    .sort((a, b) => b.manifests.length - a.manifests.length)
+}
 
 export function severityColor(severity: SecurityFindingSeverity): string {
   switch (severity) {

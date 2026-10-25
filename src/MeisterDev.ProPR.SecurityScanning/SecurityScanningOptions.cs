@@ -40,6 +40,14 @@ public sealed class SecurityScanningOptions
     /// <summary>Directory where SBOM artifacts are stored. Defaults to <c>{WorkRoot}/aegis-sboms</c>.</summary>
     public string SbomRoot { get; set; } = string.Empty;
 
+    /// <summary>
+    ///     Directory where fix-proposal JSON files are stored (one file per client).
+    ///     Defaults to <c>{WorkRoot}/aegis-fix-proposals</c>. Set
+    ///     <c>AEGIS_SECURITY_FIX_PROPOSALS_ROOT</c> to a persistent path on durable
+    ///     deployments: the default work root is the OS temp directory.
+    /// </summary>
+    public string FixProposalsRoot { get; set; } = string.Empty;
+
     /// <summary>Maximum concurrent scans. Defaults to 2.</summary>
     public int MaxConcurrentScans { get; set; } = 2;
 
@@ -79,6 +87,7 @@ public sealed class SecurityScanningOptions
         options.GitleaksBinary = Get("GITLEAKS_BINARY", "GITLEAKS_BINARY") ?? string.Empty;
         options.WorkRoot = Get("WORK_ROOT", "WORK_ROOT") ?? string.Empty;
         options.SbomRoot = Get("SBOM_ROOT", "SBOM_ROOT") ?? string.Empty;
+        options.FixProposalsRoot = Get("FIX_PROPOSALS_ROOT", "FIX_PROPOSALS_ROOT") ?? string.Empty;
 
         if (int.TryParse(Get("MAX_CONCURRENT_SCANS", "MAX_CONCURRENT_SCANS"), out var maxConc) && maxConc > 0)
         {

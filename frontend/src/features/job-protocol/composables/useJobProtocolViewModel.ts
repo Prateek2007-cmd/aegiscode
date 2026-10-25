@@ -6,7 +6,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, 
 import { useRoute, useRouter } from 'vue-router'
 import type { LocationQueryRaw } from 'vue-router'
 import { createAdminClient } from '@/services/api'
-import { createDismissal } from '@/services/findingDismissalsService'
+import { dismissFinding } from '@/services/findingDismissalsService'
 import { restartJob, stopJob } from '@/services/jobsService'
 import { fetchFindingClassifications, type CodeInsightFindingClassification } from '@/services/codeInsightFindingsService'
 import {
@@ -316,7 +316,7 @@ export function useJobProtocolViewModel() {
         const key = commentKey(comment)
         dismissingIds.value = new Set([...dismissingIds.value, key])
         try {
-            await createDismissal(clientId, { originalMessage: comment.message ?? '', label: '' })
+            await dismissFinding(clientId, { findingMessage: comment.message ?? '', filePath: comment.filePath ?? comment.file_path ?? null, label: '' })
             dismissToast.value = { message: 'Finding dismissed.', isError: false }
         } catch {
             dismissToast.value = { message: 'Failed to dismiss finding.', isError: true }

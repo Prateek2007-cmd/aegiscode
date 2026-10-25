@@ -127,7 +127,7 @@
                                 name="reviewEveryIncrementEnabled" type="checkbox" />
                             <strong>Review every pushed update</strong>
                             <p class="muted review-publication-copy">
-                                When this is off, ProPR reviews a pull request once, at the first revision
+                                When this is off, AegisCode reviews a pull request once, at the first revision
                                 it sees, and later pushes wait for a requested review. Turn it on to start
                                 a new review for every pushed update, which cancels any review still running
                                 for an older revision. Off by default.
@@ -146,7 +146,7 @@
                             </option>
                         </select>
                         <p class="muted review-publication-copy">
-                            What ProPR does with its own comment threads once the developer has acted on them.
+                            What AegisCode does with its own comment threads once the developer has acted on them.
                             This is checked on every pushed update, whether or not the files are reviewed again.
                             <strong>Resolve quietly</strong> (default) closes a thread whose finding was fixed
                             without adding a comment. <strong>Resolve with an explanation</strong> posts why it
@@ -169,7 +169,7 @@
                             <strong>en</strong>, <strong>de</strong> or <strong>pt-BR</strong>. It applies to
                             finding messages, the pull-request summary, thread replies and mention answers, so
                             every part of a review reads the same way. Defaults to <strong>en</strong>. Severity
-                            labels and the fixed headings ProPR adds around the text stay English.
+                            labels and the fixed headings AegisCode adds around the text stay English.
                         </p>
                     </div>
                 </div>
@@ -255,7 +255,7 @@ const {
     handleOverviewNavigate,
 } = vm;
 
-// What ProPR does with its own threads once a finding has been acted on. Mirrors the backend
+// What AegisCode does with its own threads once a finding has been acted on. Mirrors the backend
 // CommentResolutionBehavior enum. Named for what a reader sees happen rather than after the enum:
 // "silent" describes the absence of a comment, which is not what someone scanning a settings page is
 // looking for.

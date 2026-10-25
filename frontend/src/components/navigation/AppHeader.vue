@@ -60,7 +60,7 @@
       <slot name="notifications" />
       <LicenseExpiryNotice />
       <a
-        href="https://github.com/meister-dev-ai/propr"
+        href="https://github.com/Prateek2007-cmd/aegiscode"
         target="_blank"
         rel="noopener noreferrer"
         class="nav-link nav-link-button github-link"

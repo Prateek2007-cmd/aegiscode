@@ -8,7 +8,7 @@
       <div>
         <h1>Reviewer Performance</h1>
         <p class="page-copy">
-          Whether ProPR is right, whether humans want what it says, and what it failed to raise. Everything here
+          Whether AegisCode is right, whether humans want what it says, and what it failed to raise. Everything here
           is estimated from AI judgement of how people responded to each finding: it measures the reviewer, not
           the people or the code.
         </p>

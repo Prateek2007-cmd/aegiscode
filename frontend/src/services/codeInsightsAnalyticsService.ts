@@ -6,7 +6,7 @@
  * Typed wrappers for the Code Insights read endpoints.
  *
  * Two surfaces, two audiences, and the split is in the paths rather than in a flag. `/code-quality/*` answers
- * "what does this codebase keep getting wrong" and takes client access. `/reviewer-performance/*` judges ProPR
+ * "what does this codebase keep getting wrong" and takes client access. `/reviewer-performance/*` judges AegisCode
  * itself from AI-estimated evidence and takes tenant administration; a plain client user is refused it, and the
  * frontend must not present it as merely empty.
  *

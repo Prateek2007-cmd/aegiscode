@@ -63,7 +63,7 @@
         </label>
       </div>
       <p v-if="showAzureDevOpsServerSecurityHint" class="provider-form-grid-full provider-form-hint">
-        Self-hosted Azure DevOps Server PAT and Windows user-account connections require HTTPS. If ProPR runs on Linux, WSL, or in containers, the server certificate must also be trusted inside that runtime.
+        Self-hosted Azure DevOps Server PAT and Windows user-account connections require HTTPS. If AegisCode runs on Linux, WSL, or in containers, the server certificate must also be trusted inside that runtime.
       </p>
       <div class="form-field provider-form-grid-full">
         <label>

@@ -72,7 +72,7 @@
             <div class="section-card-body section-card-body--compact">
                 <p class="muted budget-intro">
                     Optional bounds on the size of a review. A pull request measured past one of the first three
-                    bounds is not reviewed: the job ends before any model call and ProPR posts the measured value,
+                    bounds is not reviewed: the job ends before any model call and AegisCode posts the measured value,
                     the bound and the way forward on the pull request. The reviews-per-hour bound holds a job
                     instead, and it starts by itself once the hour has passed. Leave a field blank for no bound.
                     Changed files are counted after exclusions and after files carried forward from an earlier
@@ -100,7 +100,7 @@
                             aria-describedby="admissionPolicyError" data-testid="admission-max-diff-bytes"
                             name="admissionMaxDiffBytes" type="number" min="1" max="2147483647" step="1"
                             placeholder="No limit" />
-                        <p class="muted budget-field-note">The size of the unified diff as ProPR obtains it, from the SCM host or from the mirror the review runs against. Each provider renders a diff in its own way, so the measurement is an approximation.</p>
+                        <p class="muted budget-field-note">The size of the unified diff as AegisCode obtains it, from the SCM host or from the mirror the review runs against. Each provider renders a diff in its own way, so the measurement is an approximation.</p>
                     </div>
                     <div class="form-field">
                         <label for="admissionMaxReviewsPerPullRequestPerHour">Reviews per pull request per hour</label>
@@ -109,7 +109,7 @@
                             aria-describedby="admissionPolicyError" data-testid="admission-max-reviews-per-hour"
                             name="admissionMaxReviewsPerPullRequestPerHour" type="number" min="1" max="2147483647"
                             step="1" placeholder="No limit" />
-                        <p class="muted budget-field-note">ProPR counts the reviews of the pull request it ran in the past hour: a review that is running, and a review that made at least one model call. A push burst past this bound waits for the hour to pass and then runs. No comment is posted for a wait.</p>
+                        <p class="muted budget-field-note">AegisCode counts the reviews of the pull request it ran in the past hour: a review that is running, and a review that made at least one model call. A push burst past this bound waits for the hour to pass and then runs. No comment is posted for a wait.</p>
                     </div>
                     <div class="form-field">
                         <label for="admissionMaxRepositoryMegabytes">Repository size (MB)</label>
@@ -117,7 +117,7 @@
                             aria-describedby="admissionPolicyError" data-testid="admission-max-repository-megabytes"
                             name="admissionMaxRepositoryMegabytes" type="number" min="1" max="2147483647" step="1"
                             placeholder="No limit" />
-                        <p class="muted budget-field-note">Applied while the repository is fetched and checked out. ProPR stops the transfer once it passes this size and does not review the repository. No size is stored between reviews.</p>
+                        <p class="muted budget-field-note">Applied while the repository is fetched and checked out. AegisCode stops the transfer once it passes this size and does not review the repository. No size is stored between reviews.</p>
                     </div>
                 </fieldset>
                 <p v-if="admissionPolicyError" id="admissionPolicyError" class="error" role="alert"

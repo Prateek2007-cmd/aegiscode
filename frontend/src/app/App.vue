@@ -37,7 +37,7 @@
     </div>
     <AppNotification />
     <footer v-if="isAuthenticated && !isPrReview" class="app-footer">
-      Powered by <a href="https://meister-dev.ai" target="_blank" rel="noopener noreferrer" class="footer-link">meister-dev.ai</a>
+      Powered by <a href="https://github.com/Prateek2007-cmd/aegiscode" target="_blank" rel="noopener noreferrer" class="footer-link">AegisCode</a>
     </footer>
   </div>
 </template>

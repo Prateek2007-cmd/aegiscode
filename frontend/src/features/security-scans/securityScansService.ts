@@ -10,6 +10,7 @@
 import { authedFetch } from '@/services/api'
 import { getActiveRuntime } from '@/app/runtime/runtimeContext'
 import type {
+  CycloneDxBom,
   PagedSecurityFindings,
   SecurityFindingSeverity,
   SecurityFindingStatus,
@@ -114,6 +115,20 @@ export async function acknowledgeFinding(
     method: 'POST',
   })
   if (!res.ok) await throwForStatus(res, 'Acknowledge finding')
+}
+
+/**
+ * Fetches the CycloneDX SBOM as parsed JSON for in-app visualization.
+ * Returns null when the scan produced no SBOM (404) — never throws for that.
+ */
+export async function getScanSbomJson(
+  clientId: string,
+  scanId: string,
+): Promise<CycloneDxBom | null> {
+  const res = await authedFetch(`${baseUrl(clientId)}/${scanId}/sbom`)
+  if (res.status === 404) return null
+  if (!res.ok) await throwForStatus(res, 'Get SBOM')
+  return (await res.json()) as CycloneDxBom
 }
 
 /** Downloads a blob (SBOM or report) and triggers a save-as in the browser. */

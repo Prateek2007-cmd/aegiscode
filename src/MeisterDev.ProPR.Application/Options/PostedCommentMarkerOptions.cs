@@ -7,7 +7,7 @@ using MeisterDev.ProPR.CodeInsights.Contracts;
 namespace MeisterDev.ProPR.Application.Options;
 
 /// <summary>
-///     The sentence ProPR puts at the end of every comment it posts, stating that the content was generated
+///     The sentence AegisCode puts at the end of every comment it posts, stating that the content was generated
 ///     by AI.
 /// </summary>
 /// <remarks>
