@@ -1210,6 +1210,13 @@ public sealed partial class PrWideAgenticReviewOrchestrator(
         var publishedComments = FindingDeduplicator.CollapseSameFileDuplicates(MaterializePublishedComments(candidateFindings, gateDecisions));
         var result = new ReviewResult(reconciliation.FinalSummary, publishedComments)
         {
+            // The overview comes from Stage C synthesis, grounded in the investigation evidence.
+            // The orchestration-time sanitizer (in ReviewOrchestrationService) drops walkthrough
+            // entries for files outside this pull request and gates the diagram before publication,
+            // so nothing invented or broken here can reach the pull request.
+            PrSummary = synthesis.PrSummary,
+            Walkthrough = synthesis.Walkthrough,
+            ChangeDiagram = synthesis.ChangeDiagram,
             WithheldFindings = WithheldReviewFindingMapper.Materialize(candidateFindings, gateDecisions),
         };
 

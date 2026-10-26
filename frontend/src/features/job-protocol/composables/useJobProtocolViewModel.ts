@@ -22,6 +22,7 @@ import { parseAssistantTurnRecord } from '../utils/assistantTurn'
 import { modelLabel, modelTitle, originLabel, passKindLabel, symbolLabel } from './passLabels'
 import { parseUnionContributions, parseUnionPassIndex, type UnionPassContribution } from './multiPassUnionContribution'
 import { useFileDiff } from './useFileDiff'
+import { useJobDiff } from './useJobDiff'
 import { useTokenTotals } from './useTokenTotals'
 import { useTraceSearch } from './useTraceSearch'
 import { parseTraceChipParam, serializeTraceChips } from './traceQuickFilters'
@@ -179,7 +180,7 @@ export function useJobProtocolViewModel() {
 
     const loading = ref(false)
     const error = ref('')
-    const activeTab = ref<'summary' | 'traces' | 'tokens'>('summary')
+    const activeTab = ref<'summary' | 'traces' | 'tokens' | 'diff'>('summary')
     const protocols = shallowRef<ReviewProtocolPass[]>([])
     const loadedProtocolIds = ref<Set<string>>(new Set())
     const loadingProtocolIds = ref<Set<string>>(new Set())
@@ -212,6 +213,39 @@ export function useJobProtocolViewModel() {
         loadFileDiff,
         resetDiff,
     } = useFileDiff()
+
+    const {
+        jobDiff,
+        jobDiffLoading,
+        jobDiffError,
+        loadJobDiff: loadJobDiffForJob,
+        resetJobDiff,
+    } = useJobDiff()
+
+    /**
+     * The job's published findings, for the Diff tab's line markers. The review
+     * result is already loaded by `loadProtocol`; this only re-exposes it in
+     * persisted order so the tab can pin findings without a second fetch.
+     */
+    const diffFindings = computed<ProtocolReviewComment[]>(() =>
+        (reviewStatus.value?.result?.comments ?? []) as ProtocolReviewComment[],
+    )
+
+    /**
+     * Loads the whole-PR diff for the Diff tab, lazily on first visit so jobs
+     * that are only ever read as traces never pay for it.
+     */
+    async function loadJobDiff(): Promise<void> {
+        const jobId = route.params.id as string
+        if (!jobId) return
+        await loadJobDiffForJob(jobId)
+    }
+
+    watch(activeTab, tab => {
+        if (tab === 'diff') {
+            void loadJobDiff()
+        }
+    })
 
     const {
         isTraceSearchCollapsed,
@@ -2599,6 +2633,12 @@ export function useJobProtocolViewModel() {
         emptyPassMessage,
         loadFileDiff,
         clearDiff,
+        jobDiff,
+        jobDiffLoading,
+        jobDiffError,
+        loadJobDiff,
+        resetJobDiff,
+        diffFindings,
     })
 }
 

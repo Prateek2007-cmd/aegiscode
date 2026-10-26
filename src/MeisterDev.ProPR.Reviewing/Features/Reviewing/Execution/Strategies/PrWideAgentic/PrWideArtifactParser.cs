@@ -230,7 +230,12 @@ internal static class PrWideArtifactParser
 
             synthesis = new PrWideSynthesisResult(
                 GetString(root, "summary") ?? BuildFallbackSummary(results),
-                results);
+                results)
+            {
+                PrSummary = GetString(root, "pr_summary"),
+                Walkthrough = ParseWalkthrough(root),
+                ChangeDiagram = GetString(root, "change_diagram"),
+            };
             return true;
         }
         catch (JsonException)
@@ -267,6 +272,40 @@ internal static class PrWideArtifactParser
             "info" => CommentSeverity.Info,
             _ => CommentSeverity.Warning,
         };
+    }
+
+    /// <summary>
+    ///     Parses the optional <c>walkthrough</c> array: one entry per changed file. Entries missing
+    ///     a file path or a description are skipped here; entries for files outside the pull request
+    ///     are dropped later by the orchestration-time sanitizer, which is the one that knows the
+    ///     changed files. A missing or malformed array means no walkthrough, never an invented one.
+    /// </summary>
+    private static IReadOnlyList<PrWalkthroughEntry>? ParseWalkthrough(JsonElement root)
+    {
+        if (!root.TryGetProperty("walkthrough", out var walkthroughEl) || walkthroughEl.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var entries = new List<PrWalkthroughEntry>();
+        foreach (var item in walkthroughEl.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var filePath = GetString(item, "file_path");
+            var description = GetString(item, "description");
+            if (string.IsNullOrWhiteSpace(filePath) || string.IsNullOrWhiteSpace(description))
+            {
+                continue;
+            }
+
+            entries.Add(new PrWalkthroughEntry(filePath, description));
+        }
+
+        return entries.Count == 0 ? null : entries.AsReadOnly();
     }
 
     private static IReadOnlyList<string> GetStringArray(JsonElement element, string propertyName)

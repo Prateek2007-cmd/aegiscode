@@ -107,7 +107,26 @@ public sealed record PrWideCandidateFinding(
 /// <param name="CandidateFindings">Normalized candidate findings emitted by Stage C.</param>
 public sealed record PrWideSynthesisResult(
     string Summary,
-    IReadOnlyList<PrWideCandidateFinding> CandidateFindings);
+    IReadOnlyList<PrWideCandidateFinding> CandidateFindings)
+{
+    /// <summary>
+    ///     Short structured summary of what the pull request does, produced by Stage C from the
+    ///     investigation evidence. <see langword="null" /> when Stage C produced none.
+    /// </summary>
+    public string? PrSummary { get; init; }
+
+    /// <summary>
+    ///     One short entry per changed file, produced by Stage C from the investigation evidence.
+    ///     <see langword="null" /> when Stage C produced none.
+    /// </summary>
+    public IReadOnlyList<PrWalkthroughEntry>? Walkthrough { get; init; }
+
+    /// <summary>
+    ///     Mermaid diagram of how the changed pieces connect, produced by Stage C from the
+    ///     investigation evidence. <see langword="null" /> when Stage C produced none.
+    /// </summary>
+    public string? ChangeDiagram { get; init; }
+}
 
 /// <summary>Verification and final-gate disposition for a PR-wide candidate.</summary>
 /// <param name="CandidateId">Candidate identifier.</param>

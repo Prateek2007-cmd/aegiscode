@@ -549,4 +549,45 @@ public sealed class ReviewDiffProcessorTests
         Assert.Equal(10, ranges[0].Start);
         Assert.Equal(12, ranges[0].End);
     }
+
+    [Fact]
+    public void CountAddedAndRemovedLines_NullOrEmpty_ReturnsZero()
+    {
+        Assert.Equal((0, 0), ReviewDiffProcessor.CountAddedAndRemovedLines(null));
+        Assert.Equal((0, 0), ReviewDiffProcessor.CountAddedAndRemovedLines(string.Empty));
+    }
+
+    [Fact]
+    public void CountAddedAndRemovedLines_CountsPayloadLinesSeparately()
+    {
+        const string diff = "--- a/src/Foo.cs\n+++ b/src/Foo.cs\n@@ -1,2 +1,3 @@\n ctx\n-old\n+new1\n+new2\n ctx2";
+
+        var (added, removed) = ReviewDiffProcessor.CountAddedAndRemovedLines(diff);
+
+        Assert.Equal(2, added);
+        Assert.Equal(1, removed);
+    }
+
+    [Fact]
+    public void CountAddedAndRemovedLines_PlusPlusPayload_IsCountedNotMistakenForHeader()
+    {
+        // "++x" is a real added line whose content starts with '+'; only "+++" is a header.
+        const string diff = "@@ -1,1 +1,2 @@\n ctx\n++x\n";
+
+        var (added, removed) = ReviewDiffProcessor.CountAddedAndRemovedLines(diff);
+
+        Assert.Equal(1, added);
+        Assert.Equal(0, removed);
+    }
+
+    [Fact]
+    public void CountAddedAndRemovedLines_DeletionOnlyDiff_CountsRemoved()
+    {
+        const string diff = "@@ -1,2 +1,1 @@\n ctx\n-gone\n";
+
+        var (added, removed) = ReviewDiffProcessor.CountAddedAndRemovedLines(diff);
+
+        Assert.Equal(0, added);
+        Assert.Equal(1, removed);
+    }
 }

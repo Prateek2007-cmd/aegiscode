@@ -123,6 +123,49 @@ public static class ReviewDiffProcessor
     }
 
     /// <summary>
+    ///     Counts added and removed content lines in a unified diff, separately.
+    ///     Hunk headers and file headers are excluded, so the counts reflect only actual diff payload
+    ///     lines — the same rule as <see cref="CountChangedLines" />, split by sign.
+    /// </summary>
+    public static (int Added, int Removed) CountAddedAndRemovedLines(string? diff)
+    {
+        if (string.IsNullOrEmpty(diff))
+        {
+            return (0, 0);
+        }
+
+        var added = 0;
+        var removed = 0;
+        foreach (var line in diff.AsSpan().EnumerateLines())
+        {
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var first = line[0];
+            if (first is '+' or '-')
+            {
+                if (line.Length >= 3 && line[1] == first && line[2] == first)
+                {
+                    continue;
+                }
+
+                if (first == '+')
+                {
+                    added++;
+                }
+                else
+                {
+                    removed++;
+                }
+            }
+        }
+
+        return (added, removed);
+    }
+
+    /// <summary>
     ///     Extracts only the added payload of a unified diff: the text of lines beginning with a single
     ///     <c>+</c> (excluding the <c>+++</c> file header), with the leading <c>+</c> removed. Matching against
     ///     this — rather than the raw diff — ensures file headers, hunk headers, context lines, and removed

@@ -43,7 +43,16 @@ public sealed class GetFileDiffHandler(
                 $"Review job {query.JobId} was not found.");
         }
 
-        var fileResult = job.FileReviewResults.FirstOrDefault(result => result.Id == query.FileResultId);
+        return await this.HandleForFileAsync(job, query.FileResultId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    ///     Returns the unified diff for one file result of an already-loaded job. The job-level
+    ///     diff read path uses this so a whole-PR diff does not re-load the job once per file.
+    /// </summary>
+    public async Task<FileDiffDto> HandleForFileAsync(ReviewJob job, Guid fileResultId, CancellationToken ct = default)
+    {
+        var fileResult = job.FileReviewResults.FirstOrDefault(result => result.Id == fileResultId);
         if (fileResult is null)
         {
             return new FileDiffDto(
@@ -53,7 +62,7 @@ public sealed class GetFileDiffHandler(
                 false,
                 null,
                 FileDiffAvailability.NotFound,
-                $"File result {query.FileResultId} was not found for review job {query.JobId}.");
+                $"File result {fileResultId} was not found for review job {job.Id}.");
         }
 
         var storedDiff = await this.TryGetStoredFileDiffAsync(job, fileResult.FilePath, ct).ConfigureAwait(false);

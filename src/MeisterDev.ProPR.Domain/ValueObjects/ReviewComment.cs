@@ -75,6 +75,10 @@ public sealed record ReviewComment
             OriginLogicalModelName = this.OriginLogicalModelName,
             OriginSymbolName = this.OriginSymbolName,
             OriginSymbolKind = this.OriginSymbolKind,
+            SuggestedCode = this.SuggestedCode,
+            SuggestionStartLine = this.SuggestionStartLine,
+            SuggestionEndLine = this.SuggestionEndLine,
+            SuggestedOriginalCode = this.SuggestedOriginalCode,
         };
     }
 
@@ -171,4 +175,34 @@ public sealed record ReviewComment
     ///     structural analyzer classified it. <see langword="null" /> whenever the name is.
     /// </summary>
     public string? OriginSymbolKind { get; init; }
+
+    /// <summary>
+    ///     The exact replacement code the reviewer proposes for the lines
+    ///     <see cref="SuggestionStartLine" />..<see cref="SuggestionEndLine" /> (defaulting to
+    ///     <see cref="LineNumber" />), for a CodeRabbit-style one-click code suggestion. A suggestion is
+    ///     present only when this is non-whitespace. It is published as a suggestion block only after
+    ///     the suggested-code gate verifies it against the pull request head; otherwise the finding
+    ///     publishes as plain text.
+    /// </summary>
+    public string? SuggestedCode { get; init; }
+
+    /// <summary>
+    ///     The 1-based first line of the range <see cref="SuggestedCode" /> replaces, in the head version
+    ///     of the file. Defaults to <see cref="LineNumber" /> when <see langword="null" />.
+    /// </summary>
+    public int? SuggestionStartLine { get; init; }
+
+    /// <summary>
+    ///     The 1-based last line of the range <see cref="SuggestedCode" /> replaces, in the head version
+    ///     of the file. Defaults to <see cref="LineNumber" /> when <see langword="null" />.
+    /// </summary>
+    public int? SuggestionEndLine { get; init; }
+
+    /// <summary>
+    ///     The exact head-version text of the lines <see cref="SuggestionStartLine" />..
+    ///     <see cref="SuggestionEndLine" />, as the reviewer saw them. The suggested-code gate requires
+    ///     this to match the head file byte-for-byte (modulo line endings) before a suggestion may be
+    ///     published; when it is absent the suggestion is unverifiable and is dropped.
+    /// </summary>
+    public string? SuggestedOriginalCode { get; init; }
 }

@@ -3,6 +3,7 @@
 
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetFileDiff;
+using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetJobDiff;
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetReviewJobProtocol;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Infrastructure.Data;
@@ -33,6 +34,7 @@ public static class ReviewingDiagnosticsServiceCollectionExtensions
         });
         services.AddScoped<GetReviewJobProtocolHandler>();
         services.AddScoped<GetFileDiffHandler>();
+        services.AddScoped<GetJobDiffHandler>();
 
         return services;
     }

@@ -861,6 +861,31 @@ public sealed partial class ReviewOrchestrationService(
         {
             var publicationResult = this.PrepareResultForPublication(job, pr, result);
 
+            // Verify every code suggestion against the pull request head before anything is
+            // published. A suggestion that fails the gate — original text that does not match the
+            // head file, a range outside the diff, a missing original, or head content that could
+            // not be obtained at all — loses its suggestion fields and publishes as plain text;
+            // findings with no suggestion pass through untouched. Gating here, before the
+            // publication policy, keeps the persisted result, the published result, and the
+            // code-insight mapping working from the same comment instances.
+            var (gatedResult, strippedSuggestionCount) = SuggestedCodeGate.GateSuggestions(publicationResult, pr.ChangedFiles);
+            if (strippedSuggestionCount > 0)
+            {
+                logger.LogInformation(
+                    "Stripped {StrippedSuggestionCount} unverified code suggestion(s) from review job {JobId}; the findings publish as plain text.",
+                    strippedSuggestionCount,
+                    job.Id);
+            }
+
+            publicationResult = gatedResult;
+
+            // Prepare the AI-produced pull-request overview (PR summary, file walkthrough, change
+            // diagram) for publication and attach the change statistics counted from the actual
+            // diffs. Anything the AI did not produce, or that fails the fail-closed checks — a
+            // walkthrough entry for a file outside this pull request, a broken diagram — is dropped
+            // here, so the published comment omits the section instead of showing invented content.
+            publicationResult = PrOverviewSanitizer.Sanitize(publicationResult, pr.ChangedFiles);
+
             // The client's post configuration governs SCM PUBLICATION only. The persisted result below keeps
             // every finding, so a withheld one is still visible in the review record ("no comment posted" is
             // not "no review"). The published summary carries the count, so what was held back is legible on

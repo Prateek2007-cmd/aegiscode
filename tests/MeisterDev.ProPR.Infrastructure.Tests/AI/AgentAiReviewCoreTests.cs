@@ -240,4 +240,150 @@ public class AgentAiReviewCoreTests
         Assert.Null(result.Comments[1].FilePath);
         Assert.Equal(CommentSeverity.Info, result.Comments[1].Severity);
     }
+
+    [Fact]
+    public async Task ReviewAsync_SuggestionFields_RoundTripOntoReviewComment()
+    {
+        // Arrange — the AI emits the optional snake_case suggestion fields from the finding schema.
+        var json = """
+                   {
+                     "summary": "One fixable finding.",
+                     "comments": [
+                       {
+                         "filePath": "/src/MyFile.cs",
+                         "lineNumber": 42,
+                         "severity": "warning",
+                         "message": "Await this call.",
+                         "suggested_code": "await DeleteAsync(id).ConfigureAwait(false);",
+                         "suggestion_start_line": 42,
+                         "suggestion_end_line": 43,
+                         "original_lines": "await DeleteAsync(id);\nawait LogAsync(id);"
+                       }
+                     ]
+                   }
+                   """;
+
+        var mockClient = Substitute.For<IChatClient>();
+        mockClient
+            .GetResponseAsync(
+                Arg.Any<IEnumerable<ChatMessage>>(),
+                Arg.Any<ChatOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(CreateChatResponse(json));
+
+        var core = CreateCore(mockClient);
+
+        // Act
+        var result = await core.ReviewAsync(CreatePullRequest(), EmptyContext());
+
+        // Assert
+        var comment = Assert.Single(result.Comments);
+        Assert.Equal("await DeleteAsync(id).ConfigureAwait(false);", comment.SuggestedCode);
+        Assert.Equal(42, comment.SuggestionStartLine);
+        Assert.Equal(43, comment.SuggestionEndLine);
+        Assert.Equal("await DeleteAsync(id);\nawait LogAsync(id);", comment.SuggestedOriginalCode);
+    }
+
+    [Fact]
+    public async Task ReviewAsync_SuggestionFieldsAbsent_ParseAsNull()
+    {
+        // Arrange — a finding without any suggestion fields must not gain an invented snippet.
+        var json = """
+                   {
+                     "summary": "Design feedback only.",
+                     "comments": [
+                       { "filePath": "/src/MyFile.cs", "lineNumber": 7, "severity": "suggestion", "message": "Consider extracting this." }
+                     ]
+                   }
+                   """;
+
+        var mockClient = Substitute.For<IChatClient>();
+        mockClient
+            .GetResponseAsync(
+                Arg.Any<IEnumerable<ChatMessage>>(),
+                Arg.Any<ChatOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(CreateChatResponse(json));
+
+        var core = CreateCore(mockClient);
+
+        // Act
+        var result = await core.ReviewAsync(CreatePullRequest(), EmptyContext());
+
+        // Assert — behaves exactly as before: plain finding, no suggestion.
+        var comment = Assert.Single(result.Comments);
+        Assert.Null(comment.SuggestedCode);
+        Assert.Null(comment.SuggestionStartLine);
+        Assert.Null(comment.SuggestionEndLine);
+        Assert.Null(comment.SuggestedOriginalCode);
+    }
+
+    [Fact]
+    public async Task ReviewAsync_PrOverviewKeys_ParseOntoReviewResult()
+    {
+        // Arrange — the AI's PR summary, walkthrough, and diagram ride on the result.
+        var json = """
+                   {
+                     "summary": "Two findings.",
+                     "pr_summary": "Adds a login cache so repeat visits skip the database.",
+                     "walkthrough": [
+                       { "file_path": "src/Cache.cs", "description": "Adds the cache itself." },
+                       { "file_path": "src/Login.cs", "description": "Reads from the cache first." }
+                     ],
+                     "change_diagram": "flowchart TD\n    A[Login] --> B[Cache]",
+                     "comments": []
+                   }
+                   """;
+
+        var mockClient = Substitute.For<IChatClient>();
+        mockClient
+            .GetResponseAsync(
+                Arg.Any<IEnumerable<ChatMessage>>(),
+                Arg.Any<ChatOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(CreateChatResponse(json));
+
+        var core = CreateCore(mockClient);
+
+        // Act
+        var result = await core.ReviewAsync(CreatePullRequest(), EmptyContext());
+
+        // Assert
+        Assert.Equal("Adds a login cache so repeat visits skip the database.", result.PrSummary);
+        Assert.NotNull(result.Walkthrough);
+        Assert.Equal(2, result.Walkthrough!.Count);
+        Assert.Equal("src/Cache.cs", result.Walkthrough[0].FilePath);
+        Assert.Equal("Adds the cache itself.", result.Walkthrough[0].Description);
+        Assert.Equal("flowchart TD\n    A[Login] --> B[Cache]", result.ChangeDiagram);
+    }
+
+    [Fact]
+    public async Task ReviewAsync_PrOverviewKeysAbsent_ParseAsNull()
+    {
+        // Arrange — a response without any overview keys must not gain an invented overview.
+        var json = """
+                   {
+                     "summary": "Findings only.",
+                     "comments": []
+                   }
+                   """;
+
+        var mockClient = Substitute.For<IChatClient>();
+        mockClient
+            .GetResponseAsync(
+                Arg.Any<IEnumerable<ChatMessage>>(),
+                Arg.Any<ChatOptions?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(CreateChatResponse(json));
+
+        var core = CreateCore(mockClient);
+
+        // Act
+        var result = await core.ReviewAsync(CreatePullRequest(), EmptyContext());
+
+        // Assert
+        Assert.Null(result.PrSummary);
+        Assert.Null(result.Walkthrough);
+        Assert.Null(result.ChangeDiagram);
+    }
 }

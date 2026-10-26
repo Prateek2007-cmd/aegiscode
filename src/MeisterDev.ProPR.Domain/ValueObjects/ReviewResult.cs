@@ -14,6 +14,33 @@ public sealed record ReviewResult(
     string Summary,
     IReadOnlyList<ReviewComment> Comments)
 {
+    /// <summary>
+    ///     Short structured summary of what the pull request does (2-4 lines), produced by the
+    ///     reviewing AI from its read of the actual diff. <see langword="null" /> when the AI produced
+    ///     none; the publisher omits the section rather than inventing one.
+    /// </summary>
+    public string? PrSummary { get; init; }
+
+    /// <summary>
+    ///     One short entry per changed file — what changed and why it matters — produced by the
+    ///     reviewing AI from its read of the actual diff. <see langword="null" /> when the AI produced
+    ///     none; entries for files outside the pull request are dropped before publication.
+    /// </summary>
+    public IReadOnlyList<PrWalkthroughEntry>? Walkthrough { get; init; }
+
+    /// <summary>
+    ///     Mermaid diagram of how the changed pieces connect, produced by the reviewing AI from its
+    ///     read of the actual diff. <see langword="null" /> when the AI produced none or the diagram
+    ///     failed the fail-closed gate; the publisher omits it rather than posting a broken diagram.
+    /// </summary>
+    public string? ChangeDiagram { get; init; }
+
+    /// <summary>
+    ///     Change statistics counted from the actual diffs of the pull request's changed files.
+    ///     <see langword="null" /> when the statistics were not computed for this result.
+    /// </summary>
+    public PrChangeStats? ChangeStats { get; init; }
+
     /// <summary>Generated findings withheld by verification or the final gate, for internal evidence collection.</summary>
     [JsonIgnore]
     public IReadOnlyList<WithheldReviewFinding> WithheldFindings { get; init; } = [];

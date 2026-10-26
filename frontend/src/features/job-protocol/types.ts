@@ -14,6 +14,17 @@ export type FileDiffDto = components['schemas']['FileDiffDto']
 export type ReviewCommentDto = components['schemas']['ReviewCommentDto']
 
 /**
+ * The job-level diff payload returned by `GET /reviewing/jobs/{jobId}/diff`.
+ * Hand-written (not generated) until `openapi.json` is regenerated from the API
+ * and `npm run generate:api` picks the endpoint up: the shape is one
+ * `FileDiffDto` per reviewed file, in file-path order.
+ */
+export interface JobDiffDto {
+    jobId: string
+    files: FileDiffDto[]
+}
+
+/**
  * A review comment as consumed by the protocol view. Extends the generated DTO
  * with the snake_case aliases some serializers historically emitted, kept for
  * defensive reads of older payloads.

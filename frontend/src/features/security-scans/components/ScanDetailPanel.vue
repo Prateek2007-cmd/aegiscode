@@ -28,11 +28,24 @@
 
     <div v-if="actionError" class="banner banner-error" role="alert">{{ actionError }}</div>
 
-    <!-- Progress -->
-    <div v-if="scan.status === 'Running' || scan.status === 'Queued'" class="progress-wrap" aria-busy="true">
-      <div class="progress-bar"><div class="progress-fill" :style="{ width: `${scan.progressPct}%` }"></div></div>
-      <span class="progress-text">{{ scan.progressPct }}%</span>
-    </div>
+    <!-- Mission control: live while running, the report once finished -->
+    <MissionControl
+      :scan="scan"
+      :findings-so-far="totalFindings"
+      :per-scanner-findings="perScannerFindings"
+      :sbom-component-count="sbomComponentCount"
+      :sbom-missing="sbomMissing"
+      :snapshots="snapshots"
+    />
+
+    <!-- Repo scale: files, manifests, SBOM components, languages from manifests -->
+    <ScaleStrip :scan="scan" :sbom-component-count="sbomComponentCount" :sbom-missing="sbomMissing" />
+
+    <!-- Posture: severity dial, timeline across scans, hottest files -->
+    <PostureView :scan="scan" :scans="scans" :findings="findings" :total-findings="totalFindings" />
+
+    <!-- SBOM constellation -->
+    <SbomConstellation :sbom="sbom" :sbom-missing="sbomMissing" :dep-scan-findings="depScanFindings" />
 
     <!-- Coverage: honest account of what ran -->
     <details v-if="scan.coverage" class="coverage">
@@ -82,18 +95,46 @@
         </button>
         <div v-if="expandedId === f.id" class="finding-body">
           <dl>
-            <div v-if="f.ruleId"><dt>Rule</dt><dd><code>{{ f.ruleId }}</code></dd></div>
+            <div v-if="f.ruleId">
+              <dt>Rule</dt>
+              <dd>
+                <a v-if="osvUrl(f.ruleId)" :href="osvUrl(f.ruleId)!" target="_blank" rel="noopener" class="rule-link">
+                  {{ f.ruleId }} <span aria-hidden="true">↗</span>
+                </a>
+                <code v-else>{{ f.ruleId }}</code>
+              </dd>
+            </div>
             <div v-if="f.filePath"><dt>Location</dt><dd><code>{{ f.filePath }}{{ f.line ? ':' + f.line : '' }}</code></dd></div>
-            <div><dt>Confidence</dt><dd>{{ f.confidence }}</dd></div>
+            <div>
+              <dt>Priority score</dt>
+              <dd><span class="prio-num">{{ f.priorityScore }}</span> <span class="prio-note">priority — not a CVSS score</span></dd>
+            </div>
+            <div><dt>Confidence</dt><dd><span class="confidence-badge">{{ f.confidence }}</span></dd></div>
             <div><dt>Status</dt><dd>{{ f.status }}</dd></div>
             <div v-if="f.evidence"><dt>Evidence</dt><dd class="evidence">{{ f.evidence }}</dd></div>
-            <div v-if="f.remediation"><dt>Remediation</dt><dd class="remediation">{{ f.remediation }}</dd></div>
+            <div v-if="f.remediation">
+              <dt>AI suggested fix</dt>
+              <dd>
+                <span class="confidence-badge">{{ f.confidence }}</span>
+                <p class="remediation">{{ f.remediation }}</p>
+              </dd>
+            </div>
             <div v-if="f.scoreGaps.length"><dt>Score gaps</dt><dd class="gaps">{{ f.scoreGaps.join('; ') }}</dd></div>
             <div><dt>First seen</dt><dd>{{ formatTime(f.firstSeenAt) }}</dd></div>
           </dl>
           <div class="finding-actions" v-if="canManage && (f.status === 'Open' || f.status === 'Acknowledged')">
             <button class="btn-ghost btn-sm" @click="acknowledge(f)" :disabled="actingId === f.id">Acknowledge</button>
             <button class="btn-ghost btn-sm" @click="suppressPrompt(f)" :disabled="actingId === f.id">Suppress…</button>
+            <FixProposalButton
+              :client-id="clientId"
+              source="scan"
+              :finding-ref="`scan:${f.id}`"
+              :title="f.title"
+              :file-path="f.filePath"
+              :line="f.line"
+              :remediation="f.remediation"
+              :confidence="f.confidence"
+            />
           </div>
           <div v-if="suppressingId === f.id" class="suppress-box">
             <input v-model="suppressReason" placeholder="Reason (required, audited)…" class="filter-input" />
@@ -116,17 +157,26 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import FixProposalButton from '@/features/reviews/components/FixProposalButton.vue'
 import {
   acknowledgeFinding,
   cancelSecurityScan,
   downloadScanArtifact,
   getScanFindings,
+  getScanSbomJson,
   suppressFinding,
 } from '../securityScansService'
-import type { SecurityFinding, SecurityScan } from '../types'
-import { SECURITY_SCANNERS, SEVERITY_ORDER, scanStatusColor, scanStatusHint, severityColor } from '../types'
+import type { CycloneDxBom, PollSnapshot, SecurityFinding, SecurityScan } from '../types'
+import { SECURITY_SCANNERS, SEVERITY_ORDER, osvUrl, scanStatusColor, scanStatusHint, severityColor } from '../types'
+import MissionControl from './MissionControl.vue'
+import ScaleStrip from './ScaleStrip.vue'
+import PostureView from './PostureView.vue'
+import SbomConstellation from './SbomConstellation.vue'
 
-const props = defineProps<{ clientId: string; scan: SecurityScan; canManage: boolean }>()
+const props = withDefaults(
+  defineProps<{ clientId: string; scan: SecurityScan; canManage: boolean; scans?: SecurityScan[] }>(),
+  { scans: () => [] },
+)
 const emit = defineEmits<{ refresh: []; cancelled: [] }>()
 
 const findings = ref<SecurityFinding[]>([])
@@ -149,6 +199,26 @@ const cancelling = ref(false)
 const downloadingSbom = ref(false)
 const downloadingReport = ref(false)
 const actionError = ref<string | null>(null)
+
+// Dashboard data: per-scanner finding counts, SBOM, dep-scan findings for the constellation.
+const perScannerFindings = ref<Record<string, number>>({})
+const sbom = ref<CycloneDxBom | null>(null)
+const sbomMissing = ref(false)
+const sbomComponentCount = computed(() => sbom.value?.components?.length ?? null)
+const depScanFindings = ref<SecurityFinding[]>([])
+
+// Poll log: snapshots recorded in this browser session (not engine logs).
+const snapshots = ref<PollSnapshot[]>([])
+function recordSnapshot(): void {
+  const last = snapshots.value[snapshots.value.length - 1]
+  if (last && last.status === props.scan.status && last.progressPct === props.scan.progressPct) return
+  snapshots.value.push({
+    at: new Date().toISOString(),
+    status: props.scan.status,
+    progressPct: props.scan.progressPct,
+  })
+  if (snapshots.value.length > 50) snapshots.value.splice(0, snapshots.value.length - 50)
+}
 
 const filteredFindings = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -194,6 +264,56 @@ async function loadFindings(): Promise<void> {
   } finally {
     loadingFindings.value = false
   }
+  void loadScannerCounts()
+}
+
+/** Per-scanner finding totals via the findings API (limit 1, read totalCount). */
+async function loadScannerCounts(): Promise<void> {
+  try {
+    const counts = await Promise.all(
+      SECURITY_SCANNERS.map(async (scanner) => {
+        const res = await getScanFindings(props.clientId, props.scan.scanId, { scanner, limit: 1 })
+        return [scanner, res.totalCount] as const
+      }),
+    )
+    perScannerFindings.value = Object.fromEntries(counts)
+  } catch {
+    /* best-effort: scanner cards fall back to "findings loading…" */
+  }
+}
+
+async function loadSbom(): Promise<void> {
+  try {
+    const bom = await getScanSbomJson(props.clientId, props.scan.scanId)
+    sbom.value = bom
+    sbomMissing.value = bom === null
+  } catch {
+    // Leave the previous SBOM state; the download button surfaces real errors.
+    sbomMissing.value = false
+  }
+}
+
+/** Dep-scan findings used only to match SBOM components to vulnerabilities. */
+async function loadDepScanFindings(): Promise<void> {
+  try {
+    const res = await getScanFindings(props.clientId, props.scan.scanId, {
+      scanner: 'dep-scan',
+      limit: 500,
+    })
+    depScanFindings.value = res.items
+  } catch {
+    depScanFindings.value = []
+  }
+}
+
+function resetScanState(): void {
+  expandedId.value = null
+  perScannerFindings.value = {}
+  sbom.value = null
+  sbomMissing.value = false
+  depScanFindings.value = []
+  snapshots.value = []
+  recordSnapshot()
 }
 
 function toggleExpand(id: string): void {
@@ -264,7 +384,39 @@ watch([() => props.scan.scanId, page], () => {
   void loadFindings()
 })
 
-onMounted(() => void loadFindings())
+// New scan selected: reset dashboard state and load its SBOM + dep-scan findings.
+watch(
+  () => props.scan.scanId,
+  () => {
+    resetScanState()
+    void loadSbom()
+    void loadDepScanFindings()
+  },
+)
+
+// Poll updates arrive as a fresh scan object: record the snapshot, and re-fetch
+// the SBOM / dep-scan findings once the scan reaches a terminal state.
+watch(
+  () => [props.scan.status, props.scan.progressPct] as const,
+  () => {
+    recordSnapshot()
+    if (
+      props.scan.status === 'Succeeded' ||
+      props.scan.status === 'PartiallySucceeded' ||
+      props.scan.status === 'Failed'
+    ) {
+      void loadSbom()
+      void loadDepScanFindings()
+    }
+  },
+)
+
+onMounted(() => {
+  recordSnapshot()
+  void loadFindings()
+  void loadSbom()
+  void loadDepScanFindings()
+})
 </script>
 
 <style scoped>
@@ -281,10 +433,6 @@ onMounted(() => void loadFindings())
 .btn-sm { padding: 0.3rem 0.65rem; font-size: 0.78rem; }
 .btn-link { background: none; border: none; color: #38bdf8; cursor: pointer; font-weight: 600; }
 .banner-error { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.3); color: #fda4af; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.84rem; margin-bottom: 0.8rem; }
-.progress-wrap { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.8rem; }
-.progress-bar { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 9999px; overflow: hidden; }
-.progress-fill { height: 100%; background: #38bdf8; border-radius: 9999px; transition: width 0.5s ease; }
-.progress-text { font-size: 0.8rem; color: var(--color-text-muted); }
 .coverage { margin-bottom: 0.9rem; font-size: 0.84rem; }
 .coverage summary { cursor: pointer; color: #7dd3fc; font-weight: 600; }
 .coverage dl { margin: 0.5rem 0 0; display: grid; gap: 0.3rem; }
@@ -312,11 +460,24 @@ onMounted(() => void loadFindings())
 .finding-body dt { color: var(--color-text-muted); }
 .finding-body dd { margin: 0; word-break: break-word; }
 .finding-body code { background: rgba(255,255,255,0.06); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.8rem; }
+.rule-link { color: #7dd3fc; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-size: 0.8rem; }
+.rule-link:hover { color: #38bdf8; }
+.prio-num {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-weight: 700; color: #fbbf24;
+}
+.prio-note { font-size: 0.74rem; color: var(--color-text-muted); margin-left: 0.3rem; }
+.confidence-badge {
+  display: inline-block; font-size: 0.72rem; font-weight: 700;
+  background: rgba(56,189,248,0.12); color: #7dd3fc;
+  padding: 0.1rem 0.5rem; border-radius: 9999px;
+}
 .evidence, .remediation { white-space: pre-wrap; font-size: 0.82rem; }
+.remediation { margin: 0.4rem 0 0; }
 .gaps { color: #fbbf24; font-size: 0.8rem; }
 .finding-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
 .suppress-box { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .suppress-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .pagination { display: flex; align-items: center; justify-content: center; gap: 0.8rem; margin-top: 1rem; font-size: 0.84rem; color: var(--color-text-muted); }
-@media (prefers-reduced-motion: reduce) { .spinner, .progress-fill { animation: none; transition: none; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 </style>

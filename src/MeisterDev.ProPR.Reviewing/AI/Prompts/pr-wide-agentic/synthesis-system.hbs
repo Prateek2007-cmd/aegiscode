@@ -21,7 +21,15 @@ Schema:
       "evidence_source": "pr_wide_synthesis"
     }
   ],
-  "summary": "<draft PR-wide summary before final reconciliation>"
+  "summary": "<draft PR-wide summary before final reconciliation>",
+  "pr_summary": "<2-4 line summary of what the PR does, or omit>",
+  "walkthrough": [
+    {
+      "file_path": "<relative path>",
+      "description": "<what changed and why it matters>"
+    }
+  ],
+  "change_diagram": "<Mermaid diagram of how the changed pieces connect, or omit>"
 }
 
 Rules:
@@ -30,3 +38,4 @@ Rules:
 3. When a finding is anchored at one changed site but implicates other files, name those other files explicitly in the `message`.
 4. Use `candidate_summary_text` for any finding that may need `SummaryOnly` disposition later.
 5. Do not make final publication decisions. Emit only candidate findings plus the draft PR summary.
+6. PR OVERVIEW (optional): "pr_summary" is 2-4 lines on what the PR does, not what is wrong with it. "walkthrough" has one short entry per changed file — "file_path" plus "description" (one sentence: what changed and why it matters). "change_diagram" is raw Mermaid (no backtick fences — it is a JSON string value): a flowchart or sequence diagram, whichever fits, showing how the changed pieces connect, starting with a valid diagram keyword (graph, flowchart, sequenceDiagram, classDiagram, stateDiagram, or erDiagram). Base all three ONLY on the investigation evidence above — the evidence summaries, candidate findings, and supporting files. Never describe a file that has no evidence behind it, never invent a connection between pieces, and omit "change_diagram" when the change is too small to diagram or the relationships are unclear from the evidence. Omit any of these three keys entirely when unsure; a missing overview section is fine, an invented or broken one is not.

@@ -103,11 +103,13 @@
                 <button class="tab-btn" :class="{ 'tab-active': vm.activeTab === 'summary' }" @click="vm.activeTab = 'summary'">Review Summary</button>
                 <button class="tab-btn" :class="{ 'tab-active': vm.activeTab === 'traces' }" @click="vm.activeTab = 'traces'">Execution Traces</button>
                 <button class="tab-btn" :class="{ 'tab-active': vm.activeTab === 'tokens' }" @click="vm.activeTab = 'tokens'">Token Breakdown</button>
+                <button class="tab-btn" :class="{ 'tab-active': vm.activeTab === 'diff' }" @click="vm.activeTab = 'diff'">Diff</button>
             </div>
 
             <JobProtocolSummaryTab v-if="vm.activeTab === 'summary'" :vm="vm" />
             <JobProtocolTraceTab v-else-if="vm.activeTab === 'traces'" :vm="vm" />
             <JobProtocolTokensTab v-else-if="vm.activeTab === 'tokens'" :vm="vm" />
+            <JobProtocolDiffTab v-else-if="vm.activeTab === 'diff'" :vm="vm" />
 
             <JobProtocolEventModal :vm="vm" />
             <JobProtocolSummaryModal :vm="vm" />
@@ -126,6 +128,7 @@ import { RouterLink } from 'vue-router'
 import { AppTopBar } from '@/components'
 import JobProtocolEventModal from '@/features/job-protocol/components/JobProtocolEventModal.vue'
 import JobProtocolSummaryModal from '@/features/job-protocol/components/JobProtocolSummaryModal.vue'
+import JobProtocolDiffTab from '@/features/job-protocol/components/JobProtocolDiffTab.vue'
 import JobProtocolSummaryTab from '@/features/job-protocol/components/JobProtocolSummaryTab.vue'
 import JobProtocolTokensTab from '@/features/job-protocol/components/JobProtocolTokensTab.vue'
 import JobProtocolTraceTab from '@/features/job-protocol/components/JobProtocolTraceTab.vue'

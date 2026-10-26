@@ -72,6 +72,35 @@ public sealed class ReviewCommentTests
         }
     }
 
+    [Fact]
+    public void AsPullRequestLevel_CarriesTheCodeSuggestion()
+    {
+        var comment = BuildFullyPopulatedComment();
+
+        var promoted = comment.AsPullRequestLevel("rewritten");
+
+        Assert.Equal("await DeleteAsync(id).ConfigureAwait(false);", promoted.SuggestedCode);
+        Assert.Equal(244, promoted.SuggestionStartLine);
+        Assert.Equal(244, promoted.SuggestionEndLine);
+        Assert.Equal("await DeleteAsync(id);", promoted.SuggestedOriginalCode);
+    }
+
+    [Fact]
+    public void AsPullRequestLevel_WithoutSuggestion_LeavesSuggestionFieldsNull()
+    {
+        // A finding with SuggestedCode null behaves as before: no suggestion is carried, and
+        // nothing is invented to fill the gap.
+        var comment = new ReviewComment("src/Legacy.cs", 244, CommentSeverity.Warning, "The delete path races.");
+
+        var promoted = comment.AsPullRequestLevel("rewritten");
+
+        Assert.Null(promoted.SuggestedCode);
+        Assert.Null(promoted.SuggestionStartLine);
+        Assert.Null(promoted.SuggestionEndLine);
+        Assert.Null(promoted.SuggestedOriginalCode);
+        Assert.Equal("rewritten", promoted.Message);
+    }
+
     private static ReviewComment BuildFullyPopulatedComment()
     {
         return new ReviewComment("src/Legacy.cs", 244, CommentSeverity.Warning, "The delete path races.")
@@ -86,6 +115,10 @@ public sealed class ReviewCommentTests
             OriginLogicalModelName = "reviewer-default",
             OriginSymbolName = "DeleteAsync",
             OriginSymbolKind = "method",
+            SuggestedCode = "await DeleteAsync(id).ConfigureAwait(false);",
+            SuggestionStartLine = 244,
+            SuggestionEndLine = 244,
+            SuggestedOriginalCode = "await DeleteAsync(id);",
         };
     }
 }

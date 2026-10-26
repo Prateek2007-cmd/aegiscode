@@ -103,6 +103,12 @@
         <ReviewHistorySection :client-id="clientId" />
       </section>
 
+      <!-- Trigger review -->
+      <section class="dashboard-section" aria-label="Trigger review">
+        <h3 class="dashboard-section-title">Trigger review</h3>
+        <TriggerReviewCard :client-id="clientId" />
+      </section>
+
       <!-- Posture -->
       <section class="dashboard-section" aria-label="Latest scan posture">
         <h3 class="dashboard-section-title">Latest scan posture</h3>
@@ -151,6 +157,7 @@ import { summaryTotal } from '@/features/security-scans/scanInsights'
 import { useClientDashboardViewModel } from '@/features/clients/view-models/useClientDashboardViewModel'
 import ClientDashboardActivitySection from '@/features/clients/components/ClientDashboardActivitySection.vue'
 import ClientDashboardScansSection from '@/features/clients/components/ClientDashboardScansSection.vue'
+import TriggerReviewCard from '@/features/clients/components/TriggerReviewCard.vue'
 import { formatDashboardDate } from '@/features/clients/components/clientDashboardFormatters'
 
 const route = useRoute()

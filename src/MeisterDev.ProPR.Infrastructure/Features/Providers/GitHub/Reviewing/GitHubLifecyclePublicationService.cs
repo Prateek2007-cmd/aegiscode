@@ -310,6 +310,7 @@ internal sealed partial class GitHubLifecyclePublicationService(
         var summaryBuilder = new StringBuilder();
         summaryBuilder.AppendLine($"## {author.DisplayName} Review");
         summaryBuilder.AppendLine();
+        PrOverviewSummarySections.Append(summaryBuilder, result);
         summaryBuilder.AppendLine(result.Summary);
 
         var inlineComments = new List<GitHubInlineReviewComment>();
@@ -318,12 +319,31 @@ internal sealed partial class GitHubLifecyclePublicationService(
             if (!string.IsNullOrWhiteSpace(comment.FilePath) && comment.LineNumber.HasValue &&
                 comment.LineNumber.Value > 0)
             {
+                var body = BuildInlineCommentBody(comment);
+                if (!string.IsNullOrWhiteSpace(comment.SuggestedCode))
+                {
+                    var startLine = comment.SuggestionStartLine ?? comment.LineNumber.Value;
+                    var endLine = comment.SuggestionEndLine ?? comment.LineNumber.Value;
+                    if (endLine > startLine)
+                    {
+                        inlineComments.Add(
+                            new GitHubInlineReviewComment(
+                                NormalizePath(comment.FilePath),
+                                endLine,
+                                "RIGHT",
+                                composer.Append(body),
+                                startLine,
+                                "RIGHT"));
+                        continue;
+                    }
+                }
+
                 inlineComments.Add(
                     new GitHubInlineReviewComment(
                         NormalizePath(comment.FilePath),
                         comment.LineNumber.Value,
                         "RIGHT",
-                        composer.Append($"{FormatSeverity(comment.Severity)}: {comment.Message}")));
+                        composer.Append(body)));
             }
             else
             {
@@ -339,6 +359,32 @@ internal sealed partial class GitHubLifecyclePublicationService(
             composer.Append(summaryBuilder.ToString().Trim()),
             "COMMENT",
             inlineComments);
+    }
+
+    /// <summary>
+    ///     Renders one inline comment's body: the severity and message line, and, when the finding carries a
+    ///     present suggestion, a GitHub suggestion block holding the replacement code exactly as given. The
+    ///     marker the composer appends lands after the closing fence, on its own line, so the fence stays
+    ///     intact. Rendering only — whether a suggestion is safe to publish is the verification gate's job,
+    ///     decided before the comment reaches this publisher.
+    /// </summary>
+    private static string BuildInlineCommentBody(ReviewComment comment)
+    {
+        var body = new StringBuilder();
+        body.Append($"{FormatSeverity(comment.Severity)}: {comment.Message}");
+        if (!string.IsNullOrWhiteSpace(comment.SuggestedCode))
+        {
+            body.Append("\n\n```suggestion\n");
+            body.Append(comment.SuggestedCode);
+            if (!comment.SuggestedCode.EndsWith('\n'))
+            {
+                body.Append('\n');
+            }
+
+            body.Append("```");
+        }
+
+        return body.ToString();
     }
 
     private static string BuildRepositoryPath(RepositoryRef repository)
@@ -473,5 +519,9 @@ internal sealed partial class GitHubLifecyclePublicationService(
         [property: JsonPropertyName("path")] string Path,
         [property: JsonPropertyName("line")] int Line,
         [property: JsonPropertyName("side")] string Side,
-        [property: JsonPropertyName("body")] string Body);
+        [property: JsonPropertyName("body")] string Body,
+        [property: JsonPropertyName("start_line"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        int? StartLine = null,
+        [property: JsonPropertyName("start_side"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? StartSide = null);
 }

@@ -39,6 +39,71 @@ public class ToolAwareAiReviewCoreTests
         Assert.Equal(expected, result.GenerationDisposition);
     }
 
+    [Fact]
+    public async Task ReviewAsync_SuggestionFields_RoundTripOntoReviewComment()
+    {
+        // The AI emits the optional snake_case suggestion fields from the finding schema.
+        const string response = """
+                                {
+                                  "summary": "One fixable finding.",
+                                  "comments": [
+                                    {
+                                      "file_path": "/src/Foo.cs",
+                                      "line_number": 42,
+                                      "severity": "warning",
+                                      "message": "Await this call.",
+                                      "suggested_code": "await DeleteAsync(id).ConfigureAwait(false);",
+                                      "suggestion_start_line": 42,
+                                      "suggestion_end_line": 43,
+                                      "original_lines": "await DeleteAsync(id);\nawait LogAsync(id);"
+                                    }
+                                  ],
+                                  "confidence_evaluations": [{"concern": "correctness", "confidence": 90}],
+                                  "investigation_complete": true,
+                                  "loop_complete": true
+                                }
+                                """;
+        var client = Substitute.For<IChatClient>();
+        client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+
+        var result = await CreateSut(client, maxIterations: 1).ReviewAsync(CreatePullRequest(), CreateContext());
+
+        var comment = Assert.Single(result.Comments);
+        Assert.Equal("await DeleteAsync(id).ConfigureAwait(false);", comment.SuggestedCode);
+        Assert.Equal(42, comment.SuggestionStartLine);
+        Assert.Equal(43, comment.SuggestionEndLine);
+        Assert.Equal("await DeleteAsync(id);\nawait LogAsync(id);", comment.SuggestedOriginalCode);
+    }
+
+    [Fact]
+    public async Task ReviewAsync_SuggestionFieldsAbsent_ParseAsNull()
+    {
+        // A finding without any suggestion fields must not gain an invented snippet.
+        const string response = """
+                                {
+                                  "summary": "Design feedback only.",
+                                  "comments": [
+                                    {"file_path": "/src/Foo.cs", "line_number": 7, "severity": "suggestion", "message": "Consider extracting this."}
+                                  ],
+                                  "confidence_evaluations": [{"concern": "correctness", "confidence": 90}],
+                                  "investigation_complete": true,
+                                  "loop_complete": true
+                                }
+                                """;
+        var client = Substitute.For<IChatClient>();
+        client.GetResponseAsync(Arg.Any<IEnumerable<ChatMessage>>(), Arg.Any<ChatOptions?>(), Arg.Any<CancellationToken>())
+            .Returns(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+
+        var result = await CreateSut(client, maxIterations: 1).ReviewAsync(CreatePullRequest(), CreateContext());
+
+        var comment = Assert.Single(result.Comments);
+        Assert.Null(comment.SuggestedCode);
+        Assert.Null(comment.SuggestionStartLine);
+        Assert.Null(comment.SuggestionEndLine);
+        Assert.Null(comment.SuggestedOriginalCode);
+    }
+
     [Theory]
     [InlineData("{\"comments\":[{}],\"loop_complete\":true}")]
     [InlineData("{\"comments\":[{\"message\":\"valid finding\"},{}],\"loop_complete\":true}")]

@@ -601,6 +601,21 @@ public class ReviewPromptsTests
         Assert.Contains("\"info\"", qualityFilterSystem, StringComparison.Ordinal);
     }
 
+    // The finding schema carries optional one-click suggestion fields. They are opt-in per
+    // finding: the model emits them only for a small, precise fix whose exact replacement it
+    // knows, and omits all four when unsure — never an invented snippet.
+    [Fact]
+    public void BuildGlobalSystemPrompt_DefinesOptionalSuggestionFields()
+    {
+        var prompt = ReviewPrompts.BuildGlobalSystemPrompt(null);
+
+        Assert.Contains("\"suggested_code\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"suggestion_start_line\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"suggestion_end_line\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"original_lines\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("omit all four fields entirely when unsure", prompt, StringComparison.Ordinal);
+    }
+
     // T005 — Per-file user message includes fallback note about get_file_content
     [Fact]
     public void BuildPerFileUserMessage_ContainsFallbackNote()
@@ -829,17 +844,61 @@ public class ReviewPromptsTests
         Assert.Contains("Do not re-fetch", guidance, StringComparison.OrdinalIgnoreCase);
     }
 
-    // PR64-5466/5467 — SystemPrompt schema must declare all five required output keys
+    // PR64-5466/5467 — SystemPrompt schema must declare all eight required output keys
     [Fact]
-    public void SystemPrompt_SchemaDeclaresFiveRequiredOutputKeys()
+    public void SystemPrompt_SchemaDeclaresEightRequiredOutputKeys()
     {
         var prompt = ReviewPrompts.SystemPrompt;
 
         Assert.Contains("\"summary\"", prompt);
+        Assert.Contains("\"pr_summary\"", prompt);
+        Assert.Contains("\"walkthrough\"", prompt);
+        Assert.Contains("\"change_diagram\"", prompt);
         Assert.Contains("\"comments\"", prompt);
         Assert.Contains("\"confidence_evaluations\"", prompt);
         Assert.Contains("\"investigation_complete\"", prompt);
         Assert.Contains("\"loop_complete\"", prompt);
+    }
+
+    // The system prompt defines the optional PR-overview keys: a short summary of what the PR
+    // does, one walkthrough entry per changed file, and a Mermaid diagram of how the changed
+    // pieces connect. All three are opt-in — the model omits any of them when unsure, and the
+    // publisher omits a section the model did not produce rather than inventing one.
+    [Fact]
+    public void BuildGlobalSystemPrompt_DefinesOptionalPrOverviewKeys()
+    {
+        var prompt = ReviewPrompts.BuildGlobalSystemPrompt(null);
+
+        Assert.Contains("\"pr_summary\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"walkthrough\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"change_diagram\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("Omit any of these three keys entirely when unsure", prompt, StringComparison.Ordinal);
+        Assert.Contains("Mermaid", prompt, StringComparison.Ordinal);
+    }
+
+    // The output-key reminder lists the same overview keys as the system prompt, so a model
+    // that reads only the reminder still emits them.
+    [Fact]
+    public void OutputKeyReminder_ListsPrOverviewKeys()
+    {
+        var reminder = ReviewPrompts.OutputKeyReminder;
+
+        Assert.Contains("\"pr_summary\"", reminder, StringComparison.Ordinal);
+        Assert.Contains("\"walkthrough\"", reminder, StringComparison.Ordinal);
+        Assert.Contains("\"change_diagram\"", reminder, StringComparison.Ordinal);
+    }
+
+    // The PR-wide synthesis stage (Stage C) asks for the same overview, grounded only in the
+    // investigation evidence it was given — it never sees the raw diff.
+    [Fact]
+    public void BuildPrWideSynthesisSystemPrompt_DefinesPrOverviewKeys()
+    {
+        var prompt = ReviewPrompts.BuildPrWideSynthesisSystemPrompt(null);
+
+        Assert.Contains("\"pr_summary\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"walkthrough\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"change_diagram\"", prompt, StringComparison.Ordinal);
+        Assert.Contains("Base all three ONLY on the investigation evidence above", prompt, StringComparison.Ordinal);
     }
 
     // PR64-5467 — SystemPrompt schema must not list 'info' as a valid comment severity

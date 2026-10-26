@@ -7,6 +7,7 @@ using MeisterDev.ProPR.Api.Features.Reviewing.Contracts;
 using MeisterDev.ProPR.Application.DTOs;
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Ports;
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetFileDiff;
+using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetJobDiff;
 using MeisterDev.ProPR.Application.Features.Reviewing.Diagnostics.Queries.GetReviewJobProtocol;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Enums;
@@ -23,7 +24,8 @@ namespace MeisterDev.ProPR.Api.Controllers;
 public sealed class JobsController(
     IJobRepository jobRepository,
     GetReviewJobProtocolHandler getReviewJobProtocolHandler,
-    GetFileDiffHandler getFileDiffHandler) : ControllerBase
+    GetFileDiffHandler getFileDiffHandler,
+    GetJobDiffHandler getJobDiffHandler) : ControllerBase
 {
     /// <summary>
     ///     Returns all review jobs across all clients, newest first.
@@ -519,6 +521,52 @@ public sealed class JobsController(
         }
 
         return this.Ok(result);
+    }
+
+    /// <summary>
+    ///     Returns the unified diffs of every file a review job reviewed, for the job-level
+    ///     diff view. Each entry is the same per-file diff the single-file endpoint returns
+    ///     (retained copy first, provider re-fetch otherwise), so this endpoint never fetches
+    ///     the diff from the provider through a second code path.
+    /// </summary>
+    /// <param name="jobId">The review job identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>
+    ///     A <see cref="JobDiffDto" /> with one entry per reviewed file, or a 404 if the job
+    ///     cannot be located.
+    /// </returns>
+    /// <response code="200">Job diff returned.</response>
+    /// <response code="401">Missing or invalid credentials.</response>
+    /// <response code="404">Job not found.</response>
+    [HttpGet("{jobId:guid}/diff")]
+    [HttpGet("/jobs/{jobId:guid}/diff")]
+    [ProducesResponseType(typeof(JobDiffDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetJobDiff(
+        Guid jobId,
+        CancellationToken cancellationToken = default)
+    {
+        var auth = AuthHelpers.RequireAuthenticated(this.HttpContext);
+        if (auth is not null)
+        {
+            return auth;
+        }
+
+        var job = jobRepository.GetById(jobId);
+        if (job is null)
+        {
+            return this.NotFound();
+        }
+
+        var roleCheck = AuthHelpers.RequireClientRole(this.HttpContext, job.ClientId, ClientRole.ClientUser);
+        if (roleCheck is not null)
+        {
+            return roleCheck;
+        }
+
+        var result = await getJobDiffHandler.HandleAsync(new GetJobDiffQuery(jobId), cancellationToken);
+        return result is null ? this.NotFound() : this.Ok(result);
     }
 
     /// <summary>Single job item in the list response.</summary>
