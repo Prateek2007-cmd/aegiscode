@@ -2329,8 +2329,8 @@ internal sealed partial class ToolAwareAiReviewCore(
         // diagram before anything is published.
         var walkthrough = (dto.Walkthrough ?? [])
             .Where(entry => entry is not null
-                && !string.IsNullOrWhiteSpace(entry.FilePath)
-                && !string.IsNullOrWhiteSpace(entry.Description))
+                            && !string.IsNullOrWhiteSpace(entry.FilePath)
+                            && !string.IsNullOrWhiteSpace(entry.Description))
             .Select(entry => new PrWalkthroughEntry(entry.FilePath!, entry.Description!))
             .ToList();
 
@@ -2572,8 +2572,10 @@ internal sealed partial class ToolAwareAiReviewCore(
         string? ChangeDiagram = null);
 
     private sealed record WalkthroughEntryDto(
-        [property: JsonPropertyName("file_path")] string? FilePath,
-        [property: JsonPropertyName("description")] string? Description);
+        [property: JsonPropertyName("file_path")]
+        string? FilePath,
+        [property: JsonPropertyName("description")]
+        string? Description);
 
     // The suggestion fields are optional in the AI's JSON and stay null when absent: a missing
     // snippet is never invented here. Wire names are snake_case, matching the finding schema in
@@ -2584,10 +2586,14 @@ internal sealed partial class ToolAwareAiReviewCore(
         int? LineNumber,
         string? Severity,
         string? Message,
-        [property: JsonPropertyName("suggested_code")] string? SuggestedCode,
-        [property: JsonPropertyName("suggestion_start_line")] int? SuggestionStartLine,
-        [property: JsonPropertyName("suggestion_end_line")] int? SuggestionEndLine,
-        [property: JsonPropertyName("original_lines")] string? SuggestedOriginalCode);
+        [property: JsonPropertyName("suggested_code")]
+        string? SuggestedCode,
+        [property: JsonPropertyName("suggestion_start_line")]
+        int? SuggestionStartLine,
+        [property: JsonPropertyName("suggestion_end_line")]
+        int? SuggestionEndLine,
+        [property: JsonPropertyName("original_lines")]
+        string? SuggestedOriginalCode);
 
     private sealed record ConfidenceEvaluationDto(
         string? Concern,

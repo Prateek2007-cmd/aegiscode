@@ -83,8 +83,8 @@ public static partial class SecurityScanUrlValidator
         // Hostnames first: literal IPs are checked; DNS names are resolved at clone time
         // by git, so we additionally block the well-known local names here.
         if (host is "localhost" || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
-            || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
-            || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
+                                || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+                                || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
@@ -104,10 +104,10 @@ public static partial class SecurityScanUrlValidator
         {
             // 10/8, 172.16/12, 192.168/16, 169.254/16, 0/8
             return bytes[0] == 10
-                || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-                || (bytes[0] == 192 && bytes[1] == 168)
-                || (bytes[0] == 169 && bytes[1] == 254)
-                || bytes[0] == 0;
+                   || (bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
+                   || (bytes[0] == 192 && bytes[1] == 168)
+                   || (bytes[0] == 169 && bytes[1] == 254)
+                   || bytes[0] == 0;
         }
 
         // IPv6: loopback already handled; block unique-local (fc00::/7) and link-local (fe80::/10).

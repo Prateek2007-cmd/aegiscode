@@ -114,8 +114,8 @@ public static class PrOverviewSummarySections
 
         return walkthrough
             .Where(entry => entry is not null
-                && !string.IsNullOrWhiteSpace(entry.FilePath)
-                && !string.IsNullOrWhiteSpace(entry.Description))
+                            && !string.IsNullOrWhiteSpace(entry.FilePath)
+                            && !string.IsNullOrWhiteSpace(entry.Description))
             .Select(entry => new PrWalkthroughEntry(entry.FilePath.Trim(), entry.Description.Trim()))
             .ToList();
     }

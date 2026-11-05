@@ -106,8 +106,15 @@ public sealed class ProviderAddInStartupTests : IDisposable
             {
                 foreach (var file in Directory.EnumerateFiles(this._directory, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(this._directory, recursive: true);
             }
         }

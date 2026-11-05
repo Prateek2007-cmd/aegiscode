@@ -93,18 +93,22 @@ public sealed class SecurityScanningOptions
         {
             options.MaxConcurrentScans = Math.Min(maxConc, 16);
         }
+
         if (int.TryParse(Get("SCAN_TIMEOUT_SECONDS", "SCAN_TIMEOUT_SECONDS"), out var scanTimeout) && scanTimeout > 0)
         {
             options.ScanTimeoutSeconds = Math.Min(scanTimeout, 3600);
         }
+
         if (int.TryParse(Get("CLONE_TIMEOUT_SECONDS", "CLONE_TIMEOUT_SECONDS"), out var cloneTimeout) && cloneTimeout > 0)
         {
             options.CloneTimeoutSeconds = Math.Min(cloneTimeout, 600);
         }
+
         if (int.TryParse(Get("MAX_REPO_SIZE_MB", "MAX_REPO_SIZE_MB"), out var maxMb) && maxMb > 0)
         {
             options.MaxRepoSizeMb = Math.Min(maxMb, 4096);
         }
+
         if (int.TryParse(Get("MAX_FILE_COUNT", "MAX_FILE_COUNT"), out var maxFiles) && maxFiles > 0)
         {
             options.MaxFileCount = Math.Min(maxFiles, 500_000);
@@ -148,8 +152,14 @@ public sealed class SecurityScanningOptions
         {
             candidates.AddRange(WalkUpForEngine(Directory.GetCurrentDirectory()));
         }
-        catch (IOException) { /* current directory unavailable; ignore */ }
-        catch (UnauthorizedAccessException) { /* ignore */ }
+        catch (IOException)
+        {
+            /* current directory unavailable; ignore */
+        }
+        catch (UnauthorizedAccessException)
+        {
+            /* ignore */
+        }
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {

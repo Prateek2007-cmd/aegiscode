@@ -194,8 +194,15 @@ public sealed class GitReviewRepositoryWorkspaceDisposalTests
             {
                 foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(root, true);
             }
         }

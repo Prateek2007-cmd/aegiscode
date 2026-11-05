@@ -37,8 +37,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
-    public async Task<IActionResult> StartScan(
-        Guid clientId, [FromBody] StartSecurityScanRequest request, CancellationToken ct)
+    public async Task<IActionResult> StartScan(Guid clientId, [FromBody] StartSecurityScanRequest request, CancellationToken ct)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator) is { } denied)
         {
@@ -47,8 +46,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
 
         try
         {
-            var response = await scanService.StartScanAsync(
-                clientId, request, AuthHelpers.GetUserId(this.HttpContext), ct);
+            var response = await scanService.StartScanAsync(clientId, request, AuthHelpers.GetUserId(this.HttpContext), ct);
             return this.StatusCode(StatusCodes.Status202Accepted, response);
         }
         catch (ArgumentException ex)
@@ -69,8 +67,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
     [ProducesResponseType(typeof(IReadOnlyList<SecurityScanResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> ListScans(
-        Guid clientId, [FromQuery] int limit = 20, [FromQuery] int offset = 0, CancellationToken ct = default)
+    public async Task<IActionResult> ListScans(Guid clientId, [FromQuery] int limit = 20, [FromQuery] int offset = 0, CancellationToken ct = default)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientUser) is { } denied)
         {
@@ -146,8 +143,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
             return denied;
         }
 
-        return this.Ok(await scanService.GetFindingsAsync(
-            clientId, scanId, severity, scanner, status, limit, offset, ct));
+        return this.Ok(await scanService.GetFindingsAsync(clientId, scanId, severity, scanner, status, limit, offset, ct));
     }
 
     /// <summary>Downloads the CycloneDX SBOM produced by the scan, when one exists.</summary>
@@ -202,8 +198,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
             return this.NotFound();
         }
 
-        var findings = await scanService.GetFindingsAsync(
-            clientId, scanId, null, null, null, 5000, 0, ct);
+        var findings = await scanService.GetFindingsAsync(clientId, scanId, null, null, null, 5000, 0, ct);
         var sbomJson = await scanService.GetSbomJsonAsync(clientId, scanId, ct);
 
         var report = new
@@ -232,7 +227,8 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
 
         return this.File(
             System.Text.Encoding.UTF8.GetBytes(
-                System.Text.Json.JsonSerializer.Serialize(report,
+                System.Text.Json.JsonSerializer.Serialize(
+                    report,
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true })),
             "application/json",
             $"{scanId:N}.security-report.json");
@@ -261,8 +257,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
 
         try
         {
-            var ok = await scanService.SuppressFindingAsync(
-                clientId, findingId, request.Reason, AuthHelpers.GetUserId(this.HttpContext), ct);
+            var ok = await scanService.SuppressFindingAsync(clientId, findingId, request.Reason, AuthHelpers.GetUserId(this.HttpContext), ct);
             return ok ? this.Ok(new { status = nameof(SecurityFindingStatus.Suppressed) }) : this.NotFound();
         }
         catch (ArgumentException ex)
@@ -281,8 +276,7 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> AcknowledgeFinding(
-        Guid clientId, Guid scanId, Guid findingId, CancellationToken ct)
+    public async Task<IActionResult> AcknowledgeFinding(Guid clientId, Guid scanId, Guid findingId, CancellationToken ct)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator) is { } denied)
         {

@@ -16,15 +16,16 @@ namespace MeisterDev.ProPR.SecurityScanning.Services;
 public interface ISecurityScanService
 {
     /// <summary>Validates the request, persists a queued scan, and enqueues it. Throws user-safe errors.</summary>
-    Task<StartSecurityScanResponse> StartScanAsync(
-        Guid clientId, StartSecurityScanRequest request, Guid? userId, CancellationToken ct);
+    Task<StartSecurityScanResponse> StartScanAsync(Guid clientId, StartSecurityScanRequest request, Guid? userId, CancellationToken ct);
 
     Task<SecurityScanResponse?> GetScanAsync(Guid clientId, Guid scanId, CancellationToken ct);
     Task<IReadOnlyList<SecurityScanResponse>> ListScansAsync(Guid clientId, int limit, int offset, CancellationToken ct);
     Task<bool> CancelScanAsync(Guid clientId, Guid scanId, CancellationToken ct);
+
     Task<PagedSecurityFindingsResponse> GetFindingsAsync(
         Guid clientId, Guid scanId, string? severity, string? scanner, string? status,
         int limit, int offset, CancellationToken ct);
+
     Task<string?> GetSbomJsonAsync(Guid clientId, Guid scanId, CancellationToken ct);
     Task<bool> SuppressFindingAsync(Guid clientId, Guid findingId, string reason, Guid? userId, CancellationToken ct);
     Task<bool> AcknowledgeFindingAsync(Guid clientId, Guid findingId, CancellationToken ct);
@@ -40,14 +41,12 @@ public sealed class SecurityScanService(
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = false };
 
     /// <inheritdoc />
-    public async Task<StartSecurityScanResponse> StartScanAsync(
-        Guid clientId, StartSecurityScanRequest request, Guid? userId, CancellationToken ct)
+    public async Task<StartSecurityScanResponse> StartScanAsync(Guid clientId, StartSecurityScanRequest request, Guid? userId, CancellationToken ct)
     {
         var opts = options.Value;
         if (!opts.Enabled)
         {
-            throw new SecurityScanEngineException(
-                "Security scanning is disabled on this installation (AEGIS_SECURITY_ENABLED=false).");
+            throw new SecurityScanEngineException("Security scanning is disabled on this installation (AEGIS_SECURITY_ENABLED=false).");
         }
 
         ArgumentNullException.ThrowIfNull(request);
@@ -71,7 +70,8 @@ public sealed class SecurityScanService(
         await db.SaveChangesAsync(ct);
 
         await channelWriter.WriteAsync(new SecurityScanJob(scan.Id, clientId, scanners), ct);
-        logger.LogInformation("Queued security scan {ScanId} for client {ClientId} on {Repo}",
+        logger.LogInformation(
+            "Queued security scan {ScanId} for client {ClientId} on {Repo}",
             scan.Id, clientId, normalizedUrl);
 
         return new StartSecurityScanResponse(scan.Id, nameof(SecurityScanStatus.Queued));
@@ -87,8 +87,7 @@ public sealed class SecurityScanService(
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<SecurityScanResponse>> ListScansAsync(
-        Guid clientId, int limit, int offset, CancellationToken ct)
+    public async Task<IReadOnlyList<SecurityScanResponse>> ListScansAsync(Guid clientId, int limit, int offset, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, 100);
         offset = Math.Max(offset, 0);
@@ -106,6 +105,7 @@ public sealed class SecurityScanService(
         {
             responses.Add(await this.ToResponseAsync(scan, ct));
         }
+
         return responses;
     }
 
@@ -157,10 +157,12 @@ public sealed class SecurityScanService(
         {
             query = query.Where(f => f.Severity == (int)sev);
         }
+
         if (!string.IsNullOrWhiteSpace(scanner))
         {
             query = query.Where(f => f.Scanner == scanner);
         }
+
         if (Enum.TryParse<SecurityFindingStatus>(status, ignoreCase: true, out var st))
         {
             query = query.Where(f => f.Status == (int)st);
@@ -206,8 +208,7 @@ public sealed class SecurityScanService(
     }
 
     /// <inheritdoc />
-    public async Task<bool> SuppressFindingAsync(
-        Guid clientId, Guid findingId, string reason, Guid? userId, CancellationToken ct)
+    public async Task<bool> SuppressFindingAsync(Guid clientId, Guid findingId, string reason, Guid? userId, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(reason))
         {
@@ -265,6 +266,7 @@ public sealed class SecurityScanService(
         {
             finding.Status = (int)SecurityFindingStatus.Acknowledged;
         }
+
         await db.SaveChangesAsync(ct);
         return true;
     }
@@ -284,8 +286,7 @@ public sealed class SecurityScanService(
 
         if (normalized.Count == 0)
         {
-            throw new ArgumentException(
-                $"No valid scanners requested. Valid: {string.Join(", ", SecurityScanners.All)}.", nameof(requested));
+            throw new ArgumentException($"No valid scanners requested. Valid: {string.Join(", ", SecurityScanners.All)}.", nameof(requested));
         }
 
         return normalized;
@@ -305,8 +306,14 @@ public sealed class SecurityScanService(
         SecurityScanCoverage? coverage = null;
         if (!string.IsNullOrEmpty(scan.CoverageJson))
         {
-            try { coverage = JsonSerializer.Deserialize<SecurityScanCoverage>(scan.CoverageJson); }
-            catch (JsonException) { /* stored coverage unreadable — leave null */ }
+            try
+            {
+                coverage = JsonSerializer.Deserialize<SecurityScanCoverage>(scan.CoverageJson);
+            }
+            catch (JsonException)
+            {
+                /* stored coverage unreadable — leave null */
+            }
         }
 
         return new SecurityScanResponse(
@@ -334,8 +341,14 @@ public sealed class SecurityScanService(
         IReadOnlyList<string> gaps = [];
         if (!string.IsNullOrEmpty(f.ScoreGapsJson))
         {
-            try { gaps = JsonSerializer.Deserialize<string[]>(f.ScoreGapsJson) ?? []; }
-            catch (JsonException) { /* leave empty */ }
+            try
+            {
+                gaps = JsonSerializer.Deserialize<string[]>(f.ScoreGapsJson) ?? [];
+            }
+            catch (JsonException)
+            {
+                /* leave empty */
+            }
         }
 
         return new SecurityFindingResponse(

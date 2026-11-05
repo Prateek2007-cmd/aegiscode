@@ -164,7 +164,7 @@ internal static class SuggestedCodeGate
         // (e) GitHub only applies suggestions on diff lines, so the range must intersect the diff's
         // changed ranges for this file. A missing or empty range set cannot prove that intersection.
         if (changedRanges is null || changedRanges.Count == 0
-            || !changedRanges.Any(range => start.Value <= range.End && end.Value >= range.Start))
+                                  || !changedRanges.Any(range => start.Value <= range.End && end.Value >= range.Start))
         {
             return Fail(SuggestedCodeGateFailureReason.OutsideDiff);
         }

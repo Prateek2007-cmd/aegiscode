@@ -32,8 +32,7 @@ public sealed class FixProposalsController(IFixProposalService fixProposalServic
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> CreateProposal(
-        Guid clientId, [FromBody] CreateFixProposalRequest request, CancellationToken ct)
+    public async Task<IActionResult> CreateProposal(Guid clientId, [FromBody] CreateFixProposalRequest request, CancellationToken ct)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator) is { } denied)
         {
@@ -82,8 +81,7 @@ public sealed class FixProposalsController(IFixProposalService fixProposalServic
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> ApproveProposal(
-        Guid clientId, Guid proposalId, [FromBody] DecideFixProposalRequest? request, CancellationToken ct)
+    public async Task<IActionResult> ApproveProposal(Guid clientId, Guid proposalId, [FromBody] DecideFixProposalRequest? request, CancellationToken ct)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator) is { } denied)
         {
@@ -113,8 +111,7 @@ public sealed class FixProposalsController(IFixProposalService fixProposalServic
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> RejectProposal(
-        Guid clientId, Guid proposalId, [FromBody] DecideFixProposalRequest? request, CancellationToken ct)
+    public async Task<IActionResult> RejectProposal(Guid clientId, Guid proposalId, [FromBody] DecideFixProposalRequest? request, CancellationToken ct)
     {
         if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator) is { } denied)
         {

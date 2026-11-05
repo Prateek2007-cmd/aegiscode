@@ -8,8 +8,7 @@ namespace MeisterDev.ProPR.SecurityScanning.Services;
 
 /// <summary>Raised when an approve/reject is attempted on a proposal that already has a decision. Maps to HTTP 409.</summary>
 public sealed class FixProposalAlreadyDecidedException(Guid proposalId, FixProposalStatus status)
-    : InvalidOperationException(
-        $"Fix proposal {proposalId} was already decided ({status}) and cannot be decided again.")
+    : InvalidOperationException($"Fix proposal {proposalId} was already decided ({status}) and cannot be decided again.")
 {
     public Guid ProposalId { get; } = proposalId;
     public FixProposalStatus Status { get; } = status;
@@ -40,14 +39,14 @@ public interface IFixProposalService
 public sealed class FixProposalService(IFixProposalStore store, ILogger<FixProposalService> logger) : IFixProposalService
 {
     /// <inheritdoc />
-    public async Task<FixProposalResponse> CreateAsync(
-        Guid clientId, CreateFixProposalRequest request, CancellationToken ct)
+    public async Task<FixProposalResponse> CreateAsync(Guid clientId, CreateFixProposalRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.FindingRef))
         {
             throw new ArgumentException("findingRef is required.", nameof(request));
         }
+
         if (string.IsNullOrWhiteSpace(request.Title))
         {
             throw new ArgumentException("title is required.", nameof(request));
@@ -56,8 +55,7 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
         var source = FixProposalSources.Normalize(request.Source);
         if (source is null)
         {
-            throw new ArgumentException(
-                $"source must be one of: {string.Join(", ", FixProposalSources.All)}.", nameof(request));
+            throw new ArgumentException($"source must be one of: {string.Join(", ", FixProposalSources.All)}.", nameof(request));
         }
 
         // Remediation is stored exactly as given — including null. Never fabricated.
@@ -77,7 +75,8 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
             null);
 
         var saved = await store.AddAsync(record, ct);
-        logger.LogInformation("Created fix proposal {ProposalId} for client {ClientId} (source {Source}).",
+        logger.LogInformation(
+            "Created fix proposal {ProposalId} for client {ClientId} (source {Source}).",
             saved.Id, clientId, source);
         return ToResponse(saved);
     }
@@ -105,8 +104,7 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
         return await this.DecideAsync(clientId, proposalId, FixProposalStatus.Rejected, reason, ct);
     }
 
-    private async Task<FixProposalResponse?> DecideAsync(
-        Guid clientId, Guid proposalId, FixProposalStatus decision, string? reason, CancellationToken ct)
+    private async Task<FixProposalResponse?> DecideAsync(Guid clientId, Guid proposalId, FixProposalStatus decision, string? reason, CancellationToken ct)
     {
         var proposal = await store.GetAsync(clientId, proposalId, ct);
         if (proposal is null)
@@ -127,7 +125,8 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
         };
 
         var saved = await store.UpdateAsync(decided, ct);
-        logger.LogInformation("Fix proposal {ProposalId} for client {ClientId} decided: {Decision}.",
+        logger.LogInformation(
+            "Fix proposal {ProposalId} for client {ClientId} decided: {Decision}.",
             proposalId, clientId, decision);
         return ToResponse(saved);
     }

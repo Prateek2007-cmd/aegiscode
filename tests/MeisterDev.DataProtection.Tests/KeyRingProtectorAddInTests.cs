@@ -36,6 +36,7 @@ public sealed class KeyRingProtectorAddInTests : IDisposable
                 {
                     File.SetAttributes(file, FileAttributes.Normal);
                 }
+
                 Directory.Delete(this._stagingRoot, true);
             }
             catch (Exception)

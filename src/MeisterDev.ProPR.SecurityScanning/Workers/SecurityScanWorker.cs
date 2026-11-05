@@ -60,8 +60,7 @@ public sealed partial class SecurityScanWorker(
         LogWorkerStopped(logger);
     }
 
-    private async Task ProcessJobSafeAsync(
-        SecurityScanJob job, SemaphoreSlim gate, CancellationToken stoppingToken)
+    private async Task ProcessJobSafeAsync(SecurityScanJob job, SemaphoreSlim gate, CancellationToken stoppingToken)
     {
         try
         {
@@ -69,14 +68,16 @@ public sealed partial class SecurityScanWorker(
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            await this.MarkScanAsync(job.ScanId, SecurityScanStatus.Cancelled,
+            await this.MarkScanAsync(
+                job.ScanId, SecurityScanStatus.Cancelled,
                 "Scan cancelled.", null, stoppingToken);
         }
         catch (Exception ex)
         {
             // Never leak internals: user-safe message only; full details go to the log.
             logger.LogError(ex, "Security scan {ScanId} failed unexpectedly", job.ScanId);
-            await this.MarkScanAsync(job.ScanId, SecurityScanStatus.Failed,
+            await this.MarkScanAsync(
+                job.ScanId, SecurityScanStatus.Failed,
                 "Scan failed unexpectedly. Check engine configuration and try again.", null, stoppingToken);
         }
         finally
@@ -136,8 +137,7 @@ public sealed partial class SecurityScanWorker(
         EngineScanResult result;
         try
         {
-            result = await runner.RunAsync(
-                job.ScanId, scan.RepositoryUrl, scan.Ref, job.Scanners, progress, stoppingToken);
+            result = await runner.RunAsync(job.ScanId, scan.RepositoryUrl, scan.Ref, job.Scanners, progress, stoppingToken);
         }
         catch (SecurityScanEngineException ex)
         {
@@ -175,8 +175,7 @@ public sealed partial class SecurityScanWorker(
             if (!addedInBatch.TryGetValue(fingerprint, out var existing))
             {
                 existing = await db.SecurityFindings
-                    .FirstOrDefaultAsync(
-                        f => f.ClientId == job.ClientId && f.Fingerprint == fingerprint, ct);
+                    .FirstOrDefaultAsync(f => f.ClientId == job.ClientId && f.Fingerprint == fingerprint, ct);
             }
 
             if (existing is null)
@@ -229,9 +228,10 @@ public sealed partial class SecurityScanWorker(
         // Findings from earlier scans of the same repo that were not seen again are resolved.
         var stale = await db.SecurityFindings
             .Where(f => f.ClientId == job.ClientId
-                && f.ScanId != scan.Id
-                && (f.Status == (int)SecurityFindingStatus.Open || f.Status == (int)SecurityFindingStatus.Acknowledged))
-            .Join(db.SecurityScans.Where(s => s.RepositoryUrl == scan.RepositoryUrl && s.ClientId == job.ClientId),
+                        && f.ScanId != scan.Id
+                        && (f.Status == (int)SecurityFindingStatus.Open || f.Status == (int)SecurityFindingStatus.Acknowledged))
+            .Join(
+                db.SecurityScans.Where(s => s.RepositoryUrl == scan.RepositoryUrl && s.ClientId == job.ClientId),
                 f => f.ScanId,
                 s => s.Id,
                 (f, _) => f)
@@ -267,8 +267,8 @@ public sealed partial class SecurityScanWorker(
 
         // Honest terminal state: partial when any scanner failed or was skipped.
         var isPartial = result.IsPartial
-            || result.Coverage.ScannersFailed.Count > 0
-            || result.Coverage.ScannersSkipped.Count > 0;
+                        || result.Coverage.ScannersFailed.Count > 0
+                        || result.Coverage.ScannersSkipped.Count > 0;
         scan.Status = (int)(isPartial ? SecurityScanStatus.PartiallySucceeded : SecurityScanStatus.Succeeded);
         if (isPartial && !string.IsNullOrEmpty(result.PartialReason))
         {
@@ -317,8 +317,7 @@ public sealed partial class SecurityScanWorker(
 
             foreach (var scan in pending)
             {
-                await channelWriter.WriteAsync(
-                    new SecurityScanJob(scan.Id, scan.ClientId, Models.SecurityScanners.All), ct);
+                await channelWriter.WriteAsync(new SecurityScanJob(scan.Id, scan.ClientId, Models.SecurityScanners.All), ct);
             }
 
             LogHydrated(logger, pending.Count);
@@ -330,8 +329,7 @@ public sealed partial class SecurityScanWorker(
         }
     }
 
-    private async Task MarkScanAsync(
-        Guid scanId, SecurityScanStatus status, string? error, string? coverageJson, CancellationToken ct)
+    private async Task MarkScanAsync(Guid scanId, SecurityScanStatus status, string? error, string? coverageJson, CancellationToken ct)
     {
         try
         {
@@ -350,10 +348,12 @@ public sealed partial class SecurityScanWorker(
             {
                 scan.Error = Truncate(error, 2048);
             }
+
             if (coverageJson is not null)
             {
                 scan.CoverageJson = coverageJson;
             }
+
             await db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
@@ -371,8 +371,7 @@ public sealed partial class SecurityScanWorker(
         _ => SecurityFindingSeverity.Info,
     };
 
-    private static int GetCount(
-        Dictionary<SecurityFindingSeverity, int> counts, SecurityFindingSeverity severity) =>
+    private static int GetCount(Dictionary<SecurityFindingSeverity, int> counts, SecurityFindingSeverity severity) =>
         counts.TryGetValue(severity, out var c) ? c : 0;
 
     private static string Truncate(string? value, int maxLength) =>

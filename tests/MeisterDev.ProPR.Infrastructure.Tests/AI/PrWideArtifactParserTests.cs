@@ -16,28 +16,28 @@ public sealed class PrWideArtifactParserTests
     public void TryParseSynthesisResult_PrOverviewKeys_ParseOntoSynthesisResult()
     {
         const string json = """
-            {
-              "candidate_findings": [
-                {
-                  "id": "candidate-001",
-                  "message": "Cache lookup misses the null check.",
-                  "category": "per_file_comment",
-                  "severity": "warning",
-                  "confidence": { "concern": "correctness", "score": 80 },
-                  "supporting_files": ["src/Cache.cs"],
-                  "file_path": "src/Cache.cs",
-                  "line_number": 12
-                }
-              ],
-              "summary": "Draft summary.",
-              "pr_summary": "Adds a login cache so repeat visits skip the database.",
-              "walkthrough": [
-                { "file_path": "src/Cache.cs", "description": "Adds the cache itself." },
-                { "file_path": "src/Login.cs", "description": "Reads from the cache first." }
-              ],
-              "change_diagram": "flowchart TD\n    A[Login] --> B[Cache]"
-            }
-            """;
+                            {
+                              "candidate_findings": [
+                                {
+                                  "id": "candidate-001",
+                                  "message": "Cache lookup misses the null check.",
+                                  "category": "per_file_comment",
+                                  "severity": "warning",
+                                  "confidence": { "concern": "correctness", "score": 80 },
+                                  "supporting_files": ["src/Cache.cs"],
+                                  "file_path": "src/Cache.cs",
+                                  "line_number": 12
+                                }
+                              ],
+                              "summary": "Draft summary.",
+                              "pr_summary": "Adds a login cache so repeat visits skip the database.",
+                              "walkthrough": [
+                                { "file_path": "src/Cache.cs", "description": "Adds the cache itself." },
+                                { "file_path": "src/Login.cs", "description": "Reads from the cache first." }
+                              ],
+                              "change_diagram": "flowchart TD\n    A[Login] --> B[Cache]"
+                            }
+                            """;
 
         var parsed = PrWideArtifactParser.TryParseSynthesisResult(json, out var synthesis);
 
@@ -56,11 +56,11 @@ public sealed class PrWideArtifactParserTests
     public void TryParseSynthesisResult_PrOverviewKeysAbsent_ParseAsNull()
     {
         const string json = """
-            {
-              "candidate_findings": [],
-              "summary": "Draft summary."
-            }
-            """;
+                            {
+                              "candidate_findings": [],
+                              "summary": "Draft summary."
+                            }
+                            """;
 
         var parsed = PrWideArtifactParser.TryParseSynthesisResult(json, out var synthesis);
 
@@ -75,17 +75,17 @@ public sealed class PrWideArtifactParserTests
     public void TryParseSynthesisResult_WalkthroughEntriesMissingFields_AreSkipped()
     {
         const string json = """
-            {
-              "candidate_findings": [],
-              "summary": "Draft summary.",
-              "walkthrough": [
-                { "file_path": "src/Cache.cs", "description": "Adds the cache itself." },
-                { "file_path": "src/Login.cs" },
-                { "description": "Has no path." },
-                { "file_path": "  ", "description": "Blank path." }
-              ]
-            }
-            """;
+                            {
+                              "candidate_findings": [],
+                              "summary": "Draft summary.",
+                              "walkthrough": [
+                                { "file_path": "src/Cache.cs", "description": "Adds the cache itself." },
+                                { "file_path": "src/Login.cs" },
+                                { "description": "Has no path." },
+                                { "file_path": "  ", "description": "Blank path." }
+                              ]
+                            }
+                            """;
 
         var parsed = PrWideArtifactParser.TryParseSynthesisResult(json, out var synthesis);
 
@@ -99,12 +99,12 @@ public sealed class PrWideArtifactParserTests
     public void TryParseSynthesisResult_WalkthroughNotAnArray_YieldsNullWalkthrough()
     {
         const string json = """
-            {
-              "candidate_findings": [],
-              "summary": "Draft summary.",
-              "walkthrough": "not an array"
-            }
-            """;
+                            {
+                              "candidate_findings": [],
+                              "summary": "Draft summary.",
+                              "walkthrough": "not an array"
+                            }
+                            """;
 
         var parsed = PrWideArtifactParser.TryParseSynthesisResult(json, out var synthesis);
 

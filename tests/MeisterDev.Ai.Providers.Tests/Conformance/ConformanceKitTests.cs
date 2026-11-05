@@ -228,8 +228,15 @@ public sealed class ConformanceKitTests
                 {
                     foreach (var file in Directory.EnumerateFiles(this.Path, "*", SearchOption.AllDirectories))
                     {
-                        try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                        try
+                        {
+                            File.SetAttributes(file, FileAttributes.Normal);
+                        }
+                        catch
+                        {
+                        }
                     }
+
                     Directory.Delete(this.Path, recursive: true);
                 }
             }

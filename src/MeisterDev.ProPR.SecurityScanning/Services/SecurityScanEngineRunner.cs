@@ -72,15 +72,15 @@ public sealed class SecurityScanEngineRunner(
         var nodeVersion = await this.TryGetVersionAsync(opts.NodeBinary, ["--version"], ct);
         var engineDir = SecurityScanEngineRunner.EffectiveEngineDir(opts);
         var engineAvailable = engineDir is not null
-            && Directory.Exists(Path.Combine(engineDir, "dist", "modules"));
+                              && Directory.Exists(Path.Combine(engineDir, "dist", "modules"));
         var gitleaksBinary = string.IsNullOrWhiteSpace(opts.GitleaksBinary) ? "gitleaks" : opts.GitleaksBinary;
         var gitleaksVersion = await this.TryGetVersionAsync(gitleaksBinary, ["version"], ct);
 
         var detail = engineAvailable
             ? null
             : "Scan engine not found: no built bundled engine under tools/vulnveto and no AEGIS_SECURITY_ENGINE_DIR set. "
-            + "Build the bundled engine (cd tools/vulnveto && npm ci && npm run build, or scripts/Build-VulnvetoEngine.ps1 on Windows), "
-            + "or set AEGIS_SECURITY_ENGINE_DIR to a built engine directory containing dist/modules.";
+              + "Build the bundled engine (cd tools/vulnveto && npm ci && npm run build, or scripts/Build-VulnvetoEngine.ps1 on Windows), "
+              + "or set AEGIS_SECURITY_ENGINE_DIR to a built engine directory containing dist/modules.";
 
         return new EngineDependencyCheck(
             nodeVersion is not null,
@@ -104,15 +104,16 @@ public sealed class SecurityScanEngineRunner(
         var deps = await this.CheckDependenciesAsync(ct);
         if (!deps.NodeAvailable)
         {
-            throw new SecurityScanEngineException(
-                $"Node.js is not available ('{opts.NodeBinary}'). Install Node 20+ and ensure it is on PATH.");
+            throw new SecurityScanEngineException($"Node.js is not available ('{opts.NodeBinary}'). Install Node 20+ and ensure it is on PATH.");
         }
+
         if (!deps.EngineAvailable)
         {
             throw new SecurityScanEngineException(deps.Detail ?? "Scan engine is not configured.");
         }
+
         var engineDir = SecurityScanEngineRunner.EffectiveEngineDir(opts)
-            ?? throw new SecurityScanEngineException(deps.Detail ?? "Scan engine is not configured.");
+                        ?? throw new SecurityScanEngineException(deps.Detail ?? "Scan engine is not configured.");
 
         var normalizedUrl = SecurityScanUrlValidator.ValidateAndNormalize(repositoryUrl, opts.AllowedHosts);
 
@@ -132,8 +133,7 @@ public sealed class SecurityScanEngineRunner(
             progress.Report(25);
 
             var harnessPath = GetHarnessPath();
-            var result = await this.RunHarnessAsync(
-                opts, engineDir, harnessPath, workDir, sbomPath, scanners, opts.ScanTimeoutSeconds, progress, ct);
+            var result = await this.RunHarnessAsync(opts, engineDir, harnessPath, workDir, sbomPath, scanners, opts.ScanTimeoutSeconds, progress, ct);
             progress.Report(90);
 
             return this.ToEngineResult(result, sbomPath);
@@ -149,17 +149,17 @@ public sealed class SecurityScanEngineRunner(
     private static string GetHarnessPath()
     {
         var assemblyDir = Path.GetDirectoryName(typeof(SecurityScanEngineRunner).Assembly.Location)
-            ?? AppContext.BaseDirectory;
+                          ?? AppContext.BaseDirectory;
         var harness = Path.Combine(assemblyDir, "Resources", "scan-harness.mjs");
         if (!File.Exists(harness))
         {
             throw new SecurityScanEngineException("Scan harness (scan-harness.mjs) is missing from the module output.");
         }
+
         return harness;
     }
 
-    private async Task CloneRepositoryAsync(
-        string url, string? gitRef, string workDir, SecurityScanningOptions opts, CancellationToken ct)
+    private async Task CloneRepositoryAsync(string url, string? gitRef, string workDir, SecurityScanningOptions opts, CancellationToken ct)
     {
         // --depth 1, no tags, no hooks, no LFS smudge: a malicious repo must not get code execution.
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -201,15 +201,13 @@ public sealed class SecurityScanEngineRunner(
         var sizeMb = GetDirectorySizeMb(workDir);
         if (sizeMb > opts.MaxRepoSizeMb)
         {
-            throw new SecurityScanEngineException(
-                $"Repository too large ({sizeMb:F0} MB > {opts.MaxRepoSizeMb} MB limit).");
+            throw new SecurityScanEngineException($"Repository too large ({sizeMb:F0} MB > {opts.MaxRepoSizeMb} MB limit).");
         }
 
         var fileCount = CountFiles(workDir, opts.MaxFileCount + 1);
         if (fileCount > opts.MaxFileCount)
         {
-            throw new SecurityScanEngineException(
-                $"Repository has too many files ({fileCount} > {opts.MaxFileCount} limit).");
+            throw new SecurityScanEngineException($"Repository has too many files ({fileCount} > {opts.MaxFileCount} limit).");
         }
     }
 
@@ -244,10 +242,12 @@ public sealed class SecurityScanEngineRunner(
         {
             psi.Environment["GITLEAKS_BINARY"] = opts.GitleaksBinary;
         }
+
         if (!string.IsNullOrWhiteSpace(opts.OsvBaseUrl) && opts.OsvBaseUrl != "https://api.osv.dev")
         {
             psi.Environment["OSV_BASE_URL"] = opts.OsvBaseUrl;
         }
+
         // Keep the engine's PATH predictable but allow gitleaks resolution.
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var localBin = Path.Combine(home, ".local", "bin");
@@ -268,8 +268,7 @@ public sealed class SecurityScanEngineRunner(
         if (exitCode != 0)
         {
             logger.LogWarning("Scan harness exited {ExitCode}: {Stderr}", exitCode, Truncate(stderr, 500));
-            throw new SecurityScanEngineException(
-                $"Scan engine failed (exit {exitCode}). Details: {Truncate(stderr, 300)}");
+            throw new SecurityScanEngineException($"Scan engine failed (exit {exitCode}). Details: {Truncate(stderr, 300)}");
         }
 
         HarnessOutput? output;
@@ -308,20 +307,21 @@ public sealed class SecurityScanEngineRunner(
                 remediation = SecurityScanRedactor.ForceRedact(remediation);
             }
 
-            findings.Add(new EngineFinding(
-                f.Scanner ?? "unknown",
-                f.RuleId,
-                NormalizeSeverity(f.Severity),
-                NormalizeConfidence(f.Confidence),
-                Truncate(f.Title ?? "Untitled finding", 512),
-                f.Category ?? "other",
-                f.FilePath,
-                f.Line,
-                evidence,
-                remediation,
-                f.PackageName,
-                f.PackageVersion,
-                f.FixedVersion));
+            findings.Add(
+                new EngineFinding(
+                    f.Scanner ?? "unknown",
+                    f.RuleId,
+                    NormalizeSeverity(f.Severity),
+                    NormalizeConfidence(f.Confidence),
+                    Truncate(f.Title ?? "Untitled finding", 512),
+                    f.Category ?? "other",
+                    f.FilePath,
+                    f.Line,
+                    evidence,
+                    remediation,
+                    f.PackageName,
+                    f.PackageVersion,
+                    f.FixedVersion));
         }
 
         var coverage = new SecurityScanCoverage(
@@ -334,7 +334,10 @@ public sealed class SecurityScanEngineRunner(
         string? sbomJson = null;
         if (File.Exists(sbomPath))
         {
-            try { sbomJson = File.ReadAllText(sbomPath); }
+            try
+            {
+                sbomJson = File.ReadAllText(sbomPath);
+            }
             catch (IOException ex)
             {
                 logger.LogWarning(ex, "Could not read SBOM artifact at {Path}", sbomPath);
@@ -375,6 +378,7 @@ public sealed class SecurityScanEngineRunner(
             {
                 psi.ArgumentList.Add(a);
             }
+
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(10));
             var (exitCode, stdout, _) = await RunProcessAsync(psi, cts.Token);
@@ -386,8 +390,7 @@ public sealed class SecurityScanEngineRunner(
         }
     }
 
-    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
-        ProcessStartInfo psi, CancellationToken ct)
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(ProcessStartInfo psi, CancellationToken ct)
     {
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new System.Text.StringBuilder();
@@ -424,7 +427,11 @@ public sealed class SecurityScanEngineRunner(
                     process.Kill(entireProcessTree: true);
                 }
             }
-            catch (InvalidOperationException) { /* already exited */ }
+            catch (InvalidOperationException)
+            {
+                /* already exited */
+            }
+
             throw;
         }
 
@@ -436,9 +443,16 @@ public sealed class SecurityScanEngineRunner(
         double bytes = 0;
         foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
         {
-            try { bytes += new FileInfo(file).Length; }
-            catch (IOException) { /* raced deletion; ignore */ }
+            try
+            {
+                bytes += new FileInfo(file).Length;
+            }
+            catch (IOException)
+            {
+                /* raced deletion; ignore */
+            }
         }
+
         return bytes / (1024 * 1024);
     }
 
@@ -452,6 +466,7 @@ public sealed class SecurityScanEngineRunner(
                 break;
             }
         }
+
         return count;
     }
 

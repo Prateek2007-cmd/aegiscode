@@ -75,11 +75,12 @@ public sealed class PrOverviewSanitizerTests
     public void Sanitize_WalkthroughEntryForUnknownFile_IsDropped()
     {
         var files = new List<ChangedFile> { File("src/A.cs", "+x\n") };
-        var result = Result(walkthrough:
-        [
-            new PrWalkthroughEntry("src/A.cs", "Adds the helper."),
-            new PrWalkthroughEntry("src/Invented.cs", "Does something the PR never touched."),
-        ]);
+        var result = Result(
+            walkthrough:
+            [
+                new PrWalkthroughEntry("src/A.cs", "Adds the helper."),
+                new PrWalkthroughEntry("src/Invented.cs", "Does something the PR never touched."),
+            ]);
 
         var sanitized = PrOverviewSanitizer.Sanitize(result, files);
 
@@ -92,11 +93,12 @@ public sealed class PrOverviewSanitizerTests
     public void Sanitize_WalkthroughDeduplicatesByPathKeepingFirst()
     {
         var files = new List<ChangedFile> { File("src/A.cs", "+x\n") };
-        var result = Result(walkthrough:
-        [
-            new PrWalkthroughEntry("src/A.cs", "First description."),
-            new PrWalkthroughEntry("src/A.cs", "Second description."),
-        ]);
+        var result = Result(
+            walkthrough:
+            [
+                new PrWalkthroughEntry("src/A.cs", "First description."),
+                new PrWalkthroughEntry("src/A.cs", "Second description."),
+            ]);
 
         var sanitized = PrOverviewSanitizer.Sanitize(result, files);
 
@@ -108,10 +110,11 @@ public sealed class PrOverviewSanitizerTests
     public void Sanitize_WalkthroughDescription_IsFlattenedAndCapped()
     {
         var files = new List<ChangedFile> { File("src/A.cs", "+x\n") };
-        var result = Result(walkthrough:
-        [
-            new PrWalkthroughEntry("src/A.cs", "Adds\nthe helper\n  across lines."),
-        ]);
+        var result = Result(
+            walkthrough:
+            [
+                new PrWalkthroughEntry("src/A.cs", "Adds\nthe helper\n  across lines."),
+            ]);
 
         var sanitized = PrOverviewSanitizer.Sanitize(result, files);
 
@@ -122,11 +125,12 @@ public sealed class PrOverviewSanitizerTests
     public void Sanitize_EmptyWalkthroughEntries_AreDropped()
     {
         var files = new List<ChangedFile> { File("src/A.cs", "+x\n") };
-        var result = Result(walkthrough:
-        [
-            new PrWalkthroughEntry("src/A.cs", "   "),
-            new PrWalkthroughEntry("  ", "Has no path."),
-        ]);
+        var result = Result(
+            walkthrough:
+            [
+                new PrWalkthroughEntry("src/A.cs", "   "),
+                new PrWalkthroughEntry("  ", "Has no path."),
+            ]);
 
         var sanitized = PrOverviewSanitizer.Sanitize(result, files);
 

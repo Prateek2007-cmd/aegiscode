@@ -29,12 +29,13 @@ public static class SecurityScanningModuleServiceCollectionExtensions
             .Configure(options => SecurityScanningOptions.Bind(options, configuration));
 
         // Bounded channel: backpressure instead of unbounded queue growth under scan storms.
-        var channel = Channel.CreateBounded<SecurityScanJob>(new BoundedChannelOptions(256)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = false,
-            SingleWriter = false,
-        });
+        var channel = Channel.CreateBounded<SecurityScanJob>(
+            new BoundedChannelOptions(256)
+            {
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = false,
+                SingleWriter = false,
+            });
         services.AddSingleton(channel);
         services.AddSingleton(channel.Reader);
         services.AddSingleton(channel.Writer);

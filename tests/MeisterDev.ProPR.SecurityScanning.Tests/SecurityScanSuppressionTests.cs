@@ -42,8 +42,7 @@ public sealed class SecurityScanSuppressionTests
         return new MeisterProPRDbContext(options);
     }
 
-    private static SecurityFindingRecord SeedFinding(
-        MeisterProPRDbContext db, Guid clientId, string? suppressionsJson)
+    private static SecurityFindingRecord SeedFinding(MeisterProPRDbContext db, Guid clientId, string? suppressionsJson)
     {
         var finding = new SecurityFindingRecord
         {
@@ -90,8 +89,7 @@ public sealed class SecurityScanSuppressionTests
     {
         using var db = CreateDb();
         var clientId = Guid.NewGuid();
-        var finding = SeedFinding(
-            db, clientId, """[{"reason":"first","byUserId":null,"at":"2026-10-24T00:00:00+00:00"}]""");
+        var finding = SeedFinding(db, clientId, """[{"reason":"first","byUserId":null,"at":"2026-10-24T00:00:00+00:00"}]""");
         var service = CreateService(db);
 
         var ok = await service.SuppressFindingAsync(clientId, finding.Id, "second reason", null, CancellationToken.None);
@@ -143,7 +141,6 @@ public sealed class SecurityScanSuppressionTests
         var finding = SeedFinding(db, clientId, "[]");
         var service = CreateService(db);
 
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => service.SuppressFindingAsync(clientId, finding.Id, "  ", null, CancellationToken.None));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.SuppressFindingAsync(clientId, finding.Id, "  ", null, CancellationToken.None));
     }
 }

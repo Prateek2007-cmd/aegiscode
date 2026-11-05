@@ -42,8 +42,15 @@ public sealed class MirrorDeltaQuotingTests : IDisposable
             {
                 foreach (var file in Directory.EnumerateFiles(this._repoPath, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(this._repoPath, recursive: true);
             }
         }

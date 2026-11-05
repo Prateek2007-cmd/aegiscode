@@ -178,8 +178,14 @@ public sealed class JsonFileFixProposalStore(
                     File.Delete(tempPath);
                 }
             }
-            catch (IOException) { /* best-effort temp cleanup */ }
-            catch (UnauthorizedAccessException) { /* best-effort temp cleanup */ }
+            catch (IOException)
+            {
+                /* best-effort temp cleanup */
+            }
+            catch (UnauthorizedAccessException)
+            {
+                /* best-effort temp cleanup */
+            }
         }
     }
 }

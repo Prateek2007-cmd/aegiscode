@@ -17,7 +17,8 @@ public static partial class SecurityScanRedactor
     // Conservative shapes: long base64-ish tokens assigned to secret-ish keys, AWS key ids,
     // and PEM private key blocks. Intentionally broad — false positives here only cause a
     // finding to be quarantined for review, never a false finding shown to users.
-    [GeneratedRegex("""(?i)(api[_-]?key|secret|passwd|password|token)\s*[:=]\s*['"]?[A-Za-z0-9_\-/+]{20,}['"]?""",
+    [GeneratedRegex(
+        """(?i)(api[_-]?key|secret|passwd|password|token)\s*[:=]\s*['"]?[A-Za-z0-9_\-/+]{20,}['"]?""",
         RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex CredentialAssignmentRegex();
 
@@ -40,11 +41,11 @@ public static partial class SecurityScanRedactor
 
         // Strip the engine's own redaction markers before checking.
         var scrubbed = text.Replace("***", string.Empty, StringComparison.Ordinal)
-                           .Replace("REDACTED", string.Empty, StringComparison.Ordinal);
+            .Replace("REDACTED", string.Empty, StringComparison.Ordinal);
 
         return CredentialAssignmentRegex().IsMatch(scrubbed)
-            || AwsKeyIdRegex().IsMatch(scrubbed)
-            || PrivateKeyRegex().IsMatch(scrubbed);
+               || AwsKeyIdRegex().IsMatch(scrubbed)
+               || PrivateKeyRegex().IsMatch(scrubbed);
     }
 
     /// <summary>

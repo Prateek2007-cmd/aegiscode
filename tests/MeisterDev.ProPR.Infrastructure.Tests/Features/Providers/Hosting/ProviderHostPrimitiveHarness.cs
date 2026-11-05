@@ -356,8 +356,15 @@ public sealed class ProviderHostPrimitiveHarness : IAsyncDisposable
             {
                 foreach (var file in Directory.EnumerateFiles(this._keysDirectory, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(this._keysDirectory, recursive: true);
             }
         }

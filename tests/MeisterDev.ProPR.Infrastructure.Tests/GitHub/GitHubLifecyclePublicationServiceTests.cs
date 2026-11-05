@@ -215,8 +215,7 @@ public sealed class GitHubLifecyclePublicationServiceTests
         Assert.DoesNotContain("mermaid", payload.Body, StringComparison.Ordinal);
     }
 
-    private static GitHubLifecyclePublicationService.GitHubReviewRequest BuildPayload(
-        IReadOnlyList<ReviewComment> comments)
+    private static GitHubLifecyclePublicationService.GitHubReviewRequest BuildPayload(IReadOnlyList<ReviewComment> comments)
     {
         return BuildPayload(comments, new ReviewResult("Looks solid overall.", comments));
     }

@@ -18,8 +18,7 @@ namespace MeisterDev.ProPR.SecurityScanning.Tests;
 /// </summary>
 public sealed class FixProposalTests : IDisposable
 {
-    private readonly string tempRoot = Path.Combine(
-        Path.GetTempPath(), "aegis-fix-proposal-tests", Guid.NewGuid().ToString("N"));
+    private readonly string tempRoot = Path.Combine(Path.GetTempPath(), "aegis-fix-proposal-tests", Guid.NewGuid().ToString("N"));
 
     public void Dispose()
     {
@@ -30,8 +29,14 @@ public sealed class FixProposalTests : IDisposable
                 Directory.Delete(this.tempRoot, recursive: true);
             }
         }
-        catch (IOException) { /* best-effort cleanup */ }
-        catch (UnauthorizedAccessException) { /* best-effort cleanup */ }
+        catch (IOException)
+        {
+            /* best-effort cleanup */
+        }
+        catch (UnauthorizedAccessException)
+        {
+            /* best-effort cleanup */
+        }
     }
 
     private FixProposalService CreateService()
@@ -46,7 +51,8 @@ public sealed class FixProposalTests : IDisposable
         string findingRef = "finding-1",
         string source = "scan",
         string? remediation = "Upgrade the package.") =>
-        new(findingRef, source, "Upgrade lodash", FilePath: "package.json", Line: 12,
+        new(
+            findingRef, source, "Upgrade lodash", FilePath: "package.json", Line: 12,
             Remediation: remediation, Confidence: "high");
 
     [Fact]
@@ -73,8 +79,7 @@ public sealed class FixProposalTests : IDisposable
         var service = this.CreateService();
         var clientId = Guid.NewGuid();
 
-        var created = await service.CreateAsync(
-            clientId, ValidRequest(remediation: null), CancellationToken.None);
+        var created = await service.CreateAsync(clientId, ValidRequest(remediation: null), CancellationToken.None);
 
         Assert.Null(created.Remediation);
         var listed = await service.ListAsync(clientId, CancellationToken.None);
@@ -93,7 +98,8 @@ public sealed class FixProposalTests : IDisposable
     {
         var service = this.CreateService();
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            service.CreateAsync(Guid.NewGuid(), new CreateFixProposalRequest(findingRef, source, title),
+            service.CreateAsync(
+                Guid.NewGuid(), new CreateFixProposalRequest(findingRef, source, title),
                 CancellationToken.None));
     }
 
@@ -101,8 +107,7 @@ public sealed class FixProposalTests : IDisposable
     public async Task Create_SourceIsCaseInsensitive_AndNormalizedToLowercase()
     {
         var service = this.CreateService();
-        var created = await service.CreateAsync(
-            Guid.NewGuid(), ValidRequest(source: "Review"), CancellationToken.None);
+        var created = await service.CreateAsync(Guid.NewGuid(), ValidRequest(source: "Review"), CancellationToken.None);
         Assert.Equal("review", created.Source);
     }
 

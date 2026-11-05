@@ -154,6 +154,7 @@ public static class ProPRHost
                     aegisBridge[key] = entry.Value?.ToString();
                 }
             }
+
             if (aegisBridge.Count > 0)
             {
                 builder.Configuration.AddInMemoryCollection(aegisBridge);
@@ -621,12 +622,13 @@ public static class ProPRHost
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(options =>
             {
-                options.SwaggerDoc("v1", new OpenApiInfo
-                {
-                    Title = "AegisCode Security API",
-                    Version = "v1",
-                    Description = "AegisCode — Enterprise Developer Security, Automated Code Review & Supply Chain Guardrails"
-                });
+                options.SwaggerDoc(
+                    "v1", new OpenApiInfo
+                    {
+                        Title = "AegisCode Security API",
+                        Version = "v1",
+                        Description = "AegisCode — Enterprise Developer Security, Automated Code Review & Supply Chain Guardrails"
+                    });
                 options.SchemaFilter<LicensingNullableReferenceSchemaFilter>();
                 options.SchemaFilter<NullableReferenceSchemaFilter>();
                 options.SchemaFilter<WithheldReviewFindingSchemaFilter>();

@@ -29,8 +29,15 @@ public sealed class GitUploadPackTransportTests : IDisposable
             {
                 foreach (var file in Directory.EnumerateFiles(this._root, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(this._root, true);
             }
         }

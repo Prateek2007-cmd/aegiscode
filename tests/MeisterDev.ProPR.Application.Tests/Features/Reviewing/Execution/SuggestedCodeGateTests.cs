@@ -15,7 +15,8 @@ namespace MeisterDev.ProPR.Application.Tests.Features.Reviewing.Execution;
 /// </summary>
 public sealed class SuggestedCodeGateTests
 {
-    private const string HeadContent = "using System;\n\npublic sealed class Foo\n{\n    public void Bar()\n    {\n        var x = 1;\n        var y = 2;\n    }\n}";
+    private const string HeadContent =
+        "using System;\n\npublic sealed class Foo\n{\n    public void Bar()\n    {\n        var x = 1;\n        var y = 2;\n    }\n}";
 
     // Hunk 1 covers new lines 1-2, hunk 2 covers new lines 10-11; lines 3-9 are untouched.
     private const string TwoHunkDiff =

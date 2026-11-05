@@ -19,7 +19,8 @@ public sealed class SecurityScanScoringTests
         string? version = "4.17.20",
         string? file = "package.json",
         int? line = 12) =>
-        new(scanner, ruleId, severity, confidence, "title", "vulnerability",
+        new(
+            scanner, ruleId, severity, confidence, "title", "vulnerability",
             file, line, "evidence", "remediation", package, version, "4.17.21");
 
     [Fact]
@@ -77,8 +78,7 @@ public sealed class SecurityScanScoringTests
     [Fact]
     public void Scoring_is_bounded()
     {
-        var (score, _) = SecurityScanPrioritizer.Score(
-            Finding(scanner: "secret-scan", severity: "critical", confidence: "high"));
+        var (score, _) = SecurityScanPrioritizer.Score(Finding(scanner: "secret-scan", severity: "critical", confidence: "high"));
         Assert.InRange(score, 0, 100);
     }
 }

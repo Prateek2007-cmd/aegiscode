@@ -238,8 +238,15 @@ internal sealed class GitReviewRepositoryWorkspaceManager(
         {
             foreach (var file in Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories))
             {
-                try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                try
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+                catch
+                {
+                }
             }
+
             Directory.Delete(workspaceRoot, true);
         }
 
@@ -423,8 +430,15 @@ internal sealed class GitReviewRepositoryWorkspaceManager(
             {
                 foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
                 {
-                    try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                    }
+                    catch
+                    {
+                    }
                 }
+
                 Directory.Delete(path, true);
             }
         }
