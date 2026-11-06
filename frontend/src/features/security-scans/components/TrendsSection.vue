@@ -71,10 +71,10 @@
         <div class="trends-block">
           <h4>Criticals over time</h4>
           <svg class="trends-line" viewBox="0 0 600 140" role="img" :aria-label="criticalsAriaLabel">
-            <line x1="30" y1="118" x2="590" y2="118" stroke="rgba(148,163,184,0.25)" stroke-width="1" />
-            <polyline :points="criticalsPolyline" fill="none" stroke="#f43f5e" stroke-width="2" />
+            <line x1="30" y1="118" x2="590" y2="118" stroke="var(--color-muted-soft)" stroke-width="1" />
+            <polyline :points="criticalsPolyline" fill="none" stroke="var(--color-danger)" stroke-width="2" />
             <g v-for="p in criticalPoints" :key="p.scanId">
-              <circle :cx="p.x" :cy="p.y" r="5" fill="#f43f5e" stroke="#0a1628" stroke-width="1.5">
+              <circle :cx="p.x" :cy="p.y" r="5" fill="var(--color-danger)" stroke="var(--color-surface)" stroke-width="1.5">
                 <title>{{ p.title }}</title>
               </circle>
               <text :x="p.x" :y="134" text-anchor="middle" class="trends-line-label">{{ p.dateLabel }}</text>
@@ -228,7 +228,7 @@ onMounted(load)
 
 <style scoped>
 .trends-section {
-  background: #0a1628;
+  background: var(--color-surface);
   border-radius: 12px;
   padding: 20px;
   display: flex;
@@ -249,7 +249,7 @@ onMounted(load)
 }
 
 .trends-section-subtitle {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
@@ -257,7 +257,7 @@ onMounted(load)
 .trends-section-note,
 .trends-section-loading,
 .trends-section-empty {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
@@ -265,7 +265,7 @@ onMounted(load)
   font-size: 1.25rem;
   font-weight: 700;
   margin: 0;
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 
 .trends-stats {
@@ -278,8 +278,8 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 8px;
   padding: 10px 14px;
   min-width: 140px;
@@ -288,12 +288,12 @@ onMounted(load)
 .trends-stat-value {
   font-size: 1.25rem;
   font-weight: 700;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .trends-stat-label {
   font-size: 0.8rem;
-  color: #9bb0cc;
+  color: var(--color-text-muted);
 }
 
 .trends-block h4 {
@@ -308,14 +308,14 @@ onMounted(load)
 }
 
 .trends-line-label {
-  fill: #94a3b8;
+  fill: var(--color-text-muted);
   font-size: 10px;
 }
 
 .trends-note {
   margin: 0.4rem 0 0;
   font-size: 0.76rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .trends-scan-list {
@@ -328,8 +328,8 @@ onMounted(load)
 }
 
 .trends-scan {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 8px;
   padding: 12px;
   display: flex;
@@ -350,8 +350,8 @@ onMounted(load)
 }
 
 .trends-scan-repo {
-  color: #9bb0cc;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -360,7 +360,7 @@ onMounted(load)
 .trends-scan-total {
   margin-left: auto;
   font-weight: 700;
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 
 .trends-stacked-bar {
@@ -368,7 +368,7 @@ onMounted(load)
   height: 10px;
   border-radius: 9999px;
   overflow: hidden;
-  background: rgba(148, 163, 184, 0.15);
+  background: var(--color-muted-soft);
 }
 
 .trends-stacked-seg {
@@ -377,30 +377,30 @@ onMounted(load)
 
 .trends-scan-clean {
   margin: 0;
-  color: #4ade80;
+  color: var(--color-success);
   font-size: 0.85rem;
 }
 
 .trends-scan-flow {
   margin: 0;
   font-size: 0.85rem;
-  color: #cbd5e1;
+  color: var(--color-text);
 }
 
 .trends-new {
-  color: #fca5a5;
+  color: var(--color-danger);
   font-weight: 700;
 }
 
 .trends-fixed {
-  color: #4ade80;
+  color: var(--color-success);
   font-weight: 700;
 }
 
 .trends-severity-breakdown {
   display: block;
   margin-top: 4px;
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   font-size: 0.8rem;
 }
 </style>

@@ -250,8 +250,8 @@ async function logout() {
 
 .nav-link-button.router-link-active,
 .nav-link-button:hover {
-  border-color: rgba(34, 211, 238, 0.3);
-  background: rgba(34, 211, 238, 0.08);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 
 .nav-link-button i {
@@ -291,8 +291,8 @@ async function logout() {
 }
 
 .logout-btn:hover {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.28);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger-border);
   color: var(--color-text);
   transform: translateY(-1px);
 }
@@ -328,12 +328,12 @@ async function logout() {
 }
 
 .app-edition-badge-community {
-  background: rgba(148, 163, 184, 0.16);
+  background: var(--color-muted-soft);
   color: var(--color-text-muted);
 }
 
 .app-edition-badge-commercial {
-  background: rgba(34, 197, 94, 0.16);
+  background: var(--color-success-soft);
   color: var(--color-success);
 }
 
@@ -385,7 +385,7 @@ async function logout() {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-muted, #8b949e);
+  color: var(--color-text-muted, var(--color-text-muted));
 }
 
 .dropdown-menu {
@@ -443,7 +443,7 @@ async function logout() {
 }
 
 .dropdown-item:hover, .dropdown-item.active {
-  background: rgba(34, 211, 238, 0.08);
+  background: var(--color-accent-soft);
   color: var(--color-accent);
   opacity: 1;
 }

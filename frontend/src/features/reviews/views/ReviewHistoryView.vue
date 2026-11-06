@@ -127,7 +127,7 @@ async function handleRefresh() {
 
 .history-tabs .tab-btn.tab-active {
     color: var(--color-accent);
-    border-color: rgba(34, 211, 238, 0.35);
-    background: rgba(34, 211, 238, 0.08);
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
 }
 </style>

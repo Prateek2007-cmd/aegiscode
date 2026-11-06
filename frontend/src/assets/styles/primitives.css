@@ -3,6 +3,8 @@
  * component <style scoped> blocks. */
 
 /* ── Buttons ─────────────────────────────────────────────────────────────── */
+/* One radius (6px) for every button; pills are for chips only. The single
+ * filled primary per screen wears the pink accent with a black label. */
 .btn-primary,
 .btn-secondary,
 .btn-danger,
@@ -13,12 +15,12 @@
   gap: 0.5rem;
   padding: 0.625rem 1.25rem;
   border: none;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font-size: 0.875rem;
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
-  transition: all 0.2s ease-in-out;
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 
 .btn-primary {
@@ -46,7 +48,7 @@
 }
 
 .btn-secondary:hover {
-  background: var(--color-border);
+  background: var(--surface-hover);
   border-color: var(--color-border-hover);
 }
 
@@ -79,7 +81,7 @@
   color: var(--color-text-muted);
   background: transparent;
   border: 1px solid transparent;
-  transition: all 0.2s;
+  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
   text-decoration: none;
   cursor: pointer;
 }
@@ -97,18 +99,18 @@
   align-items: center;
   gap: 0.45rem;
   padding: 0.55rem 1rem;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease-in-out;
+  transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
 }
 
 .btn-slide:hover:not(:disabled) {
-  background: var(--color-border);
+  background: var(--surface-hover);
   border-color: var(--color-border-hover);
 }
 
@@ -200,13 +202,13 @@
 
 .fat-tokens {
   font-weight: 700;
-  font-family: monospace;
+  font-family: var(--font-mono);
   color: var(--color-text);
 }
 
 /* ── Status tags (monospace, tinted) ─────────────────────────────────────── */
 .status-tag {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
   padding: 0.1rem 0.4rem;
   border-radius: var(--radius-xs);
@@ -214,17 +216,17 @@
 
 .status-resolved {
   color: var(--color-success);
-  background: rgba(34, 197, 94, 0.1);
+  background: var(--color-success-soft);
 }
 
 .status-active {
   color: var(--color-accent);
-  background: rgba(34, 211, 238, 0.1);
+  background: var(--color-accent-soft);
 }
 
 .status-failed {
   color: var(--color-danger);
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--color-danger-soft);
 }
 
 /* Monospace code pill (e.g. reviewer external id) */
@@ -235,7 +237,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0.15rem 0.5rem;
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   color: var(--color-text-muted);
   letter-spacing: 0.02em;
@@ -246,13 +248,15 @@
 }
 
 /* ── Cards ───────────────────────────────────────────────────────────────── */
+/* Flat cards: a 1px hairline on a #111 surface over the #000 ground.
+ * Elevation comes from the lightness step, never from a shadow. */
 .section-card,
 .section-card-primitive {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   overflow: hidden;
   margin-bottom: 1.5rem;
-  background: var(--color-bg);
+  background: var(--color-surface);
 }
 
 .section-card-header {
@@ -261,7 +265,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 1rem 1.5rem;
-  background: var(--surface-subtle);
+  background: transparent;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -304,10 +308,10 @@
 
 /* Danger Zone card */
 .danger-zone-card {
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid var(--color-danger-border);
   border-radius: var(--radius-lg);
   padding: 1.25rem 1.5rem;
-  background: rgba(239, 68, 68, 0.04);
+  background: var(--color-danger-soft);
   display: flex;
   align-items: center;
   justify-content: space-between;

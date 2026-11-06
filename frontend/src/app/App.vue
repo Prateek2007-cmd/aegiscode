@@ -201,7 +201,7 @@ function onKeydown(event: KeyboardEvent): void {
   font-size: 0.78rem;
   color: var(--color-text-muted);
   opacity: 0.6;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--surface-hover);
   margin-top: auto;
 }
 

@@ -136,11 +136,11 @@ async function handleAsk(): Promise<void> {
 
 <style scoped>
 .code-qa-panel {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.25rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -153,7 +153,7 @@ async function handleAsk(): Promise<void> {
 
 .code-qa-subtitle {
   margin: 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
@@ -169,10 +169,10 @@ async function handleAsk(): Promise<void> {
 }
 
 .code-qa-field textarea {
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: var(--color-muted-soft);
+  border: 1px solid var(--color-border-hover);
   border-radius: 8px;
-  color: #e2e8f0;
+  color: var(--color-text);
   padding: 0.55rem 0.75rem;
   font-size: 0.95rem;
   font-family: inherit;
@@ -184,7 +184,7 @@ async function handleAsk(): Promise<void> {
 }
 
 .code-qa-field textarea::placeholder {
-  color: #64748b;
+  color: var(--color-text-faint);
 }
 
 .error {
@@ -195,19 +195,19 @@ async function handleAsk(): Promise<void> {
 
 .code-qa-error {
   margin: 0;
-  color: #f87171;
+  color: var(--color-danger);
   font-size: 0.9rem;
 }
 
 .code-qa-note {
   margin: 0;
-  color: #fbbf24;
+  color: var(--color-warning);
   font-size: 0.9rem;
 }
 
 .code-qa-empty {
   margin: 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
@@ -221,7 +221,7 @@ async function handleAsk(): Promise<void> {
 }
 
 .code-qa-entry {
-  border-top: 1px solid rgba(56, 189, 248, 0.18);
+  border-top: 1px solid var(--color-border);
   padding-top: 0.9rem;
   display: flex;
   flex-direction: column;
@@ -236,18 +236,18 @@ async function handleAsk(): Promise<void> {
 
 .code-qa-entry-answer {
   margin: 0;
-  color: #e2e8f0;
+  color: var(--color-text);
   font-size: 0.92rem;
   white-space: pre-wrap;
 }
 
 .code-qa-entry-unanswered {
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 
 .code-qa-entry-model {
   margin: 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.8rem;
 }
 
@@ -266,36 +266,36 @@ async function handleAsk(): Promise<void> {
 }
 
 .code-qa-citation-path code {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  color: #7dd3fc;
+  font-family: var(--font-mono);
+  color: var(--color-text);
   word-break: break-all;
 }
 
 .code-qa-citation-meta {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .code-qa-citation-title {
   margin: 0.2rem 0 0;
-  color: #cbd5e1;
+  color: var(--color-text);
   font-size: 0.85rem;
 }
 
 .code-qa-citation-excerpt {
   margin: 0.3rem 0 0;
-  background: rgba(148, 163, 184, 0.08);
+  background: var(--color-muted-soft);
   border-radius: 8px;
   padding: 0.55rem 0.75rem;
   font-size: 0.82rem;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  color: #cbd5e1;
+  font-family: var(--font-mono);
+  color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .code-qa-no-citations {
   margin: 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 

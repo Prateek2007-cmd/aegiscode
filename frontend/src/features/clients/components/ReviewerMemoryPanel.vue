@@ -183,7 +183,7 @@ onMounted(load)
 }
 
 .memory-muted {
-  color: var(--color-warning, #9a6a00);
+  color: var(--color-warning, var(--color-warning));
   font-size: 0.85rem;
 }
 
@@ -202,12 +202,12 @@ onMounted(load)
 }
 
 .memory-status-active {
-  background: var(--color-success-bg, #e6f4ea);
-  color: var(--color-success, #137333);
+  background: var(--color-success-bg, var(--color-success-soft));
+  color: var(--color-success, var(--color-success));
 }
 
 .memory-status-muted {
-  background: var(--color-warning-bg, #fef7e0);
-  color: var(--color-warning, #9a6a00);
+  background: var(--color-warning-bg, var(--color-warning-soft));
+  color: var(--color-warning, var(--color-warning));
 }
 </style>

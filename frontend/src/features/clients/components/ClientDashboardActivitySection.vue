@@ -44,15 +44,15 @@ defineProps<{
 
 <style scoped>
 .dashboard-activity {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.1rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
 }
 
 .empty-state {
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-style: italic;
   margin: 0;
 }
@@ -66,7 +66,7 @@ defineProps<{
 }
 
 .activity-row-wrap {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid var(--color-muted-soft);
 }
 
 .activity-row-wrap:last-child {
@@ -79,13 +79,13 @@ defineProps<{
   flex-wrap: wrap;
   gap: 0.5rem 1rem;
   padding: 0.7rem 0.25rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   text-decoration: none;
   transition: background 0.15s ease;
 }
 
 .activity-row:hover {
-  background: rgba(56, 189, 248, 0.06);
+  background: var(--color-border);
 }
 
 .activity-kind {
@@ -96,7 +96,7 @@ defineProps<{
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #38bdf8;
+  color: var(--color-accent);
   flex: 0 0 5.5rem;
 }
 
@@ -118,7 +118,7 @@ defineProps<{
 
 .activity-detail {
   font-size: 0.82rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -126,13 +126,13 @@ defineProps<{
 
 .activity-date {
   font-size: 0.82rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
 .activity-status {
   font-size: 0.8rem;
   font-weight: 600;
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 </style>

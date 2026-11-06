@@ -13,7 +13,9 @@ end — never fake a live result.
 only works in Development mode) + frontend on `:5173` (or `:5174`). Signed in
 as the bootstrap admin. Client "Chintawar Prateek" (or your own client).
 GitHub connection "githubb" Active + Verified. AI provider bound to Review
-default (Antseed proxy, GLM 5.3). See `README.md` for the screen / brain /
+default (Antseed proxy — currently deepseek-v4-flash; GLM 5.3 402'd on
+2026-11-06 when the wallet ran out, so verify the wallet is funded and the
+model answers before the demo). See `README.md` for the screen / brain /
 memory setup analogy.
 
 ## 0:00–0:30 — The problem (30s)
@@ -138,8 +140,16 @@ Say this out loud — it is the differentiator:
   evidence, not a screenshot of a mock.
 - **Scan:** run the engine-level demo in `docs/demo/` — `VULNVETO_AI=none
   node run-demo-scan.mjs` on the fixture (`lodash@4.17.20`, real OSV
-  CVEs + two synthetic credentials). Expected: `findings: 9 |
-  summary: {"critical":0,"high":4,"medium":3,"low":1,"info":1}`.
+  CVEs + two synthetic credentials). Expected (verified 2026-11-06,
+  scoped run): `findings: 8 |
+  summary: {"critical":0,"high":4,"medium":2,"low":1,"info":1}`.
+  The count drifted from 9 because OSV no longer reports one lodash
+  medium for 4.17.20. Scope matters: the secret scanner reads full git
+  history, so run it with the fixture copied out of the repo as its own
+  git repo (`DEMO_FIXTURE_DIR=<copy>`, see `docs/demo/DEMO_SCRIPT.md`).
+  Run inside the aegiscode checkout it reports 54 — the extra 46 are
+  leaked-secret hits from the repo's own synthetic test fixtures, not
+  the demo fixture.
   See `docs/demo/DEMO_SCRIPT.md`.
 - **Fix loop:** show an already-created draft PR on GitHub from an
   earlier run, and narrate the refusal path instead of performing it.

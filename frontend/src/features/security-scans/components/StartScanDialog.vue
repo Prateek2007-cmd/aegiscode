@@ -85,21 +85,21 @@ async function start(): Promise<void> {
 
 <style scoped>
 .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 1rem; }
-.dialog { background: #111827; border: 1px solid rgba(56,189,248,0.25); border-radius: 14px; padding: 1.5rem; width: 100%; max-width: 480px; color: var(--color-text); }
+.dialog { background: var(--color-surface); border: 1px solid var(--color-border-hover); border-radius: var(--radius-xl); padding: 1.5rem; width: 100%; max-width: 480px; color: var(--color-text); }
 .dialog h3 { margin: 0 0 0.4rem; font-size: 1.15rem; }
 .dialog-sub { font-size: 0.84rem; color: var(--color-text-muted); margin: 0 0 1.1rem; line-height: 1.45; }
 .field { display: block; margin-bottom: 1rem; font-size: 0.88rem; }
 .field > span:first-child { display: block; margin-bottom: 0.35rem; font-weight: 600; }
-.field input[type="url"], .field input[type="text"] { width: 100%; padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04); color: var(--color-text); font-size: 0.9rem; box-sizing: border-box; }
+.field input[type="url"], .field input[type="text"] { width: 100%; padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid var(--color-muted-soft); background: var(--surface-hover); color: var(--color-text); font-size: 0.9rem; box-sizing: border-box; }
 .hint { display: block; margin-top: 0.3rem; font-size: 0.75rem; color: var(--color-text-muted); font-weight: 400; }
-.required { color: #fb7185; }
+.required { color: var(--color-danger); }
 .optional { color: var(--color-text-muted); font-weight: 400; }
-fieldset.field { border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 0.6rem 0.8rem; }
+fieldset.field { border: 1px solid var(--color-muted-soft); border-radius: 8px; padding: 0.6rem 0.8rem; }
 fieldset.field legend { padding: 0 0.4rem; font-weight: 600; }
 .check { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 1rem; font-size: 0.85rem; cursor: pointer; }
-.banner-error { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.3); color: #fda4af; padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.84rem; margin-bottom: 1rem; }
+.banner-error { background: var(--color-danger-soft); border: 1px solid var(--color-danger-border); color: var(--color-danger); padding: 0.6rem 0.8rem; border-radius: 8px; font-size: 0.84rem; margin-bottom: 1rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 0.5rem; }
 .btn-primary { display: inline-flex; align-items: center; gap: 0.5rem; }
-.btn-ghost { background: transparent; border: 1px solid rgba(255,255,255,0.16); color: var(--color-text); border-radius: 8px; padding: 0.5rem 1rem; cursor: pointer; }
-.btn-ghost:hover { border-color: rgba(56,189,248,0.4); }
+.btn-ghost { background: transparent; border: 1px solid var(--color-muted-soft); color: var(--color-text); border-radius: 8px; padding: 0.5rem 1rem; cursor: pointer; }
+.btn-ghost:hover { border-color: var(--color-accent); }
 </style>

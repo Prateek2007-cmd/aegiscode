@@ -134,7 +134,7 @@ function openClient(clientId: string) {
 }
 
 .usage-badge {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-muted-soft);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
   font-family: monospace;

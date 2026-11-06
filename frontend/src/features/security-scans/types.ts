@@ -171,21 +171,21 @@ export function inferLanguages(manifestsFound: string[]): InferredLanguage[] {
 export function severityColor(severity: SecurityFindingSeverity): string {
   switch (severity) {
     case 'Critical': return '#f43f5e'
-    case 'High': return '#fb7185'
-    case 'Medium': return '#f59e0b'
-    case 'Low': return '#38bdf8'
-    case 'Info': return '#94a3b8'
+    case 'High': return '#e5566f'
+    case 'Medium': return '#f2b33d'
+    case 'Low': return '#b4b4b4'
+    case 'Info': return '#949494'
   }
 }
 
 export function scanStatusColor(status: SecurityScanStatus): string {
   switch (status) {
-    case 'Succeeded': return '#10b981'
-    case 'PartiallySucceeded': return '#f59e0b'
-    case 'Running': return '#38bdf8'
-    case 'Queued': return '#94a3b8'
+    case 'Succeeded': return '#3fc07a'
+    case 'PartiallySucceeded': return '#f2b33d'
+    case 'Running': return '#ec4899'
+    case 'Queued': return '#b4b4b4'
     case 'Failed': return '#f43f5e'
-    case 'Cancelled': return '#64748b'
+    case 'Cancelled': return '#949494'
   }
 }
 

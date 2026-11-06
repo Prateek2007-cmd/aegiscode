@@ -25,7 +25,18 @@ Open `fixture/config/deploy.env`: note the header — *synthetic test data*.
 ```bash
 VULNVETO_AI=none node run-demo-scan.mjs   # from docs/demo/
 ```
-Expected: `findings: 9 | summary: {"critical":0,"high":4,"medium":3,"low":1,"info":1}`.
+Expected (verified 2026-11-06, scoped run — see scoping note below): `findings: 8 | summary: {"critical":0,"high":4,"medium":2,"low":1,"info":1}`.
+
+**Scoping note (added 2026-11-06):** the secret scanner reads full git
+history, so the fixture must be its own git repo for a deterministic
+count. Copy `fixture/` outside the aegiscode checkout, `git init` +
+commit it there, and run with `DEMO_FIXTURE_DIR=<copy>` (and
+`VULNVETO_ENGINE_DIR=<path to tools/vulnveto>` to use the vendored
+engine). Run inside the aegiscode checkout, gitleaks follows the repo's
+history and the count jumps to 54 — the extra 46 are leaked-secret hits
+from the repo's own synthetic test fixtures. The count also drifts over
+time as OSV publishes/withdraws lodash advisories (it was 9 on 2026-10-23:
+3 mediums; one medium is no longer reported).
 
 ### 3. Dependency vulnerabilities (1 min)
 Open `aegiscode-demo-report.json`. Point out real OSV.dev findings, e.g.:

@@ -314,7 +314,7 @@ const latestScanTotal = computed(() =>
 .skeleton-line {
   height: 1rem;
   border-radius: var(--radius-xs);
-  background: rgba(148, 163, 184, 0.18);
+  background: var(--color-muted-soft);
   animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
@@ -340,11 +340,11 @@ const latestScanTotal = computed(() =>
 }
 
 .dashboard-header {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.25rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   display: flex;
   flex-wrap: wrap;
   gap: 1.5rem;
@@ -359,7 +359,7 @@ const latestScanTotal = computed(() =>
 
 .dashboard-tenant {
   margin: 0.25rem 0 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
@@ -370,7 +370,7 @@ const latestScanTotal = computed(() =>
   flex-wrap: wrap;
   gap: 0.75rem;
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .status-chip {
@@ -384,13 +384,13 @@ const latestScanTotal = computed(() =>
 }
 
 .status-chip-active {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .status-chip-inactive {
-  background: rgba(148, 163, 184, 0.15);
-  color: #94a3b8;
+  background: var(--color-muted-soft);
+  color: var(--color-text-muted);
 }
 
 .dashboard-counts {
@@ -411,21 +411,21 @@ const latestScanTotal = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  border-left: 2px solid rgba(245, 158, 11, 0.45);
+  border-left: 1px solid var(--color-warning);
   padding-left: 0.7rem;
 }
 
 .dashboard-count-num {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 1.55rem;
   font-weight: 700;
-  color: #7dd3fc;
+  color: var(--color-text);
   line-height: 1.1;
 }
 
 .dashboard-count-cap {
   font-size: 0.74rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .dashboard-section {
@@ -440,11 +440,11 @@ const latestScanTotal = computed(() =>
 }
 
 .fix-queue-snapshot {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.1rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -462,10 +462,10 @@ const latestScanTotal = computed(() =>
 }
 
 .fix-queue-num {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 1.4rem;
   font-weight: 700;
-  color: #fbbf24;
+  color: var(--color-warning);
   margin-right: 0.35rem;
 }
 </style>

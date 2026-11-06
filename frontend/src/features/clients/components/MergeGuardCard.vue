@@ -245,7 +245,7 @@ onMounted(() => {
 
 .merge-guard-saved {
   margin: 0;
-  color: var(--color-success, #15803d);
+  color: var(--color-success, var(--color-success));
 }
 
 .merge-guard-latest {
@@ -253,7 +253,7 @@ onMounted(() => {
   flex-direction: column;
   gap: 0.5rem;
   padding-top: 0.5rem;
-  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  border-top: 1px solid var(--color-muted-soft);
 }
 
 .merge-guard-latest-title {
@@ -270,17 +270,17 @@ onMounted(() => {
 }
 
 .merge-guard-chip-success {
-  background: rgba(22, 163, 74, 0.15);
-  color: #15803d;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .merge-guard-chip-failure {
-  background: rgba(220, 38, 38, 0.15);
-  color: #b91c1c;
+  background: var(--color-danger-soft);
+  color: var(--color-critical);
 }
 
 .merge-guard-chip-neutral {
-  background: rgba(148, 163, 184, 0.2);
+  background: var(--color-muted-soft);
   color: var(--color-text-muted);
 }
 

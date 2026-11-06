@@ -324,7 +324,7 @@ async function confirmDelete() {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
   padding: 0.35rem 0.75rem;
   border-radius: var(--radius-pill);
   font-size: 0.85rem;
@@ -339,8 +339,8 @@ async function confirmDelete() {
 }
 
 .scope-pill-warning {
-  background: rgba(251, 191, 36, 0.14);
-  border: 1px solid rgba(251, 191, 36, 0.25);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning-soft);
   color: var(--color-warning);
 }
 
@@ -374,8 +374,8 @@ async function confirmDelete() {
 }
 
 .action-btn.delete:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger-border);
   color: var(--color-danger);
 }
 

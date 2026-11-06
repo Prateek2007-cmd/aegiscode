@@ -118,7 +118,7 @@ function formatDate(iso: string): string {
     padding: 0.65rem 0.85rem;
     margin: 0.35rem 0.75rem 0.55rem;
     /* Inline threads sit inside the diff's monospaced table; restore proportional text. */
-    font-family: 'Inter', sans-serif;
+    font-family: var(--font-sans);
     white-space: normal;
 }
 
@@ -194,7 +194,7 @@ function formatDate(iso: string): string {
 }
 
 .retained-inline-comment-ai-chip {
-    background: rgba(34, 211, 238, 0.18);
+    background: var(--color-accent-soft);
     color: var(--color-accent);
     font-weight: 700;
 }
@@ -257,7 +257,7 @@ function formatDate(iso: string): string {
 }
 
 .markdown-content :deep(code) {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--color-muted-soft);
     padding: 0.1rem 0.3rem;
     border-radius: var(--radius-xs);
     font-family: monospace;

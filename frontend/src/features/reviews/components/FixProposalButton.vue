@@ -149,13 +149,13 @@ async function draftFix(): Promise<void> {
     font-size: 0.78rem;
     padding: 0.25rem 0.6rem;
     color: var(--color-accent);
-    border: 1px solid rgba(34, 211, 238, 0.3);
+    border: 1px solid var(--color-accent);
     white-space: nowrap;
 }
 
 .draft-fix-btn:hover:not(:disabled) {
-    background: rgba(34, 211, 238, 0.1);
-    border-color: rgba(34, 211, 238, 0.55);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
 }
 
 .draft-fix-btn:disabled {
@@ -165,7 +165,7 @@ async function draftFix(): Promise<void> {
 
 .draft-fix-btn--created {
     color: var(--color-success);
-    border-color: rgba(34, 197, 94, 0.4);
+    border-color: var(--color-success);
 }
 
 .draft-fix-note {

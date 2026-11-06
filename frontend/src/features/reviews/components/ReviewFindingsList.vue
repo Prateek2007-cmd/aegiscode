@@ -223,7 +223,7 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
     font-weight: 700;
     padding: 0 0.35rem;
     border-radius: var(--radius-pill);
-    background: rgba(255, 255, 255, 0.12);
+    background: var(--color-muted-soft);
 }
 
 .lens-option--active .lens-count {
@@ -257,9 +257,9 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
     align-items: flex-start;
     padding: 0.85rem 1rem;
     border: 1px solid var(--color-border);
-    border-left: 3px solid var(--color-accent);
+    border-left: 1px solid var(--color-accent);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
 }
 
 .finding-row--dismissed {
@@ -290,24 +290,24 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
 
 .severity-critical,
 .severity-high {
-    background: rgba(239, 68, 68, 0.15);
+    background: var(--color-danger-soft);
     color: var(--color-danger);
 }
 
 .severity-medium {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 .severity-low,
 .severity-suggestion {
-    background: rgba(34, 211, 238, 0.12);
+    background: var(--color-accent-soft);
     color: var(--color-accent);
 }
 
 .severity-info,
 .severity-note {
-    background: rgba(161, 161, 170, 0.15);
+    background: var(--color-muted-soft);
     color: var(--color-text-muted);
 }
 
@@ -331,7 +331,7 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
 
 .lens-tag {
     color: var(--color-warning);
-    border-color: rgba(245, 158, 11, 0.4);
+    border-color: var(--color-warning);
 }
 
 .finding-message {
@@ -353,7 +353,7 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
     font-size: 0.78rem;
     font-weight: 600;
     color: var(--color-success);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border: 1px solid var(--color-success);
     border-radius: var(--radius-pill);
     padding: 0.25rem 0.6rem;
     white-space: nowrap;
@@ -383,8 +383,8 @@ async function dismiss(finding: PublishedFinding): Promise<void> {
 
 .dismiss-btn:hover:not(:disabled) {
     color: var(--color-warning);
-    background: rgba(245, 158, 11, 0.08);
-    border-color: rgba(245, 158, 11, 0.5);
+    background: var(--color-warning-soft);
+    border-color: var(--color-warning);
 }
 
 .dismiss-btn:disabled {

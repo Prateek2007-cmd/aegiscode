@@ -208,10 +208,9 @@ onMounted(() => {
 .depth-panel {
     margin-top: 1rem;
     padding: 1.25rem 1.5rem;
-    border: 1px solid rgba(34, 211, 238, 0.25);
+    border: 1px solid var(--color-border-hover);
     border-radius: var(--radius-lg);
-    background:
-        linear-gradient(180deg, rgba(10, 17, 40, 0.92), rgba(8, 13, 32, 0.96));
+    background: var(--color-surface);
 }
 
 .depth-head {
@@ -339,24 +338,24 @@ onMounted(() => {
     padding: 0.55rem 0.85rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
     overflow: hidden;
 }
 
 .funnel-stage--candidates {
-    border-color: rgba(34, 211, 238, 0.45);
+    border-color: var(--color-accent);
 }
 
 .funnel-stage--published {
-    border-color: rgba(34, 197, 94, 0.45);
+    border-color: var(--color-success);
 }
 
 .funnel-stage--withheld {
-    border-color: rgba(245, 158, 11, 0.5);
+    border-color: var(--color-warning);
 }
 
 .funnel-stage--summary {
-    border-color: rgba(161, 161, 170, 0.45);
+    border-color: var(--color-border-hover);
 }
 
 .funnel-value {

@@ -15,25 +15,21 @@
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* Flat by design: no blur, no translucency — a plain surface with a hairline. */
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 
 .glass-card {
-  background: rgba(26, 26, 26, 0.6);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  /* Flat by design: the old glass treatment is gone; same shape, solid fill. */
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--color-text) 0%, var(--color-text-muted) 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  /* Flat by design: gradients are out; this keeps the class name so existing
+   * usages render as plain ink instead of breaking. */
+  color: var(--color-text);
 }
 
 .animate-pulse-slow {
@@ -53,10 +49,9 @@
 }
 
 .hover-lift {
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
+  transition: border-color 0.2s ease;
 }
 
 .hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+  border-color: var(--color-border-hover);
 }

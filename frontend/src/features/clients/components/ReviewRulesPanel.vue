@@ -321,13 +321,13 @@ onMounted(load)
 }
 
 .rules-status-enabled {
-  background: var(--color-success-bg, #e6f4ea);
-  color: var(--color-success, #137333);
+  background: var(--color-success-bg, var(--color-success-soft));
+  color: var(--color-success, var(--color-success));
 }
 
 .rules-status-disabled {
-  background: var(--color-warning-bg, #fef7e0);
-  color: var(--color-warning, #9a6a00);
+  background: var(--color-warning-bg, var(--color-warning-soft));
+  color: var(--color-warning, var(--color-warning));
 }
 
 .rules-form {

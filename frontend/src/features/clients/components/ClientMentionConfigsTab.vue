@@ -576,8 +576,8 @@ async function confirmDelete() {
 }
 
 .action-btn.delete:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger-border);
   color: var(--color-danger);
 }
 

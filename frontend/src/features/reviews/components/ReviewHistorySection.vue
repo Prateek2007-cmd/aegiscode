@@ -454,7 +454,7 @@ function prReviewLink(group: PrGroup): object {
     flex-wrap: wrap;
     gap: 1rem;
     padding: 1rem 1.5rem;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
     border-bottom: 1px solid var(--color-border);
 }
 
@@ -509,8 +509,8 @@ function prReviewLink(group: PrGroup): object {
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--color-danger);
-    background: var(--color-danger-soft, rgba(239, 68, 68, 0.12));
-    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: var(--color-danger-soft, var(--color-danger-soft));
+    border: 1px solid var(--color-danger-border);
     padding: 0.1rem 0.45rem;
     border-radius: var(--radius-xs);
 }
@@ -530,13 +530,13 @@ function prReviewLink(group: PrGroup): object {
     font-size: 0.78rem;
     padding: 0.25rem 0.6rem;
     color: var(--color-accent);
-    border: 1px solid rgba(34, 211, 238, 0.25);
+    border: 1px solid var(--color-border-hover);
     white-space: nowrap;
 }
 
 .expand-btn:hover {
-    background: rgba(34, 211, 238, 0.08);
-    border-color: rgba(34, 211, 238, 0.5);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
 }
 
 .totals-label {
@@ -573,7 +573,7 @@ function prReviewLink(group: PrGroup): object {
 }
 
 .review-list-item:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
 }
 
 .review-list-item:last-child {
@@ -622,7 +622,7 @@ function prReviewLink(group: PrGroup): object {
     font-weight: 500;
     font-family: var(--font-mono, monospace);
     color: var(--color-text-muted);
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--surface-hover);
     border: 1px solid var(--color-border);
     white-space: nowrap;
     overflow: hidden;
@@ -641,13 +641,13 @@ function prReviewLink(group: PrGroup): object {
     font-size: 0.78rem;
     padding: 0.25rem 0.6rem;
     color: var(--color-warning);
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    border: 1px solid var(--color-warning);
     white-space: nowrap;
 }
 
 .restart-btn:hover:not(:disabled) {
-    background: rgba(245, 158, 11, 0.1);
-    border-color: rgba(245, 158, 11, 0.55);
+    background: var(--color-warning-soft);
+    border-color: var(--color-warning);
 }
 
 .restart-btn:disabled {
@@ -659,13 +659,13 @@ function prReviewLink(group: PrGroup): object {
     font-size: 0.78rem;
     padding: 0.25rem 0.6rem;
     color: var(--color-danger);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    border: 1px solid var(--color-danger-border);
     white-space: nowrap;
 }
 
 .stop-btn:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.55);
+    background: var(--color-danger-soft);
+    border-color: var(--color-danger);
 }
 
 .stop-btn:disabled {
@@ -681,13 +681,13 @@ function prReviewLink(group: PrGroup): object {
     font-size: 0.78rem;
     padding: 0.25rem 0.6rem;
     color: var(--color-accent);
-    border: 1px solid rgba(34, 211, 238, 0.3);
+    border: 1px solid var(--color-accent);
     white-space: nowrap;
 }
 
 .depth-btn:hover {
-    background: rgba(34, 211, 238, 0.1);
-    border-color: rgba(34, 211, 238, 0.55);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
 }
 
 .review-row-wrap {
@@ -713,12 +713,12 @@ function prReviewLink(group: PrGroup): object {
 }
 
 .status-completed {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--color-success-soft);
     color: var(--color-success);
 }
 
 .status-processing {
-    background: rgba(34, 211, 238, 0.15);
+    background: var(--color-accent-soft);
     color: var(--color-accent);
     animation: pulseBadge 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
@@ -729,69 +729,69 @@ function prReviewLink(group: PrGroup): object {
 }
 
 .status-pending {
-    background: rgba(161, 161, 170, 0.15);
+    background: var(--color-muted-soft);
     color: var(--color-text-muted);
 }
 
 .status-failed {
-    background: rgba(239, 68, 68, 0.15);
+    background: var(--color-danger-soft);
     color: var(--color-danger);
 }
 
 .status-superseded {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 .status-budget-held {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 .status-budget-exceeded {
-    background: rgba(249, 115, 22, 0.18);
+    background: var(--color-budget-exceeded-soft);
     color: var(--color-budget-exceeded);
 }
 
 .status-soft-capped {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 .status-admission-refused {
-    background: rgba(249, 115, 22, 0.18);
+    background: var(--color-budget-exceeded-soft);
     color: var(--color-budget-exceeded);
 }
 
 .status-admission-held {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 /* Row variants */
 .row-failed {
-    background: rgba(239, 68, 68, 0.05);
+    background: var(--color-danger-soft);
 }
 .row-failed:hover {
-    background: rgba(239, 68, 68, 0.08);
+    background: var(--color-danger-soft);
 }
 
 .row-processing {
-    background: rgba(34, 211, 238, 0.03);
+    background: var(--color-accent-soft);
 }
 .row-processing:hover {
-    background: rgba(34, 211, 238, 0.06);
+    background: var(--color-accent-soft);
 }
 
 .row-pending {
-    background: rgba(255, 255, 255, 0.01);
+    background: var(--surface-subtle);
 }
 
 .row-budget {
-    background: rgba(245, 158, 11, 0.04);
+    background: var(--color-warning-soft);
 }
 .row-budget:hover {
-    background: rgba(245, 158, 11, 0.07);
+    background: var(--color-warning-soft);
 }
 
 .date-cell {
@@ -832,8 +832,8 @@ function prReviewLink(group: PrGroup): object {
     gap: 0.4rem;
     padding: 0.2rem 0.6rem;
     border-radius: var(--radius-pill);
-    background: rgba(34, 211, 238, 0.1);
-    border: 1px solid rgba(34, 211, 238, 0.25);
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-border-hover);
     color: var(--color-accent);
     font-size: 0.75rem;
     font-weight: 500;
@@ -842,8 +842,8 @@ function prReviewLink(group: PrGroup): object {
 }
 
 .chip-processing:hover {
-    background: rgba(34, 211, 238, 0.15);
-    border-color: rgba(34, 211, 238, 0.4);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
     text-decoration: none;
 }
 
@@ -863,7 +863,7 @@ function prReviewLink(group: PrGroup): object {
 .markdown-content :last-child { margin-bottom: 0; }
 .markdown-content p { margin-bottom: 0.75rem; line-height: 1.6; }
 .markdown-content ul, .markdown-content ol { margin-bottom: 0.75rem; padding-left: 1.5rem; }
-.markdown-content code { background: rgba(255, 255, 255, 0.1); padding: 0.1rem 0.3rem; border-radius: var(--radius-xs); font-family: monospace; }
+.markdown-content code { background: var(--color-muted-soft); padding: 0.1rem 0.3rem; border-radius: var(--radius-xs); font-family: monospace; }
 .markdown-content pre { background: var(--color-bg); border: 1px solid var(--color-border); padding: 1rem; border-radius: var(--radius-md); overflow-x: auto; margin-bottom: 1rem; }
 .markdown-content h1, .markdown-content h2, .markdown-content h3 { margin: 1rem 0 0.5rem 0; font-weight: 600; }
 .markdown-content h2 { font-size: 1.1rem; border-bottom: 1px solid var(--color-border); padding-bottom: 0.25rem; }

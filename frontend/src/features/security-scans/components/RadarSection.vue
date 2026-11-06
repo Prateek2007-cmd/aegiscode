@@ -256,7 +256,7 @@ onMounted(load)
 
 <style scoped>
 .radar-section {
-  background: #0a1628;
+  background: var(--color-surface);
   border-radius: 12px;
   padding: 20px;
   display: flex;
@@ -277,7 +277,7 @@ onMounted(load)
 }
 
 .radar-section-subtitle {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
@@ -285,7 +285,7 @@ onMounted(load)
 .radar-section-note,
 .radar-section-loading,
 .radar-section-empty {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
@@ -296,11 +296,11 @@ onMounted(load)
 }
 
 .radar-pass-summary-clean {
-  border-color: rgba(74, 222, 128, 0.5);
+  border-color: var(--color-success);
 }
 
 .radar-pass-summary-alert {
-  border-color: rgba(248, 113, 113, 0.5);
+  border-color: var(--color-danger);
 }
 
 .radar-pass-summary-title {
@@ -311,7 +311,7 @@ onMounted(load)
 .radar-pass-summary-detail,
 .radar-pass-summary-errors {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--color-text);
 }
 
 .radar-alert-list {
@@ -327,8 +327,8 @@ onMounted(load)
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 8px;
   padding: 12px;
 }
@@ -355,21 +355,21 @@ onMounted(load)
 }
 
 .radar-alert-cve {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
 }
 
 .radar-alert-ecosystem {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
 .radar-alert-meta {
-  color: #9bb0cc;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
 .radar-alert-link {
-  color: #7dd3fc;
+  color: var(--color-text);
 }
 
 .radar-alert-status {
@@ -377,15 +377,15 @@ onMounted(load)
 }
 
 .radar-alert-status-new {
-  color: #fca5a5;
+  color: var(--color-danger);
 }
 
 .radar-alert-status-acknowledged {
-  color: #fcd34d;
+  color: var(--color-warning);
 }
 
 .radar-alert-status-resolved {
-  color: #4ade80;
+  color: var(--color-success);
 }
 
 .radar-settings {
@@ -393,7 +393,7 @@ onMounted(load)
   flex-wrap: wrap;
   align-items: center;
   gap: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--color-muted-soft);
   padding-top: 12px;
 }
 
@@ -402,6 +402,6 @@ onMounted(load)
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #cbd5e1;
+  color: var(--color-text);
 }
 </style>

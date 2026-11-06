@@ -630,7 +630,7 @@ const {
 .source-card {
   width: 100%;
   border: 1px solid var(--color-border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.015));
+  background: var(--surface-subtle);
   padding: 1rem;
   margin-top: 0.5rem;
 }
@@ -682,9 +682,9 @@ const {
 }
 
 .meta-item {
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-subtle);
   padding: 0.8rem 0.9rem;
 }
 
@@ -712,9 +712,9 @@ const {
 .usage-drilldown-panel {
   margin-top: 1rem;
   padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 0.9rem;
-  background: rgba(15, 23, 42, 0.2);
+  background: var(--surface-hover);
 }
 
 .usage-drilldown-header,
@@ -763,9 +763,9 @@ const {
 
 .usage-stat-card,
 .usage-panel {
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-subtle);
 }
 
 .usage-stat-card {
@@ -793,8 +793,8 @@ const {
   gap: 0.65rem;
   padding: 0.85rem 1rem;
   border-radius: 0.8rem;
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid var(--color-warning-soft);
+  background: var(--color-warning-soft);
 }
 
 .usage-callout p {
@@ -828,7 +828,7 @@ const {
   align-items: flex-start;
   padding: 0.8rem 0.9rem;
   border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-subtle);
 }
 
 .model-usage-side {
@@ -844,7 +844,7 @@ const {
 
 .branches-panel {
   margin-top: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--color-muted-soft);
   padding-top: 1rem;
 }
 
@@ -884,7 +884,7 @@ const {
 
 .branches-table td {
   padding: 0.85rem 0.75rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--color-muted-soft);
   vertical-align: middle;
 }
 
@@ -931,7 +931,7 @@ const {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border: 1px dashed var(--color-muted-soft);
   border-radius: 0.75rem;
   padding: 0.9rem 1rem;
   color: var(--color-text-muted);
@@ -993,7 +993,7 @@ const {
   padding: 0.85rem 1rem;
   border: 1px solid var(--color-border);
   border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-subtle);
   color: var(--color-text);
 }
 
@@ -1034,7 +1034,7 @@ const {
   padding: 0.75rem 1rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-hover);
 }
 
 @media (max-width: 900px) {
@@ -1074,7 +1074,7 @@ const {
   }
 
   .branches-table tr {
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--color-muted-soft);
     border-radius: 0.75rem;
     padding: 0.75rem;
     margin-bottom: 0.75rem;

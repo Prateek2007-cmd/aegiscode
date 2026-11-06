@@ -452,9 +452,9 @@ onMounted(() => {
 <style scoped>
 .fix-queue {
     padding: 1.25rem 1.5rem;
-    border: 1px solid rgba(245, 158, 11, 0.3);
+    border: 1px solid var(--color-warning);
     border-radius: var(--radius-lg);
-    background: linear-gradient(180deg, rgba(10, 17, 40, 0.92), rgba(8, 13, 32, 0.96));
+    background: var(--color-surface);
 }
 
 .fix-queue-head {
@@ -486,9 +486,9 @@ onMounted(() => {
 
 .unavailable {
     padding: 0.85rem 1rem;
-    border: 1px solid rgba(245, 158, 11, 0.45);
+    border: 1px solid var(--color-warning);
     border-radius: var(--radius-md);
-    background: rgba(245, 158, 11, 0.08);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
     font-size: 0.9rem;
 }
@@ -527,9 +527,9 @@ onMounted(() => {
 .proposal-card {
     padding: 1rem 1.1rem;
     border: 1px solid var(--color-border);
-    border-left: 3px solid var(--color-warning);
+    border-left: 1px solid var(--color-warning);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
 }
 
 .proposal-card--approved {
@@ -554,14 +554,14 @@ onMounted(() => {
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--color-accent);
-    border: 1px solid rgba(34, 211, 238, 0.4);
+    border: 1px solid var(--color-accent);
     border-radius: var(--radius-pill);
     padding: 0.1rem 0.5rem;
 }
 
 .proposal-source--scan {
     color: var(--color-warning);
-    border-color: rgba(245, 158, 11, 0.4);
+    border-color: var(--color-warning);
 }
 
 .proposal-title {
@@ -580,17 +580,17 @@ onMounted(() => {
 }
 
 .status-pendingapproval {
-    background: rgba(245, 158, 11, 0.15);
+    background: var(--color-warning-soft);
     color: var(--color-warning);
 }
 
 .status-approved {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--color-success-soft);
     color: var(--color-success);
 }
 
 .status-rejected {
-    background: rgba(161, 161, 170, 0.15);
+    background: var(--color-muted-soft);
     color: var(--color-text-muted);
 }
 
@@ -652,12 +652,12 @@ onMounted(() => {
     font-size: 0.8rem;
     padding: 0.3rem 0.7rem;
     color: var(--color-accent);
-    border: 1px solid rgba(34, 211, 238, 0.3);
+    border: 1px solid var(--color-accent);
 }
 
 .guidance-btn:hover {
-    background: rgba(34, 211, 238, 0.1);
-    border-color: rgba(34, 211, 238, 0.55);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
 }
 
 .decision-row {
@@ -682,24 +682,24 @@ onMounted(() => {
     font-size: 0.8rem;
     padding: 0.3rem 0.7rem;
     color: var(--color-success);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border: 1px solid var(--color-success);
 }
 
 .approve-btn:hover:not(:disabled) {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.65);
+    background: var(--color-success-soft);
+    border-color: var(--color-success);
 }
 
 .reject-btn {
     font-size: 0.8rem;
     padding: 0.3rem 0.7rem;
     color: var(--color-danger);
-    border: 1px solid rgba(239, 68, 68, 0.35);
+    border: 1px solid var(--color-danger);
 }
 
 .reject-btn:hover:not(:disabled) {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: rgba(239, 68, 68, 0.6);
+    background: var(--color-danger-soft);
+    border-color: var(--color-danger);
 }
 
 .approve-btn:disabled,
@@ -740,12 +740,12 @@ onMounted(() => {
     font-size: 0.82rem;
     padding: 0.35rem 0.8rem;
     color: var(--color-success);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border: 1px solid var(--color-success);
 }
 
 .draft-pr-btn:hover:not(:disabled) {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.65);
+    background: var(--color-success-soft);
+    border-color: var(--color-success);
 }
 
 .draft-pr-btn:disabled {
@@ -758,7 +758,7 @@ onMounted(() => {
     padding: 0.85rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
 }
 
 .draft-pr-form-note {
@@ -813,12 +813,12 @@ onMounted(() => {
     font-size: 0.82rem;
     padding: 0.35rem 0.8rem;
     color: var(--color-success);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border: 1px solid var(--color-success);
 }
 
 .draft-pr-submit:hover:not(:disabled) {
-    background: rgba(34, 197, 94, 0.1);
-    border-color: rgba(34, 197, 94, 0.65);
+    background: var(--color-success-soft);
+    border-color: var(--color-success);
 }
 
 .draft-pr-submit:disabled {

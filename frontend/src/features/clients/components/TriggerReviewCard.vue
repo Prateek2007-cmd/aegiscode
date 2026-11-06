@@ -192,11 +192,11 @@ async function handleSubmit(): Promise<void> {
 
 <style scoped>
 .trigger-review-card {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.25rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -209,7 +209,7 @@ async function handleSubmit(): Promise<void> {
 
 .trigger-review-subtitle {
   margin: 0;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
@@ -223,19 +223,19 @@ async function handleSubmit(): Promise<void> {
 }
 
 .trigger-review-host-label {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 .trigger-review-host-value {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  color: #7dd3fc;
+  font-family: var(--font-mono);
+  color: var(--color-text);
   font-size: 0.9rem;
   word-break: break-all;
 }
 
 .trigger-review-note {
   margin: 0;
-  color: #fbbf24;
+  color: var(--color-warning);
   font-size: 0.85rem;
 }
 
@@ -258,13 +258,13 @@ async function handleSubmit(): Promise<void> {
 }
 
 .trigger-review-field input {
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: var(--color-muted-soft);
+  border: 1px solid var(--color-border-hover);
   border-radius: 8px;
-  color: #e2e8f0;
+  color: var(--color-text);
   padding: 0.55rem 0.75rem;
   font-size: 0.95rem;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .trigger-review-field input:disabled {
@@ -272,7 +272,7 @@ async function handleSubmit(): Promise<void> {
 }
 
 .trigger-review-field input::placeholder {
-  color: #64748b;
+  color: var(--color-text-faint);
 }
 
 .error {
@@ -291,18 +291,18 @@ async function handleSubmit(): Promise<void> {
 }
 
 .trigger-review-result-success {
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.4);
+  background: var(--color-success-soft);
+  border: 1px solid var(--color-success);
 }
 
 .trigger-review-result-warning {
-  background: rgba(251, 191, 36, 0.1);
-  border: 1px solid rgba(251, 191, 36, 0.45);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
 }
 
 .trigger-review-result-error {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger);
 }
 
 .trigger-review-result-title {
@@ -313,12 +313,12 @@ async function handleSubmit(): Promise<void> {
 
 .trigger-review-result-detail {
   margin: 0;
-  color: #cbd5e1;
+  color: var(--color-text);
   font-size: 0.9rem;
 }
 
 .trigger-review-job-link {
-  color: #7dd3fc;
+  color: var(--color-text);
   font-weight: 600;
   font-size: 0.9rem;
   text-decoration: none;

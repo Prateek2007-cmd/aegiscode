@@ -83,7 +83,7 @@ const conversationThreads = computed<RetainedThread[]>(() => {
     padding: 1rem 1.1rem;
     border: 1px dashed var(--color-border);
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
     color: var(--color-text-muted);
     margin: 0;
 }

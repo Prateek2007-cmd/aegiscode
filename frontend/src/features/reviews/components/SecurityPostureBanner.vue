@@ -92,13 +92,12 @@
 
 <style scoped>
 .security-status-banner {
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(17, 24, 39, 0.95) 100%);
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-xl);
   padding: 1.25rem 1.5rem;
   margin-bottom: 2rem;
-  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.5), inset 0 1px 0 var(--surface-hover);
 }
 
 .status-main {
@@ -126,9 +125,9 @@
   align-items: center;
   justify-content: center;
   font-size: 1.5rem;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--color-accent);
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
 }
 
 .status-info {
@@ -148,7 +147,7 @@
   margin: 0;
   font-size: 1.05rem;
   font-weight: 700;
-  color: var(--color-text, #f1f5f9);
+  color: var(--color-text, var(--color-text));
   letter-spacing: -0.01em;
 }
 
@@ -163,23 +162,22 @@
 }
 
 .status-badge-partial {
-  background: rgba(245, 158, 11, 0.14);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  color: #fbbf24;
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning);
 }
 
 .status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background-color: #f59e0b;
-  box-shadow: 0 0 8px #f59e0b;
+  background-color: var(--color-warning);
 }
 
 .status-subtitle {
   margin: 0;
   font-size: 0.82rem;
-  color: var(--color-text-muted, #94a3b8);
+  color: var(--color-text-muted, var(--color-text-muted));
   max-width: 60ch;
   line-height: 1.4;
 }
@@ -196,20 +194,20 @@
   align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 10px;
   transition: all 0.2s ease;
 }
 
 .capability-card:hover {
-  background: rgba(56, 189, 248, 0.06);
-  border-color: rgba(56, 189, 248, 0.25);
+  background: var(--color-border);
+  border-color: var(--color-border-hover);
   transform: translateY(-1px);
 }
 
 .capability-live {
-  border-color: rgba(16, 185, 129, 0.35);
+  border-color: var(--color-success);
 }
 
 .capability-icon-box {
@@ -223,23 +221,23 @@
 }
 
 .capability-icon-review {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .capability-icon-secrets {
-  background: rgba(244, 63, 94, 0.15);
-  color: #fb7185;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .capability-icon-sbom {
-  background: rgba(168, 85, 247, 0.15);
-  color: #c084fc;
+  background: var(--color-suggestion-soft);
+  color: var(--color-suggestion);
 }
 
 .capability-icon-remediation {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38bdf8;
+  background: var(--color-border);
+  color: var(--color-accent);
 }
 
 .capability-content {
@@ -250,18 +248,18 @@
 .capability-metric {
   font-size: 0.84rem;
   font-weight: 700;
-  color: var(--color-text, #ffffff);
+  color: var(--color-text, var(--color-text));
   line-height: 1.2;
 }
 
 .capability-planned {
-  color: var(--color-text-muted, #94a3b8);
+  color: var(--color-text-muted, var(--color-text-muted));
   font-weight: 600;
 }
 
 .capability-label {
   font-size: 0.68rem;
-  color: var(--color-text-muted, #94a3b8);
+  color: var(--color-text-muted, var(--color-text-muted));
   font-weight: 500;
 }
 
@@ -271,7 +269,7 @@
   gap: 0.45rem;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #38bdf8;
+  color: var(--color-accent);
   text-decoration: none;
   white-space: nowrap;
 }

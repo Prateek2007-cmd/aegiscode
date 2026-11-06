@@ -828,9 +828,9 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
     margin-top: 0.75rem;
     padding: 0.65rem 0.9rem;
     border: 1px solid var(--color-border);
-    border-left: 3px solid var(--color-accent, #6366f1);
+    border-left: 1px solid var(--color-accent, var(--color-suggestion));
     border-radius: var(--radius-xs);
-    background: var(--color-surface-raised, rgba(99, 102, 241, 0.06));
+    background: var(--color-surface-raised, var(--color-suggestion-soft));
 }
 
 .pending-review__text {
@@ -862,7 +862,7 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
 }
 
 .pending-review__action:hover:not(:disabled) {
-    border-color: var(--color-accent, #6366f1);
+    border-color: var(--color-accent, var(--color-suggestion));
 }
 
 .pending-review__action:disabled {
@@ -885,8 +885,8 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--color-danger);
-    background: var(--color-danger-soft, rgba(239, 68, 68, 0.12));
-    border: 1px solid rgba(239, 68, 68, 0.4);
+    background: var(--color-danger-soft, var(--color-danger-soft));
+    border: 1px solid var(--color-danger-border);
     padding: 0.15rem 0.5rem;
     border-radius: var(--radius-xs);
 }
@@ -1056,8 +1056,8 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
 }
 
 .tab-active {
-    background: rgba(124, 124, 255, 0.12);
-    border-color: rgba(124, 124, 255, 0.45);
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
 }
 
 .pr-tabs {
@@ -1121,7 +1121,7 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
 }
 
 .source-resolved {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--color-success-soft);
     color: var(--color-success);
 }
 
@@ -1140,18 +1140,18 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
 }
 
 .outcome-fixed {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--color-success-soft);
     color: var(--color-success);
 }
 
 .outcome-dismissed {
-    background: rgba(139, 92, 246, 0.15);
-    color: #a78bfa;
+    background: var(--color-suggestion-soft);
+    color: var(--color-suggestion);
 }
 
 .outcome-unknown {
-    background: rgba(148, 163, 184, 0.15);
-    color: var(--color-text-muted, #94a3b8);
+    background: var(--color-muted-soft);
+    color: var(--color-text-muted, var(--color-text-muted));
 }
 
 .error {
@@ -1169,7 +1169,7 @@ async function restartThreadPass(threadPassId: string): Promise<void> {
     padding: 1rem 1.1rem;
     border: 1px dashed var(--color-border);
     border-radius: var(--radius-lg);
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
     color: var(--color-text-muted);
     margin: 0;
 }

@@ -256,7 +256,7 @@ function formatDate(iso: string): string {
 }
 
 .retained-comment-ai-chip {
-    background: rgba(34, 211, 238, 0.18);
+    background: var(--color-accent-soft);
     color: var(--color-accent);
     font-weight: 700;
 }
@@ -320,7 +320,7 @@ function formatDate(iso: string): string {
 }
 
 .markdown-content :deep(code) {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--color-muted-soft);
     padding: 0.1rem 0.3rem;
     border-radius: var(--radius-xs);
     font-family: monospace;

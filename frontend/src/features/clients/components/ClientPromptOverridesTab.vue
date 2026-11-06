@@ -241,6 +241,6 @@ watch(
 }
 
 .admin-table tr:hover td {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-subtle);
 }
 </style>

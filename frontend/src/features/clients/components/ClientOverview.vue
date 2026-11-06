@@ -163,8 +163,8 @@ onMounted(async () => {
   gap: 0.75rem;
   padding: 0.9rem 1rem;
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface-subtle);
+  border: 1px solid var(--color-muted-soft);
   transition: all 0.2s ease;
   text-decoration: none;
   color: inherit;
@@ -175,8 +175,8 @@ onMounted(async () => {
 }
 
 .overview-card--link:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--surface-hover);
+  border-color: var(--color-muted-soft);
   transform: translateY(-1px);
 }
 
@@ -189,8 +189,8 @@ onMounted(async () => {
   width: 34px;
   height: 34px;
   border-radius: var(--radius-md);
-  background: rgba(34, 211, 238, 0.1);
-  border: 1px solid rgba(34, 211, 238, 0.15);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -200,20 +200,20 @@ onMounted(async () => {
 }
 
 .overview-card-icon--ai {
-  background: rgba(168, 85, 247, 0.1);
-  border-color: rgba(168, 85, 247, 0.15);
+  background: var(--color-suggestion-soft);
+  border-color: var(--color-suggestion-soft);
   color: var(--color-suggestion);
 }
 
 .overview-card-icon--reviews {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.15);
+  background: var(--color-success-soft);
+  border-color: var(--color-success-soft);
   color: var(--color-success);
 }
 
 .overview-card-icon--tokens {
-  background: rgba(249, 115, 22, 0.1);
-  border-color: rgba(249, 115, 22, 0.15);
+  background: var(--color-budget-exceeded-soft);
+  border-color: var(--color-budget-exceeded-soft);
   color: var(--chart-2);
 }
 

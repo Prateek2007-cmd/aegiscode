@@ -152,7 +152,7 @@ const dots = computed<Dot[]>(() =>
       x: Math.min(632, Math.max(8, x)),
       y: Math.min(412, Math.max(8, y)),
       r: radiusFor(maxSeverity),
-      color: maxSeverity ? severityColor(maxSeverity) : '#64748b',
+      color: maxSeverity ? severityColor(maxSeverity) : 'var(--color-text-faint)',
       ariaLabel: maxSeverity
         ? `${m.displayName} ${m.version} — ${m.vulnCount} matched ${m.vulnCount === 1 ? 'vulnerability' : 'vulnerabilities'}, worst ${maxSeverity}${m.topRuleId ? `, ${m.topRuleId}` : ''}`
         : `${m.displayName} ${m.version} — no recorded findings`,
@@ -165,52 +165,52 @@ const hovered = ref<Dot | null>(null)
 
 <style scoped>
 .constellation {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.1rem 1.4rem;
   margin-bottom: 1rem;
-  color: #e2e8f0;
+  color: var(--color-text);
 }
 .constellation-head h4 { margin: 0 0 0.3rem; font-size: 1rem; }
-.constellation-sub { margin: 0; font-size: 0.8rem; color: #94a3b8; max-width: 75ch; }
-.constellation-empty { padding: 1.5rem 0 0.5rem; color: #94a3b8; font-size: 0.88rem; }
+.constellation-sub { margin: 0; font-size: 0.8rem; color: var(--color-text-muted); max-width: 75ch; }
+.constellation-empty { padding: 1.5rem 0 0.5rem; color: var(--color-text-muted); font-size: 0.88rem; }
 .constellation-empty p { margin: 0; }
 .constellation-body { position: relative; }
 .constellation-svg { width: 100%; height: auto; display: block; }
-.orbit-ring { fill: none; stroke: rgba(56, 189, 248, 0.12); stroke-width: 1; }
-.repo-core { fill: #f59e0b; stroke: #fbbf24; stroke-width: 2; }
+.orbit-ring { fill: none; stroke: var(--color-border); stroke-width: 1; }
+.repo-core { fill: var(--color-accent); stroke: var(--color-accent); stroke-width: 2; }
 .repo-label {
-  fill: #0a1628;
+  fill: var(--color-surface);
   font-size: 11px;
   font-weight: 700;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .constellation-svg circle[tabindex] { cursor: pointer; outline: none; }
 .constellation-svg circle[tabindex]:hover,
-.constellation-svg circle[tabindex]:focus { stroke: #f8fafc; stroke-width: 1.5; }
+.constellation-svg circle[tabindex]:focus { stroke: var(--color-text); stroke-width: 1.5; }
 .dot-neutral { opacity: 0.75; }
 .dot-tip {
   min-height: 3.4rem;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: var(--surface-hover);
+  border: 1px solid var(--color-muted-soft);
   border-radius: 10px;
   padding: 0.6rem 0.9rem;
   margin-top: 0.4rem;
 }
-.dot-tip-idle { color: #64748b; font-size: 0.8rem; }
+.dot-tip-idle { color: var(--color-text-faint); font-size: 0.8rem; }
 .dot-tip-name {
   margin: 0 0 0.25rem;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.85rem; font-weight: 700;
 }
-.dot-tip-name span { color: #94a3b8; font-weight: 400; }
-.dot-tip-vuln { margin: 0; font-size: 0.8rem; color: #cbd5e1; }
-.constellation-note { margin: 0.6rem 0 0; font-size: 0.76rem; color: #94a3b8; }
+.dot-tip-name span { color: var(--color-text-muted); font-weight: 400; }
+.dot-tip-vuln { margin: 0; font-size: 0.8rem; color: var(--color-text); }
+.constellation-note { margin: 0.6rem 0 0; font-size: 0.76rem; color: var(--color-text-muted); }
 .constellation-legend {
   list-style: none; margin: 0.7rem 0 0; padding: 0;
-  display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; font-size: 0.78rem; color: #cbd5e1;
+  display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; font-size: 0.78rem; color: var(--color-text);
 }
 .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.35rem; }
-.legend-neutral { background: #64748b; }
+.legend-neutral { background: var(--color-text-faint); }
 </style>

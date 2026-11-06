@@ -55,22 +55,22 @@ defineProps<{
 
 <style scoped>
 .dashboard-scans {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.1rem 1.4rem;
-  color: #e2e8f0;
+  color: var(--color-text);
 }
 
 .loading,
 .empty-state {
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-style: italic;
   margin: 0;
 }
 
 .error {
-  color: #f43f5e;
+  color: var(--color-danger);
   margin: 0;
 }
 
@@ -83,7 +83,7 @@ defineProps<{
 }
 
 .scan-row-wrap {
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid var(--color-muted-soft);
 }
 
 .scan-row-wrap:last-child {
@@ -96,20 +96,20 @@ defineProps<{
   flex-wrap: wrap;
   gap: 0.75rem 1rem;
   padding: 0.7rem 0.25rem;
-  color: #e2e8f0;
+  color: var(--color-text);
   text-decoration: none;
   transition: background 0.15s ease;
 }
 
 .scan-row:hover {
-  background: rgba(56, 189, 248, 0.06);
+  background: var(--color-border);
 }
 
 .scan-repo {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-weight: 600;
   font-size: 0.9rem;
-  color: #7dd3fc;
+  color: var(--color-text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -124,7 +124,7 @@ defineProps<{
 
 .scan-date {
   font-size: 0.82rem;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   white-space: nowrap;
 }
 
@@ -135,15 +135,15 @@ defineProps<{
 }
 
 .sev-chip {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   font-weight: 700;
 }
 
 .scan-progress {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.85rem;
   font-weight: 700;
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 </style>

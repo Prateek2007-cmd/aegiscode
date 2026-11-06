@@ -378,7 +378,7 @@ const {
 }
 
 .provider-connection-item.selected {
-  background: rgba(34, 211, 238, 0.04);
+  background: var(--color-accent-soft);
 }
 
 .provider-connection-main {

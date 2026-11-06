@@ -910,14 +910,12 @@ const storedSecretNote = (field: AiDeclaredFieldDto): string | null =>
 
 .ai-profile-card {
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .ai-profile-card:hover,
 .ai-profile-card:focus-visible {
-  border-color: var(--color-primary);
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
-  transform: translateY(-1px);
+  border-color: var(--color-accent);
 }
 
 .ai-profile-card-header,
@@ -1118,7 +1116,7 @@ textarea {
 .advanced-settings-details {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-subtle);
 }
 .advanced-settings-summary {
   display: flex;

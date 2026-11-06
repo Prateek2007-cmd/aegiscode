@@ -467,14 +467,14 @@ function formatTimestamp(value: string) {
   font-weight: 600;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--surface-hover);
   white-space: nowrap;
   letter-spacing: 0.04em;
 }
 
 .premium-table td {
   padding: 1.1rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--surface-subtle);
   font-size: 0.9rem;
   vertical-align: middle;
 }
@@ -485,14 +485,14 @@ function formatTimestamp(value: string) {
 }
 
 .hover-row:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--surface-subtle);
 }
 
 .row-failed {
-  background: rgba(239, 68, 68, 0.04);
+  background: var(--color-danger-soft);
 }
 .row-failed:hover {
-  background: rgba(239, 68, 68, 0.07);
+  background: var(--color-danger-soft);
 }
 
 .text-right { text-align: right; }
@@ -526,8 +526,8 @@ function formatTimestamp(value: string) {
   display: inline-block;
   margin-left: 0.4rem;
   font-size: 0.72rem;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--color-muted-soft);
+  border: 1px solid var(--color-muted-soft);
   padding: 0.1rem 0.4rem;
   border-radius: var(--radius-xs);
   color: var(--color-text-muted);
@@ -559,15 +559,15 @@ function formatTimestamp(value: string) {
 }
 
 .icon-btn:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
   color: var(--color-text);
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--color-muted-soft);
 }
 
 .icon-btn.delete:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--color-danger-soft);
   color: var(--color-danger);
-  border-color: rgba(239, 68, 68, 0.2);
+  border-color: var(--color-danger-border);
 }
 
 /* ── States ──────────────────────────────────────── */
@@ -612,7 +612,7 @@ function formatTimestamp(value: string) {
   padding: 1.5rem;
   border-radius: var(--radius-xl);
   border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-subtle);
 }
 
 .receipt-header {
@@ -638,7 +638,7 @@ function formatTimestamp(value: string) {
 .receipt-field code {
   padding: 0.75rem;
   border-radius: var(--radius-lg);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 0.85rem;
@@ -656,7 +656,7 @@ function formatTimestamp(value: string) {
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--surface-hover);
 }
 
 .settings-row:last-child { border-bottom: none; }
@@ -684,7 +684,7 @@ function formatTimestamp(value: string) {
   gap: 0.4rem;
   padding: 0.45rem 0.85rem;
   background: transparent;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  border: 1px solid var(--color-danger-border);
   color: var(--color-danger);
   border-radius: var(--radius-md);
   font-size: 0.85rem;
@@ -693,7 +693,7 @@ function formatTimestamp(value: string) {
 }
 
 .btn-danger-minimal:hover {
-  background: rgba(239, 68, 68, 0.06);
+  background: var(--color-danger-soft);
   border-color: var(--color-danger);
 }
 

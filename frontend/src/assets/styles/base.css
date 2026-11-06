@@ -1,4 +1,28 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Self-hosted type — Instrument Sans for UI text, Fraunces for display
+ * headings, JetBrains Mono for code and IDs. Variable fonts, one file each. */
+@font-face {
+  font-family: 'Instrument Sans';
+  src: url('../fonts/instrument-sans-variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  src: url('../fonts/fraunces-variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('../fonts/jetbrains-mono-variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* Base element defaults — reset, typography, native form controls, tables, icons.
  * Class-based primitives live in primitives.css. */
@@ -11,24 +35,53 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  font-size: 1rem;
-  line-height: 1.5;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.45;
   color: var(--color-text);
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Browser surfaces carry the design too: selection, scrollbars, focus. */
+::selection {
+  background: var(--color-accent);
+  color: var(--color-primary-text);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-hover);
+  border-radius: 5px;
+  border: 2px solid var(--color-bg);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Display headings wear Fraunces — the one job the second face has. */
+.font-display,
+.view-title,
+.detail-page-title h2,
+.client-detail-view h2,
+.login-brand h1 {
+  font-family: var(--font-display);
+}
+
 a {
-  color: var(--color-accent);
+  color: var(--color-text);
   text-decoration: none;
   transition: color 0.15s ease-in-out;
 }
 
 a:hover {
   text-decoration: underline;
-  color: var(--color-text);
 }
 
 /* Native form controls */
@@ -65,7 +118,7 @@ select {
   font-size: 1rem;
   background: var(--color-bg);
   color: var(--color-text);
-  transition: all 0.2s;
+  transition: border-color 0.2s, background-color 0.2s, color 0.2s;
   color-scheme: dark;
   font-family: inherit;
 }
@@ -104,7 +157,7 @@ select option {
 }
 
 select option:checked {
-  background: rgba(34, 211, 238, 0.15);
+  background: var(--color-accent-soft);
   color: var(--color-text);
 }
 
@@ -116,12 +169,19 @@ select:focus {
   box-shadow: 0 0 0 1px var(--color-accent);
 }
 
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 /* Specific date picker aesthetic overrides */
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
   padding: 0.25rem;
   cursor: pointer;
   border-radius: var(--radius-xs);
-  transition: background 0.2s;
+  transition: background-color 0.2s;
 }
 
 input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
@@ -144,14 +204,18 @@ td {
 
 th {
   font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 500;
   color: var(--color-text-muted);
 }
 
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 tr:hover td {
-  background: var(--color-border);
+  background: var(--surface-hover);
 }
 
 /* Uicons integration */
@@ -163,4 +227,13 @@ tr:hover td {
   line-height: 1;
   width: 1em;
   height: 1em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

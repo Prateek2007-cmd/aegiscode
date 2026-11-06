@@ -15,7 +15,7 @@
         <h4>Severity posture</h4>
         <div class="dial-row">
           <svg class="dial" viewBox="0 0 200 112" role="img" :aria-label="dialAriaLabel">
-            <path d="M 12 100 A 88 88 0 0 1 188 100" fill="none" stroke="rgba(148,163,184,0.18)" stroke-width="14" stroke-linecap="round" />
+            <path d="M 12 100 A 88 88 0 0 1 188 100" fill="none" stroke="var(--color-muted-soft)" stroke-width="14" stroke-linecap="round" />
             <path
               v-for="seg in dialSegments"
               :key="seg.severity"
@@ -55,10 +55,10 @@
         </div>
         <template v-else>
           <svg class="timeline" viewBox="0 0 600 140" role="img" :aria-label="timelineAriaLabel">
-            <line x1="30" y1="118" x2="590" y2="118" stroke="rgba(148,163,184,0.25)" stroke-width="1" />
-            <polyline :points="timelinePolyline" fill="none" stroke="#38bdf8" stroke-width="2" />
+            <line x1="30" y1="118" x2="590" y2="118" stroke="var(--color-muted-soft)" stroke-width="1" />
+            <polyline :points="timelinePolyline" fill="none" stroke="var(--color-accent)" stroke-width="2" />
             <g v-for="p in timelinePoints" :key="p.scanId">
-              <circle :cx="p.x" :cy="p.y" r="5" :fill="p.color" stroke="#0a1628" stroke-width="1.5">
+              <circle :cx="p.x" :cy="p.y" r="5" :fill="p.color" stroke="var(--color-surface)" stroke-width="1.5">
                 <title>{{ p.title }}</title>
               </circle>
               <text :x="p.x" :y="134" text-anchor="middle" class="timeline-label">{{ p.dateLabel }}</text>
@@ -194,7 +194,7 @@ const timelinePoints = computed<TimelinePoint[]>(() => {
       scanId: s.scanId,
       x,
       y,
-      color: worst ? severityColor(worst) : '#94a3b8',
+      color: worst ? severityColor(worst) : 'var(--color-text-muted)',
       title: `${new Date(s.queuedAt).toLocaleString()} — ${totals[i]} findings (${s.status})`,
       dateLabel: new Date(s.queuedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
     }
@@ -219,21 +219,21 @@ const heatMax = computed(() => Math.max(...heatEntries.value.map((e) => e.count)
 
 <style scoped>
 .posture-radar-banner {
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger);
   border-radius: 8px;
   padding: 10px 14px;
   margin-bottom: 1rem;
   font-size: 0.9rem;
-  color: #fecaca;
+  color: var(--color-danger);
 }
 .posture {
-  background: #0a1628;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   padding: 1.1rem 1.4rem;
   margin-bottom: 1rem;
-  color: #e2e8f0;
+  color: var(--color-text);
 }
 .posture-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 1.5rem; }
 @media (max-width: 900px) { .posture-grid { grid-template-columns: 1fr; } }
@@ -241,31 +241,31 @@ const heatMax = computed(() => Math.max(...heatEntries.value.map((e) => e.count)
 .dial-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .dial { width: 200px; height: 112px; flex-shrink: 0; }
 .dial-total {
-  fill: #fbbf24;
+  fill: var(--color-warning);
   font-size: 26px; font-weight: 700;
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
-.dial-total-label { fill: #94a3b8; font-size: 10px; }
+.dial-total-label { fill: var(--color-text-muted); font-size: 10px; }
 .dial-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.82rem; }
-.dial-legend strong { font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; }
+.dial-legend strong { font-family: var(--font-mono); }
 .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.35rem; }
-.stacked-bar { display: flex; height: 10px; border-radius: 9999px; overflow: hidden; background: rgba(148, 163, 184, 0.15); margin-top: 0.8rem; }
+.stacked-bar { display: flex; height: 10px; border-radius: 9999px; overflow: hidden; background: var(--color-muted-soft); margin-top: 0.8rem; }
 .stacked-seg { height: 100%; }
-.posture-empty { color: #94a3b8; font-size: 0.85rem; }
+.posture-empty { color: var(--color-text-muted); font-size: 0.85rem; }
 .posture-empty p { margin: 0; }
 .timeline { width: 100%; height: auto; display: block; }
-.timeline-label { fill: #94a3b8; font-size: 10px; }
-.timeline-note { margin: 0.4rem 0 0; font-size: 0.76rem; color: #94a3b8; }
+.timeline-label { fill: var(--color-text-muted); font-size: 10px; }
+.timeline-note { margin: 0.4rem 0 0; font-size: 0.76rem; color: var(--color-text-muted); }
 .heatmap-block { margin-top: 1.4rem; }
 .heatmap { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 .heat-row { display: grid; grid-template-columns: minmax(140px, 1.2fr) 2fr 2.2rem 5rem; gap: 0.7rem; align-items: center; font-size: 0.8rem; }
 .heat-file {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1;
+  font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text);
 }
-.heat-track { height: 8px; background: rgba(148, 163, 184, 0.15); border-radius: 9999px; overflow: hidden; }
+.heat-track { height: 8px; background: var(--color-muted-soft); border-radius: 9999px; overflow: hidden; }
 .heat-bar { display: block; height: 100%; border-radius: 9999px; }
-.heat-count { font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace; font-weight: 700; text-align: right; color: #fbbf24; }
+.heat-count { font-family: var(--font-mono); font-weight: 700; text-align: right; color: var(--color-warning); }
 .heat-sev { font-size: 0.74rem; font-weight: 700; }
-.heatmap-note { margin: 0.6rem 0 0; font-size: 0.76rem; color: #94a3b8; }
+.heatmap-note { margin: 0.6rem 0 0; font-size: 0.76rem; color: var(--color-text-muted); }
 </style>

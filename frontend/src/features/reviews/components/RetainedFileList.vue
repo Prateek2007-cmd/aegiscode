@@ -234,11 +234,11 @@ function iconForChangeType(changeType: string | null | undefined): string {
 }
 
 .retained-folder-header:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--color-muted-soft);
 }
 
 .retained-folder--active {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--surface-subtle);
 }
 
 .retained-folder-chevron {
@@ -280,11 +280,11 @@ function iconForChangeType(changeType: string | null | undefined): string {
 }
 
 .retained-file-item:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--surface-hover);
 }
 
 .retained-file-item--active {
-    background: rgba(34, 211, 238, 0.12);
+    background: var(--color-accent-soft);
 }
 
 .retained-file-icon {
@@ -316,7 +316,7 @@ function iconForChangeType(changeType: string | null | undefined): string {
 }
 
 .retained-file-comment-chip {
-    background: rgba(168, 85, 247, 0.18);
+    background: var(--color-suggestion-soft);
     color: var(--color-suggestion, var(--color-accent));
     font-weight: 700;
 }
