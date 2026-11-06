@@ -21,6 +21,7 @@ import LicenseActivationHistory from '@/features/licensing/components/LicenseAct
 import LicenseEntitlementsCard from '@/features/licensing/components/LicenseEntitlementsCard.vue'
 import LicenseLimitsCard from '@/features/licensing/components/LicenseLimitsCard.vue'
 import LicensingIdentityCard from '@/features/licensing/components/LicensingIdentityCard.vue'
+import LicensingStaticFallback from '@/features/licensing/components/LicensingStaticFallback.vue'
 import { useLicensing } from '@/composables/useLicensing'
 import { useSession } from '@/composables/useSession'
 
@@ -70,11 +71,18 @@ watch(summary, (loaded) => {
     <template v-else>
       <p v-if="errorMessage" class="error" data-testid="licensing-load-error">{{ errorMessage }}</p>
 
+      <!-- The live summary could not be read (endpoint 503/403 or read failure): the cards below
+           render from the summary and would show empty shells, so show the honest static free-tier
+           state instead. The activation card stays visible so a license can still be installed. -->
+      <LicensingStaticFallback v-if="summary === null" />
+
       <LicenseActivationCard />
-      <LicenseEntitlementsCard />
-      <LicenseLimitsCard />
-      <LicensingIdentityCard />
-      <LicenseActivationHistory />
+      <template v-if="summary !== null">
+        <LicenseEntitlementsCard />
+        <LicenseLimitsCard />
+        <LicensingIdentityCard />
+        <LicenseActivationHistory />
+      </template>
     </template>
   </div>
 </template>

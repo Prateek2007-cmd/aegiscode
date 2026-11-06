@@ -151,6 +151,14 @@ npm run type-check
 npm run build
 ```
 
+### Git hooks
+Enable the repo hooks once per clone (they are not active by default):
+```bash
+git config core.hooksPath .githooks
+# or: bash scripts/setup-hooks.sh
+```
+Pre-commit runs the format check, the backend build + tests, and the frontend type-check + tests on staged files. Pre-push runs the frontend build and a format check on the files the push changes. A failing check blocks the commit/push loudly — fix it, stage, and retry. Never bypass them with `--no-verify` to land red code.
+
 ## Architecture & Configuration
 
 AegisCode supports flexible configuration through both modern `AEGIS_*` variables and backwards-compatible `MEISTER_*` environment bindings:

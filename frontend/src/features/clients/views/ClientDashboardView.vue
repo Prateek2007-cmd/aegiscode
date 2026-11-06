@@ -109,6 +109,12 @@
         <TriggerReviewCard :client-id="clientId" />
       </section>
 
+      <!-- Pipeline simulation -->
+      <section class="dashboard-section" aria-label="Pipeline simulation">
+        <h3 class="dashboard-section-title">Pipeline simulation</h3>
+        <PipelineSimulation />
+      </section>
+
       <!-- Merge guard -->
       <section class="dashboard-section" aria-label="Merge guard">
         <h3 class="dashboard-section-title">Merge guard</h3>
@@ -207,6 +213,7 @@ import { useClientDashboardViewModel } from '@/features/clients/view-models/useC
 import ClientDashboardActivitySection from '@/features/clients/components/ClientDashboardActivitySection.vue'
 import ClientDashboardScansSection from '@/features/clients/components/ClientDashboardScansSection.vue'
 import MergeGuardCard from '@/features/clients/components/MergeGuardCard.vue'
+import PipelineSimulation from '@/features/clients/components/PipelineSimulation.vue'
 import PushScanCard from '@/features/clients/components/PushScanCard.vue'
 import ReviewerMemoryPanel from '@/features/clients/components/ReviewerMemoryPanel.vue'
 import ReviewRulesPanel from '@/features/clients/components/ReviewRulesPanel.vue'

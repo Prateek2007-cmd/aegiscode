@@ -1,0 +1,59 @@
+#!/bin/sh
+# Pre-push: frontend build + format check on the files this push changes.
+# Both must pass or the push is blocked. Never silently passes: a missing tool or a
+# failing check stops the push with a clear message.
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$HOME/.dotnet:$HOME/.dotnet/tools:$PATH"
+
+# --- 1. Frontend build (fast, ~10s) ---
+echo "pre-push: running frontend build…"
+if ! (cd frontend && npm run build); then
+  echo "pre-push: FRONTEND BUILD FAILED — fix the build errors above and push again." >&2
+  exit 1
+fi
+echo "pre-push: frontend build passed."
+
+# --- 2. Format check on files changed in this push ---
+# Same JetBrains formatter CI uses. Files are reformatted in place and the push is blocked
+# if anything changed, so the fix gets committed before it lands.
+if ! git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+  echo "pre-push: no upstream branch configured — skipping format check (set an upstream to enable it)." >&2
+  exit 0
+fi
+
+BASE="$(git merge-base HEAD '@{upstream}')"
+CHANGED="$(git diff --name-only --diff-filter=ACMR "$BASE" HEAD -- 'src/*' 'tests/*' 'Directory.Build.props' | grep -E '\.(cs|props|targets|resx|xaml|xml|config)$|Directory\.Build\.props' | grep -v '/Migrations/' || true)"
+
+if [ -z "$CHANGED" ]; then
+  echo "pre-push: no formatted source files changed — skipping format check."
+  exit 0
+fi
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "pre-push: WARNING — working tree is dirty, so the format check is skipped rather than rewriting files under uncommitted changes. Commit or stash first to enable it." >&2
+  exit 0
+fi
+
+if ! command -v jb >/dev/null 2>&1; then
+  echo "pre-push: FORMAT CHECK FAILED — JetBrains cleanupcode (jb) 2026.2 is required but not on PATH (expected at ~/.dotnet/tools/jb). Install it and push again." >&2
+  exit 1
+fi
+
+echo "pre-push: format-checking changed source files…"
+# shellcheck disable=SC2086
+if ! jb cleanupcode --profile='Built-in: Reformat Code' --disable-settings-layers='GlobalAll;GlobalPerProduct;SolutionPersonal;ProjectPersonal' --no-updates $CHANGED; then
+  echo "pre-push: FORMAT CHECK FAILED — cleanupcode errored. Fix the output above and push again." >&2
+  exit 1
+fi
+
+if ! git diff --quiet -- $CHANGED; then
+  echo "pre-push: FORMAT CHECK FAILED — the formatter changed files. Commit the formatted files and push again." >&2
+  exit 1
+fi
+
+echo "pre-push: format check passed."
