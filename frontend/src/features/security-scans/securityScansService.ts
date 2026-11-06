@@ -10,6 +10,7 @@
 import { authedFetch } from '@/services/api'
 import { getActiveRuntime } from '@/app/runtime/runtimeContext'
 import type {
+  BlastRadiusResponse,
   CycloneDxBom,
   PagedSecurityFindings,
   SecurityFindingSeverity,
@@ -115,6 +116,22 @@ export async function acknowledgeFinding(
     method: 'POST',
   })
   if (!res.ok) await throwForStatus(res, 'Acknowledge finding')
+}
+
+/**
+ * Fetches the blast-radius map for one finding: everything that calls into or
+ * imports the vulnerable code. The backend clones the repository afresh, so
+ * this can take a while on large repos. A 200 with status "Unavailable" means
+ * the map could not be computed (reason included) — never an invented map.
+ */
+export async function getBlastRadius(
+  clientId: string,
+  scanId: string,
+  findingId: string,
+): Promise<BlastRadiusResponse> {
+  const res = await authedFetch(`${baseUrl(clientId)}/${scanId}/findings/${findingId}/blast-radius`)
+  if (!res.ok) await throwForStatus(res, 'Get blast radius')
+  return (await res.json()) as BlastRadiusResponse
 }
 
 /**

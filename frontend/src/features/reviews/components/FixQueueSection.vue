@@ -7,8 +7,11 @@
   Lists the proposals for one client (GET /clients/{clientId}/fix-proposals) with Approve / Reject
   controls and an optional reason, which is recorded with the decision for audit. An approved proposal
   shows its full fix guidance (remediation text, confidence, file/line) with "Copy fix guidance" and
-  "Download .md" actions, and says honestly: "Approved — fix guidance ready to apply. Draft-PR
-  creation is not wired yet." No proposal ever claims a pull request was created.
+  "Download .md" actions, plus "Create draft PR": when the proposal stored the exact replacement
+  (repository, line range, original and replacement code) one click opens a real draft pull request
+  on GitHub; otherwise an inline form collects the missing patch details first. The created PR's URL
+  is shown on the proposal afterwards, and a failed attempt shows GitHub's own error — no proposal
+  ever claims a pull request was created when it was not.
 
   When the fix-proposals API is not deployed yet the server answers 404 and this section says so
   plainly instead of showing an empty queue. When no client is selected, an administrator picks one
@@ -20,7 +23,7 @@
         <div class="fix-queue-head">
             <h3 class="fix-queue-title">Fix Queue</h3>
             <p class="fix-queue-sub">
-                Drafted fixes waiting for a human decision. Approval releases the fix guidance — it does not create a pull request.
+                Drafted fixes waiting for a human decision. Approval releases the fix guidance — and an approved proposal can open a draft pull request on GitHub.
             </p>
         </div>
 
@@ -83,7 +86,7 @@
 
                     <div v-if="proposal.status === 'Approved'" class="approved-guidance">
                         <p class="approved-note">
-                            Approved — fix guidance ready to apply. Draft-PR creation is not wired yet.
+                            Approved — fix guidance ready to apply.
                         </p>
                         <p v-if="proposal.remediation" class="guidance-text">{{ proposal.remediation }}</p>
                         <p v-else class="guidance-text guidance-text--empty">No remediation text was recorded for this proposal.</p>
@@ -94,6 +97,85 @@
                             <button type="button" class="btn-ghost guidance-btn" @click="downloadFixGuidance(proposal)">
                                 Download .md
                             </button>
+                        </div>
+
+                        <div class="draft-pr">
+                            <p v-if="proposal.draftPrUrl" class="draft-pr-link" role="status">
+                                Draft PR:
+                                <a :href="proposal.draftPrUrl" target="_blank" rel="noopener">{{ proposal.draftPrUrl }}</a>
+                                <span v-if="proposal.draftPrBranch" class="mono">({{ proposal.draftPrBranch }})</span>
+                            </p>
+                            <p v-if="proposal.draftPrUrl && draftPrNotes.get(proposal.id)" class="draft-pr-note">
+                                {{ draftPrNotes.get(proposal.id) }}
+                            </p>
+                            <template v-else>
+                                <button
+                                    type="button"
+                                    class="btn-ghost draft-pr-btn"
+                                    :disabled="creatingDraftPrIds.has(proposal.id)"
+                                    @click="startDraftPr(proposal)"
+                                >
+                                    {{ creatingDraftPrIds.has(proposal.id) ? 'Creating draft PR…' : 'Create draft PR' }}
+                                </button>
+                                <form
+                                    v-if="draftPrForms[proposal.id]"
+                                    class="draft-pr-form"
+                                    @submit.prevent="submitDraftPr(proposal)"
+                                >
+                                    <p class="draft-pr-form-note">
+                                        This proposal did not store the full patch, so fill in what is missing. The replacement is
+                                        verified against the file at the base before anything is created.
+                                    </p>
+                                    <div class="draft-pr-fields">
+                                        <label class="draft-pr-field">
+                                            Repository owner
+                                            <input v-model="draftPrForms[proposal.id]!.repositoryOwner" type="text" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field">
+                                            Repository name
+                                            <input v-model="draftPrForms[proposal.id]!.repositoryName" type="text" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field">
+                                            Base branch <span class="field-hint">(blank = default branch)</span>
+                                            <input v-model="draftPrForms[proposal.id]!.baseRef" type="text" :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field">
+                                            Base commit SHA <span class="field-hint">(optional, pins the branch point)</span>
+                                            <input v-model="draftPrForms[proposal.id]!.baseSha" type="text" :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field draft-pr-field--wide">
+                                            File path
+                                            <input v-model="draftPrForms[proposal.id]!.filePath" type="text" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field">
+                                            Start line
+                                            <input v-model="draftPrForms[proposal.id]!.startLine" type="number" min="1" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field">
+                                            End line
+                                            <input v-model="draftPrForms[proposal.id]!.endLine" type="number" min="1" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field draft-pr-field--wide">
+                                            Original lines (exact text at the base)
+                                            <textarea v-model="draftPrForms[proposal.id]!.originalCode" rows="3" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                        <label class="draft-pr-field draft-pr-field--wide">
+                                            Replacement code
+                                            <textarea v-model="draftPrForms[proposal.id]!.suggestedCode" rows="3" required :disabled="creatingDraftPrIds.has(proposal.id)" />
+                                        </label>
+                                    </div>
+                                    <button
+                                        type="submit"
+                                        class="btn-ghost draft-pr-submit"
+                                        :disabled="creatingDraftPrIds.has(proposal.id)"
+                                    >
+                                        {{ creatingDraftPrIds.has(proposal.id) ? 'Creating draft PR…' : 'Open draft PR' }}
+                                    </button>
+                                </form>
+                                <p v-if="draftPrErrors.get(proposal.id)" class="error draft-pr-error" role="alert">
+                                    {{ draftPrErrors.get(proposal.id) }}
+                                </p>
+                            </template>
                         </div>
                     </div>
 
@@ -136,11 +218,13 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import {
     approveFixProposal,
+    createDraftPullRequest,
     downloadFixGuidance,
     fixGuidanceMarkdown,
     isFixProposalsUnavailable,
     listFixProposals,
     rejectFixProposal,
+    type CreateDraftPullRequestRequest,
     type FixProposal,
     type FixProposalStatus,
 } from '@/services/fixProposalsService'
@@ -168,6 +252,109 @@ const reasons = ref<Record<string, string>>({})
 const decidingIds = ref(new Set<string>())
 const decisionErrors = ref(new Map<string, string>())
 const copiedId = ref<string | null>(null)
+
+// Draft-PR state, keyed by proposal id. A form only opens for proposals that did not store the
+// full patch; proposals with complete patch data create the PR in one click instead.
+interface DraftPrFormValues {
+    repositoryOwner: string
+    repositoryName: string
+    baseRef: string
+    baseSha: string
+    filePath: string
+    startLine: string
+    endLine: string
+    originalCode: string
+    suggestedCode: string
+}
+
+const draftPrForms = ref<Record<string, DraftPrFormValues>>({})
+const creatingDraftPrIds = ref(new Set<string>())
+const draftPrErrors = ref(new Map<string, string>())
+const draftPrNotes = ref(new Map<string, string>())
+
+/** Whether the proposal stored everything the draft-PR call needs — the one-click case. */
+function hasPatchData(proposal: FixProposal): boolean {
+    return Boolean(
+        proposal.repositoryOwner?.trim()
+        && proposal.repositoryName?.trim()
+        && proposal.filePath?.trim()
+        && proposal.startLine != null
+        && proposal.originalCode?.trim()
+        && proposal.suggestedCode?.trim(),
+    )
+}
+
+function draftPrFormDefaults(proposal: FixProposal): DraftPrFormValues {
+    return {
+        repositoryOwner: proposal.repositoryOwner ?? '',
+        repositoryName: proposal.repositoryName ?? '',
+        baseRef: proposal.baseRef ?? '',
+        baseSha: '',
+        filePath: proposal.filePath ?? '',
+        startLine: proposal.startLine != null ? String(proposal.startLine) : (proposal.line != null ? String(proposal.line) : ''),
+        endLine: proposal.endLine != null ? String(proposal.endLine) : (proposal.line != null ? String(proposal.line) : ''),
+        originalCode: proposal.originalCode ?? '',
+        suggestedCode: proposal.suggestedCode ?? '',
+    }
+}
+
+/** Starts draft-PR creation: one click when the patch is stored, otherwise opens the patch form. */
+async function startDraftPr(proposal: FixProposal): Promise<void> {
+    if (!hasPatchData(proposal)) {
+        draftPrForms.value = { ...draftPrForms.value, [proposal.id]: draftPrFormDefaults(proposal) }
+        return
+    }
+
+    await createDraftPr(proposal, {})
+}
+
+async function submitDraftPr(proposal: FixProposal): Promise<void> {
+    const form = draftPrForms.value[proposal.id]
+    if (!form) return
+    const toLine = (value: string): number | null => {
+        const parsed = Number.parseInt(value, 10)
+        return Number.isNaN(parsed) ? null : parsed
+    }
+    const request: CreateDraftPullRequestRequest = {
+        repositoryOwner: form.repositoryOwner.trim() || null,
+        repositoryName: form.repositoryName.trim() || null,
+        baseRef: form.baseRef.trim() || null,
+        baseSha: form.baseSha.trim() || null,
+        filePath: form.filePath.trim() || null,
+        startLine: toLine(form.startLine),
+        endLine: toLine(form.endLine),
+        originalCode: form.originalCode || null,
+        suggestedCode: form.suggestedCode || null,
+    }
+    await createDraftPr(proposal, request)
+    const nextForms = { ...draftPrForms.value }
+    delete nextForms[proposal.id]
+    draftPrForms.value = nextForms
+}
+
+async function createDraftPr(proposal: FixProposal, request: CreateDraftPullRequestRequest): Promise<void> {
+    const clientId = effectiveClientId.value
+    if (!clientId) return
+    creatingDraftPrIds.value = new Set([...creatingDraftPrIds.value, proposal.id])
+    const nextErrors = new Map(draftPrErrors.value)
+    nextErrors.delete(proposal.id)
+    draftPrErrors.value = nextErrors
+    try {
+        const result = await createDraftPullRequest(clientId, proposal.id, request)
+        proposals.value = proposals.value.map((item) => (item.id === proposal.id ? result.proposal : item))
+        const notes = new Map(draftPrNotes.value)
+        notes.set(proposal.id, result.note ?? `Draft PR created on branch ${result.branch}.`)
+        draftPrNotes.value = notes
+    } catch (err) {
+        const errors = new Map(draftPrErrors.value)
+        errors.set(proposal.id, err instanceof Error ? err.message : 'Failed to create the draft pull request.')
+        draftPrErrors.value = errors
+    } finally {
+        const next = new Set(creatingDraftPrIds.value)
+        next.delete(proposal.id)
+        creatingDraftPrIds.value = next
+    }
+}
 
 function statusLabel(status: FixProposalStatus): string {
     switch (status) {
@@ -522,6 +709,124 @@ onMounted(() => {
 }
 
 .decision-error {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+}
+
+.draft-pr {
+    margin-top: 0.85rem;
+    padding-top: 0.85rem;
+    border-top: 1px dashed var(--color-border);
+}
+
+.draft-pr-link {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+}
+
+.draft-pr-link a {
+    color: var(--color-accent);
+}
+
+.draft-pr-note {
+    margin: 0.4rem 0 0;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.draft-pr-btn {
+    font-size: 0.82rem;
+    padding: 0.35rem 0.8rem;
+    color: var(--color-success);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.draft-pr-btn:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.65);
+}
+
+.draft-pr-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.draft-pr-form {
+    margin-top: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.draft-pr-form-note {
+    margin: 0 0 0.75rem;
+    font-size: 0.83rem;
+    color: var(--color-text-muted);
+}
+
+.draft-pr-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+}
+
+.draft-pr-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.draft-pr-field--wide {
+    grid-column: 1 / -1;
+}
+
+.draft-pr-field input,
+.draft-pr-field textarea {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 0.85rem;
+    font-weight: 400;
+    font-family: inherit;
+}
+
+.draft-pr-field textarea {
+    font-family: var(--font-mono, monospace);
+    resize: vertical;
+}
+
+.field-hint {
+    font-weight: 400;
+    font-style: italic;
+}
+
+.draft-pr-submit {
+    margin-top: 0.75rem;
+    font-size: 0.82rem;
+    padding: 0.35rem 0.8rem;
+    color: var(--color-success);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.draft-pr-submit:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.65);
+}
+
+.draft-pr-submit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.draft-pr-error {
     margin: 0.5rem 0 0;
     font-size: 0.85rem;
 }

@@ -250,4 +250,58 @@ public sealed class FixProposalTests : IDisposable
         var items = await this.CreateService().ListAsync(clientId, CancellationToken.None);
         Assert.Empty(items);
     }
+
+    [Fact]
+    public async Task Create_WithPatchFields_StoresThemForDraftPrCreation()
+    {
+        var service = this.CreateService();
+        var clientId = Guid.NewGuid();
+
+        var created = await service.CreateAsync(
+            clientId,
+            new CreateFixProposalRequest(
+                "finding-1", "review", "Fix the off-by-one",
+                FilePath: "src/Foo.cs", Line: 7,
+                Remediation: "Change x to 2.",
+                Confidence: "high",
+                RepositoryOwner: "octo",
+                RepositoryName: "demo",
+                BaseRef: "main",
+                StartLine: 7,
+                EndLine: 7,
+                OriginalCode: "        var x = 1;",
+                SuggestedCode: "        var x = 2;"),
+            CancellationToken.None);
+
+        Assert.Equal("octo", created.RepositoryOwner);
+        Assert.Equal("demo", created.RepositoryName);
+        Assert.Equal("main", created.BaseRef);
+        Assert.Equal(7, created.StartLine);
+        Assert.Equal(7, created.EndLine);
+        Assert.Equal("        var x = 1;", created.OriginalCode);
+        Assert.Equal("        var x = 2;", created.SuggestedCode);
+        Assert.Null(created.DraftPrUrl);
+        Assert.Null(created.DraftPrBranch);
+
+        // The patch fields survive an API restart (a fresh store over the same files).
+        var items = await this.CreateService().ListAsync(clientId, CancellationToken.None);
+        var reloaded = Assert.Single(items);
+        Assert.Equal("octo", reloaded.RepositoryOwner);
+        Assert.Equal("        var x = 2;", reloaded.SuggestedCode);
+    }
+
+    [Fact]
+    public async Task Create_InvertedPatchRange_ThrowsArgumentException()
+    {
+        var service = this.CreateService();
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.CreateAsync(
+            Guid.NewGuid(),
+            new CreateFixProposalRequest(
+                "finding-1", "review", "Fix it",
+                FilePath: "src/Foo.cs", Line: 7,
+                StartLine: 8, EndLine: 7),
+            CancellationToken.None));
+        Assert.Contains("startLine", ex.Message, StringComparison.Ordinal);
+    }
 }

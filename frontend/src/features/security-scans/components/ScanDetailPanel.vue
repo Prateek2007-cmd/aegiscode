@@ -122,6 +122,8 @@
             <div v-if="f.scoreGaps.length"><dt>Score gaps</dt><dd class="gaps">{{ f.scoreGaps.join('; ') }}</dd></div>
             <div><dt>First seen</dt><dd>{{ formatTime(f.firstSeenAt) }}</dd></div>
           </dl>
+          <!-- Blast radius: loads on expand; the analysis clones the repo afresh, so it can take a while. -->
+          <BlastRadiusSection :client-id="clientId" :scan-id="scan.scanId" :finding-id="f.id" />
           <div class="finding-actions" v-if="canManage && (f.status === 'Open' || f.status === 'Acknowledged')">
             <button class="btn-ghost btn-sm" @click="acknowledge(f)" :disabled="actingId === f.id">Acknowledge</button>
             <button class="btn-ghost btn-sm" @click="suppressPrompt(f)" :disabled="actingId === f.id">Suppress…</button>
@@ -172,6 +174,7 @@ import MissionControl from './MissionControl.vue'
 import ScaleStrip from './ScaleStrip.vue'
 import PostureView from './PostureView.vue'
 import SbomConstellation from './SbomConstellation.vue'
+import BlastRadiusSection from './BlastRadiusSection.vue'
 
 const props = withDefaults(
   defineProps<{ clientId: string; scan: SecurityScan; canManage: boolean; scans?: SecurityScan[] }>(),

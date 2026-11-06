@@ -6,8 +6,11 @@
  *
  * A fix proposal is a human-gated draft: a finding (from a review or a security scan) is turned into
  * fix guidance that stays PendingApproval until an administrator approves or rejects it. Approval does
- * NOT create a pull request — draft-PR creation is not wired yet, and the UI says so wherever an
- * approved proposal is shown.
+ * NOT create a pull request by itself — the separate create-draft-pr endpoint is the step that opens
+ * a real draft PR on GitHub for an approved proposal, after verifying the replacement against the
+ * file at the base. When a finding carried an exact suggested replacement, the proposal stores it
+ * (repository, line range, original and replacement code) so the draft PR can open in one click;
+ * otherwise the caller supplies the patch with the create-draft-pr call.
  *
  * The endpoints live outside the generated OpenAPI schema, so this module calls them with authedFetch
  * the same way jobsService does. When the backend does not have the endpoints yet the server answers
@@ -30,6 +33,13 @@ export interface CreateFixProposalRequest {
     line?: number | null
     remediation?: string | null
     confidence?: string | null
+    repositoryOwner?: string | null
+    repositoryName?: string | null
+    baseRef?: string | null
+    startLine?: number | null
+    endLine?: number | null
+    originalCode?: string | null
+    suggestedCode?: string | null
 }
 
 export interface FixProposal {
@@ -45,6 +55,44 @@ export interface FixProposal {
     createdAt: string
     decidedAt?: string | null
     decisionReason?: string | null
+    repositoryOwner?: string | null
+    repositoryName?: string | null
+    baseRef?: string | null
+    startLine?: number | null
+    endLine?: number | null
+    originalCode?: string | null
+    suggestedCode?: string | null
+    draftPrUrl?: string | null
+    draftPrBranch?: string | null
+    draftPrBaseBranch?: string | null
+    draftPrCreatedAt?: string | null
+}
+
+/**
+ * Overrides for a create-draft-pr call. Every field is optional: a value left out falls back to
+ * what the proposal stored at creation. At least the repository, the file, the line range, the
+ * original text, and the replacement must resolve from the two combined.
+ */
+export interface CreateDraftPullRequestRequest {
+    repositoryOwner?: string | null
+    repositoryName?: string | null
+    providerScopePath?: string | null
+    baseRef?: string | null
+    baseSha?: string | null
+    filePath?: string | null
+    startLine?: number | null
+    endLine?: number | null
+    originalCode?: string | null
+    suggestedCode?: string | null
+}
+
+export interface DraftPullRequestResult {
+    proposal: FixProposal
+    pullRequestUrl: string
+    branch: string
+    baseBranch: string
+    usedDefaultBranch: boolean
+    note: string | null
 }
 
 export interface FixProposalListResponse {
@@ -93,6 +141,13 @@ export function buildFixProposalRequest(input: {
     line?: number | null
     remediation?: string | null
     confidence?: string | null
+    repositoryOwner?: string | null
+    repositoryName?: string | null
+    baseRef?: string | null
+    startLine?: number | null
+    endLine?: number | null
+    originalCode?: string | null
+    suggestedCode?: string | null
 }): CreateFixProposalRequest {
     return {
         findingRef: input.findingRef,
@@ -102,6 +157,13 @@ export function buildFixProposalRequest(input: {
         line: input.line ?? null,
         remediation: input.remediation ?? null,
         confidence: input.confidence ?? null,
+        repositoryOwner: input.repositoryOwner ?? null,
+        repositoryName: input.repositoryName ?? null,
+        baseRef: input.baseRef ?? null,
+        startLine: input.startLine ?? null,
+        endLine: input.endLine ?? null,
+        originalCode: input.originalCode ?? null,
+        suggestedCode: input.suggestedCode ?? null,
     }
 }
 
@@ -181,6 +243,27 @@ async function decideFixProposal(
     }
 }
 
+/** Opens a draft pull request on GitHub for an approved proposal. Returns the PR URL, branch, and base. */
+export async function createDraftPullRequest(
+    clientId: string,
+    proposalId: string,
+    request: CreateDraftPullRequestRequest = {},
+): Promise<DraftPullRequestResult> {
+    try {
+        const res = await authedFetch(proposalsUrl(clientId, `/${encodeURIComponent(proposalId)}/create-draft-pr`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+        })
+        if (res.status === 404) throw new FixProposalsUnavailableError()
+        if (!res.ok) throw new Error(await readErrorMessage(res, 'Failed to create the draft pull request.'))
+        return (await res.json()) as DraftPullRequestResult
+    } catch (error) {
+        if (isFixProposalsUnavailable(error)) throw error
+        throw new Error(sanitizeErrorMessage(error, 'Failed to create the draft pull request.'))
+    }
+}
+
 /** Renders an approved proposal as a Markdown file the reviewer can apply by hand. */
 export function fixGuidanceMarkdown(proposal: FixProposal): string {
     const lines = [
@@ -196,7 +279,7 @@ export function fixGuidanceMarkdown(proposal: FixProposal): string {
         '',
         proposal.remediation?.trim() ? proposal.remediation.trim() : 'No remediation text was recorded for this proposal.',
         '',
-        '_Approved — fix guidance ready to apply. Draft-PR creation is not wired yet._',
+        '_Approved — fix guidance ready to apply. Use “Create draft PR” in the Fix Queue to open a draft pull request on GitHub._',
         '',
     ]
     return lines.filter((line) => line !== null).join('\n')

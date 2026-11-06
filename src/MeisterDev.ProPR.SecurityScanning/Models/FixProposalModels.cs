@@ -38,7 +38,12 @@ public static class FixProposalSources
 
 /// <summary>
 ///     One fix proposal as persisted in the per-client JSON store. Kept separate from the
-///     response DTO so storage can evolve without changing the API contract.
+///     response DTO so storage can evolve without changing the API contract. The patch
+///     fields (<see cref="RepositoryOwner" />…<see cref="SuggestedCode" />) are optional
+///     and only populated when the finding carried an exact suggested replacement; the
+///     draft-PR fields are filled in by the create-draft-pr flow once GitHub returns a
+///     pull request. All of them default to <c>null</c>, so proposals written before
+///     this feature still deserialize.
 /// </summary>
 public sealed record FixProposalRecord(
     Guid Id,
@@ -53,4 +58,15 @@ public sealed record FixProposalRecord(
     FixProposalStatus Status,
     DateTimeOffset CreatedAt,
     DateTimeOffset? DecidedAt,
-    string? DecisionReason);
+    string? DecisionReason,
+    string? RepositoryOwner = null,
+    string? RepositoryName = null,
+    string? BaseRef = null,
+    int? StartLine = null,
+    int? EndLine = null,
+    string? OriginalCode = null,
+    string? SuggestedCode = null,
+    string? DraftPrUrl = null,
+    string? DraftPrBranch = null,
+    string? DraftPrBaseBranch = null,
+    DateTimeOffset? DraftPrCreatedAt = null);

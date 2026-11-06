@@ -28,7 +28,8 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
     IPullRequestSynchronizationService pullRequestSynchronizationService,
     IWebhookDeliveryQueue deliveryQueue,
     IProviderActivationService? providerActivationService = null,
-    IDiscussionSynchronizationService? discussions = null)
+    IDiscussionSynchronizationService? discussions = null,
+    IPushScanTrigger? pushScanTrigger = null)
 {
     private const int OkStatusCode = 200;
     private const int BadRequestStatusCode = 400;
@@ -201,6 +202,23 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
                 rejected,
                 ct);
             return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, rejected);
+        }
+
+        // Pushes never reach review intake: they have no pull request, and the scan
+        // they trigger is a quick queue insert, so they are handled inline in both
+        // processing modes instead of going through the delivery queue. The trigger
+        // dedupes by (repository, commit SHA), so a queued replay of the same
+        // delivery is a no-op "already scanned" rather than a second scan.
+        if (classification.EventType == WebhookEventType.PushReceived)
+        {
+            return await this.HandlePushDeliveryAsync(
+                configuration,
+                delivery,
+                activity,
+                startedAt,
+                providerTagValue,
+                pushScanTrigger,
+                ct);
         }
 
         if (delivery.Repository is null || delivery.Review is null)
@@ -398,6 +416,177 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
         }
     }
 
+    /// <summary>
+    ///     Routes one verified, classified push delivery to the push-scan trigger.
+    ///     Reached only after signature verification, the PushReceived event being
+    ///     enabled for this configuration, and a matching repository filter — so a
+    ///     push for a repo with no client coverage never gets here. Every outcome is
+    ///     recorded in the delivery log with its real reason; a scan is only ever
+    ///     reported as started when the trigger actually queued one.
+    /// </summary>
+    private async Task<WebhookRoutingDecision> HandlePushDeliveryAsync(
+        WebhookConfigurationDto configuration,
+        WebhookDeliveryEnvelope delivery,
+        Activity? activity,
+        Stopwatch startedAt,
+        string providerTagValue,
+        IPushScanTrigger? pushScanTrigger,
+        CancellationToken ct)
+    {
+        var branch = StripRefsHeads(delivery.TargetBranch ?? delivery.SourceBranch);
+        var headSha = delivery.Revision?.HeadSha;
+        var repositoryUrl = delivery.Repository is null ? null : BuildPushRepositoryUrl(delivery.Repository);
+
+        if (repositoryUrl is null || string.IsNullOrWhiteSpace(branch) || string.IsNullOrWhiteSpace(headSha))
+        {
+            var rejected = CreateRejectedDecision(
+                BadRequestStatusCode,
+                "Push delivery did not include a resolvable repository, branch, or head commit.");
+            await this.PersistLogAsync(
+                configuration.Id,
+                delivery.EventName,
+                delivery.Repository?.ExternalRepositoryId,
+                null,
+                branch,
+                branch,
+                rejected,
+                ct);
+            return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, rejected);
+        }
+
+        if (pushScanTrigger is null)
+        {
+            var ignored = NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Ignored,
+                    OkStatusCode,
+                    "ignored",
+                    ["Push scans are not wired up on this installation; the push was not scanned."],
+                    "Push-scan trigger is not registered."));
+            await this.PersistLogAsync(
+                configuration.Id,
+                delivery.EventName,
+                delivery.Repository!.ExternalRepositoryId,
+                null,
+                branch,
+                branch,
+                ignored,
+                ct);
+            return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, ignored);
+        }
+
+        PushScanTriggerOutcome outcome;
+        try
+        {
+            outcome = await pushScanTrigger.HandlePushAsync(
+                configuration.ClientId,
+                new PushScanTriggerRequest(repositoryUrl, branch, headSha, delivery.Actor?.Login),
+                ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            var failed = NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Failed,
+                    OkStatusCode,
+                    "failed",
+                    ["The push passed validation but the push scan could not be started; see the API log."],
+                    "Push scan could not be started."));
+            await this.PersistLogAsync(
+                configuration.Id,
+                delivery.EventName,
+                delivery.Repository!.ExternalRepositoryId,
+                null,
+                branch,
+                branch,
+                failed,
+                ct);
+            LogPushScanFailed(logger, configuration.Id, ex.GetType().FullName ?? ex.GetType().Name);
+            return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, failed);
+        }
+
+        var shortSha = headSha.Length > 7 ? headSha[..7] : headSha;
+        var decision = outcome.Kind switch
+        {
+            PushScanTriggerOutcomeKind.Started => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Accepted,
+                    OkStatusCode,
+                    "accepted",
+                    [$"Started a security scan of {repositoryUrl} at {shortSha} on {branch} (scan {outcome.ScanId})."])),
+            PushScanTriggerOutcomeKind.AlreadyScanned => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Accepted,
+                    OkStatusCode,
+                    "accepted",
+                    [$"Commit {shortSha} on {branch} was already scanned; no new scan was started."])),
+            PushScanTriggerOutcomeKind.Disabled => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Ignored,
+                    OkStatusCode,
+                    "ignored",
+                    [$"Push scans are switched off for this client; {shortSha} on {branch} was not scanned."],
+                    "Push scans are disabled for this client.")),
+            PushScanTriggerOutcomeKind.BranchNotConfigured => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Ignored,
+                    OkStatusCode,
+                    "ignored",
+                    [$"Branch {branch} is not in this client's push-scan branch filter; {shortSha} was not scanned."],
+                    "Branch is not in the push-scan branch filter.")),
+            PushScanTriggerOutcomeKind.IgnoredNoCommit => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Ignored,
+                    OkStatusCode,
+                    "ignored",
+                    [$"Push to {branch} carried no commit to scan; nothing was scanned."],
+                    "Push carried no commit to scan.")),
+            _ => NormalizeDecision(
+                new WebhookRoutingDecision(
+                    WebhookDeliveryOutcome.Failed,
+                    OkStatusCode,
+                    "failed",
+                    [$"The security scan for {shortSha} on {branch} could not be started: {outcome.Reason}"],
+                    outcome.Reason)),
+        };
+
+        await this.PersistLogAsync(
+            configuration.Id,
+            delivery.EventName,
+            delivery.Repository!.ExternalRepositoryId,
+            null,
+            branch,
+            branch,
+            decision,
+            ct);
+        LogPushScanHandled(
+            logger,
+            configuration.Id,
+            branch,
+            shortSha,
+            outcome.Kind.ToString());
+        return CompleteDecision(activity, startedAt, providerTagValue, delivery.EventName, true, decision);
+    }
+
+    private static string? BuildPushRepositoryUrl(RepositoryRef repository)
+    {
+        var repositoryName = repository.ProjectPath.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        if (string.IsNullOrWhiteSpace(repositoryName))
+        {
+            repositoryName = repository.ExternalRepositoryId;
+        }
+
+        try
+        {
+            var host = new Uri(repository.Host.HostBaseUrl).Host;
+            return $"https://{host}/{repository.OwnerOrNamespace}/{repositoryName}";
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+    }
+
     private async Task<bool> IsReviewAssignedToConfiguredReviewerAsync(
         Guid clientId,
         ScmProvider provider,
@@ -541,6 +730,11 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
                 "pull request merged",
                 PrStatus.Completed,
                 true),
+            "push" => new ProviderWebhookClassification(
+                WebhookEventType.PushReceived,
+                "push received",
+                PrStatus.Active,
+                false),
             _ => null,
         };
     }
@@ -751,6 +945,28 @@ public sealed partial class HandleProviderWebhookDeliveryHandler(
             ? trimmed
             : trimmed[..maxLength].TrimEnd() + "...";
     }
+
+    [LoggerMessage(
+        EventId = 2826,
+        Level = LogLevel.Information,
+        Message =
+            "Push scan for configuration {ConfigurationId}: branch {Branch} at {ShortSha} decided {Outcome}.")]
+    private static partial void LogPushScanHandled(
+        ILogger logger,
+        Guid configurationId,
+        string branch,
+        string shortSha,
+        string outcome);
+
+    [LoggerMessage(
+        EventId = 2827,
+        Level = LogLevel.Error,
+        Message =
+            "Push scan for configuration {ConfigurationId} failed during trigger handling: {ErrorType}.")]
+    private static partial void LogPushScanFailed(
+        ILogger logger,
+        Guid configurationId,
+        string errorType);
 
     [LoggerMessage(
         EventId = 2830,

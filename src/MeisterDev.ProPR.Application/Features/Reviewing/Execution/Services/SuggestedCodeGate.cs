@@ -9,7 +9,7 @@ namespace MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
 ///     Why the suggested-code gate dropped a suggestion. Every reason is a fail-closed verdict: the
 ///     finding still publishes as plain text, only the unverified suggestion block is withheld.
 /// </summary>
-internal enum SuggestedCodeGateFailureReason
+public enum SuggestedCodeGateFailureReason
 {
     /// <summary>The comment carries no suggestion at all; not a failure, only a pass-through.</summary>
     NoSuggestion = 0,
@@ -53,7 +53,7 @@ internal enum SuggestedCodeGateFailureReason
 ///     Why the suggestion was dropped, or <see cref="SuggestedCodeGateFailureReason.NoSuggestion" /> when the
 ///     comment carries no suggestion. <see langword="null" /> only when <paramref name="Passed" /> is true.
 /// </param>
-internal sealed record SuggestedCodeGateResult(bool Passed, SuggestedCodeGateFailureReason? FailureReason);
+public sealed record SuggestedCodeGateResult(bool Passed, SuggestedCodeGateFailureReason? FailureReason);
 
 /// <summary>
 ///     Fail-closed verification for CodeRabbit-style one-click code suggestions. A suggestion is published
@@ -69,8 +69,14 @@ internal sealed record SuggestedCodeGateResult(bool Passed, SuggestedCodeGateFai
 ///         changed set, a binary file, a deleted file, or a fetcher that left the content empty — the gate
 ///         fails closed rather than guessing.
 ///     </para>
+///     <para>
+///         <see cref="VerifyReplacement" /> is the diff-free core of this gate and is shared with
+///         draft-PR creation: there the replacement lands on a fresh branch rather than as a suggestion
+///         block on a diff line, so the diff-intersection check does not apply, but the byte-for-byte
+///         original match, the range check, and the no-op check apply exactly as here.
+///     </para>
 /// </summary>
-internal static class SuggestedCodeGate
+public static class SuggestedCodeGate
 {
     /// <summary>
     ///     Whether the comment carries a suggestion at all. A suggestion is present only when
@@ -80,6 +86,75 @@ internal static class SuggestedCodeGate
     {
         ArgumentNullException.ThrowIfNull(comment);
         return !string.IsNullOrWhiteSpace(comment.SuggestedCode);
+    }
+
+    /// <summary>
+    ///     Verifies a replacement against the head version of a file without any pull-request-diff
+    ///     requirement. Checks, in order: the head content was obtained; the range is valid (start
+    ///     &lt;= end, both inside the file); the original text was supplied; the head lines in the
+    ///     range equal the supplied original text exactly (line endings normalized); and the
+    ///     replacement differs from the original. Any failure is fail-closed: the caller must not
+    ///     apply the replacement.
+    /// </summary>
+    /// <param name="headFileContent">
+    ///     The head version of the file's full content, or <see langword="null" /> when it could not be
+    ///     obtained. A missing head file fails the gate; it is never treated as an empty file.
+    /// </param>
+    /// <param name="startLine">The 1-based first line the replacement replaces.</param>
+    /// <param name="endLine">The 1-based last line the replacement replaces.</param>
+    /// <param name="originalCode">The exact head-version text of the replaced lines, or <see langword="null" /> when absent.</param>
+    /// <param name="suggestedCode">The replacement code. Must be non-whitespace; a missing suggestion is a caller error, not a gate verdict.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="suggestedCode" /> is null or whitespace.</exception>
+    public static SuggestedCodeGateResult VerifyReplacement(
+        string? headFileContent,
+        int? startLine,
+        int? endLine,
+        string? originalCode,
+        string suggestedCode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(suggestedCode);
+
+        // Head content that could not be obtained fails closed: an unverifiable suggestion is never
+        // applied, and a missing file must not be mistaken for an empty one.
+        if (headFileContent is null)
+        {
+            return Fail(SuggestedCodeGateFailureReason.NoHeadContent);
+        }
+
+        // The range needs an anchor; without one there is nothing to verify against.
+        if (startLine is null || endLine is null)
+        {
+            return Fail(SuggestedCodeGateFailureReason.NoAnchorLine);
+        }
+
+        var headLines = SplitHeadLines(headFileContent);
+
+        // The range must be well-formed and lie inside the head file.
+        if (startLine.Value < 1 || endLine.Value < startLine.Value || endLine.Value > headLines.Count)
+        {
+            return Fail(SuggestedCodeGateFailureReason.InvalidRange);
+        }
+
+        // The original text is required: without it the replacement cannot be verified against the
+        // head file, and guessing which lines it replaces would risk overwriting the wrong code.
+        if (originalCode is null)
+        {
+            return Fail(SuggestedCodeGateFailureReason.MissingOriginalCode);
+        }
+
+        var originalLines = string.Join("\n", headLines.GetRange(startLine.Value - 1, endLine.Value - startLine.Value + 1));
+        if (!string.Equals(originalLines, NormalizeLineEndings(originalCode), StringComparison.Ordinal))
+        {
+            return Fail(SuggestedCodeGateFailureReason.OriginalCodeMismatch);
+        }
+
+        // A replacement identical to the original lines suggests nothing.
+        if (string.Equals(NormalizeLineEndings(suggestedCode), originalLines, StringComparison.Ordinal))
+        {
+            return Fail(SuggestedCodeGateFailureReason.NoOpReplacement);
+        }
+
+        return new SuggestedCodeGateResult(true, null);
     }
 
     /// <summary>
@@ -127,38 +202,11 @@ internal static class SuggestedCodeGate
             return Fail(SuggestedCodeGateFailureReason.NoAnchorLine);
         }
 
-        // Head content that could not be obtained fails closed: an unverifiable suggestion is never
-        // published, and a missing file must not be mistaken for an empty one.
-        if (headFileContent is null)
+        // (b)-(d) Range, original match, and no-op are the shared core in VerifyReplacement.
+        var verified = VerifyReplacement(headFileContent, start, end, comment.SuggestedOriginalCode, comment.SuggestedCode);
+        if (!verified.Passed)
         {
-            return Fail(SuggestedCodeGateFailureReason.NoHeadContent);
-        }
-
-        var headLines = SplitHeadLines(headFileContent);
-
-        // (b) The range must be well-formed and lie inside the head file.
-        if (start.Value < 1 || end.Value < start.Value || end.Value > headLines.Count)
-        {
-            return Fail(SuggestedCodeGateFailureReason.InvalidRange);
-        }
-
-        // (c) The original text is required: without it the replacement cannot be verified against the
-        // head file, and guessing which lines it replaces would risk overwriting the wrong code.
-        if (comment.SuggestedOriginalCode is null)
-        {
-            return Fail(SuggestedCodeGateFailureReason.MissingOriginalCode);
-        }
-
-        var originalLines = string.Join("\n", headLines.GetRange(start.Value - 1, end.Value - start.Value + 1));
-        if (!string.Equals(originalLines, NormalizeLineEndings(comment.SuggestedOriginalCode), StringComparison.Ordinal))
-        {
-            return Fail(SuggestedCodeGateFailureReason.OriginalCodeMismatch);
-        }
-
-        // (d) A replacement identical to the original lines suggests nothing.
-        if (string.Equals(NormalizeLineEndings(comment.SuggestedCode), originalLines, StringComparison.Ordinal))
-        {
-            return Fail(SuggestedCodeGateFailureReason.NoOpReplacement);
+            return verified;
         }
 
         // (e) GitHub only applies suggestions on diff lines, so the range must intersect the diff's

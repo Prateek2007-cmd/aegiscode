@@ -14,4 +14,7 @@ public enum WebhookEventType
 
     /// <summary>A pull request received a comment.</summary>
     PullRequestCommented = 2,
+
+    /// <summary>A push to a repository branch. Routed to push-triggered security scans, not review intake.</summary>
+    PushReceived = 3,
 }

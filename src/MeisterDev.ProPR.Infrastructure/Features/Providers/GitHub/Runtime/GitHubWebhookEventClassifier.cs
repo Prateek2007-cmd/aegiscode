@@ -16,7 +16,17 @@ internal sealed class GitHubWebhookEventClassifier
         ReviewerIdentity? configuredReviewer = null)
     {
         // A hook subscribed to more than pull requests sends push, issue-comment and check deliveries too.
-        // Those are ordinary and unhandled, not broken, so they are reported as such and acknowledged.
+        // Push is handled: it drives a security scan of the pushed commit. The rest are
+        // ordinary and unhandled, not broken, so they are reported as such and acknowledged.
+        if (string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase))
+        {
+            return new GitHubWebhookEventClassification(
+                WebhookEventType.PushReceived,
+                "push",
+                "push received",
+                false);
+        }
+
         if (!string.Equals(eventName, "pull_request", StringComparison.OrdinalIgnoreCase))
         {
             throw new UnsupportedWebhookEventException($"GitHub sent {eventName}, which ProPR does not act on.");

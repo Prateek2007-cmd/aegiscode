@@ -1,6 +1,8 @@
 // Copyright (c) Andreas Rain.
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
+using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.SecurityScanning.Models;
 using Microsoft.Extensions.Logging;
 
@@ -17,8 +19,8 @@ public sealed class FixProposalAlreadyDecidedException(Guid proposalId, FixPropo
 /// <summary>
 ///     The human-approval gate for fixes. Proposals sit in <c>PendingApproval</c> until a human
 ///     approves or rejects them. Approving a proposal does NOT create a pull request or apply a
-///     code change — it only records the human's decision; creating the fix is a separate,
-///     future step that reads approved proposals.
+///     code change — it only records the human's decision; creating the fix is the separate
+///     <see cref="DraftPullRequestService" /> step, which reads approved proposals.
 /// </summary>
 public interface IFixProposalService
 {
@@ -36,7 +38,10 @@ public interface IFixProposalService
 }
 
 /// <inheritdoc />
-public sealed class FixProposalService(IFixProposalStore store, ILogger<FixProposalService> logger) : IFixProposalService
+public sealed class FixProposalService(
+    IFixProposalStore store,
+    ILogger<FixProposalService> logger,
+    IReviewerMemoryService? reviewerMemoryService = null) : IFixProposalService
 {
     /// <inheritdoc />
     public async Task<FixProposalResponse> CreateAsync(Guid clientId, CreateFixProposalRequest request, CancellationToken ct)
@@ -58,7 +63,14 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
             throw new ArgumentException($"source must be one of: {string.Join(", ", FixProposalSources.All)}.", nameof(request));
         }
 
+        if (request.StartLine is not null && request.EndLine is not null && request.StartLine.Value > request.EndLine.Value)
+        {
+            throw new ArgumentException("startLine must not be greater than endLine.", nameof(request));
+        }
+
         // Remediation is stored exactly as given — including null. Never fabricated.
+        // The patch fields are likewise stored as given; they are what lets an approved
+        // proposal open a draft PR without the caller re-supplying the replacement.
         var record = new FixProposalRecord(
             Guid.NewGuid(),
             clientId,
@@ -72,7 +84,14 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
             FixProposalStatus.PendingApproval,
             DateTimeOffset.UtcNow,
             null,
-            null);
+            null,
+            string.IsNullOrWhiteSpace(request.RepositoryOwner) ? null : request.RepositoryOwner.Trim(),
+            string.IsNullOrWhiteSpace(request.RepositoryName) ? null : request.RepositoryName.Trim(),
+            string.IsNullOrWhiteSpace(request.BaseRef) ? null : request.BaseRef.Trim(),
+            request.StartLine,
+            request.EndLine,
+            string.IsNullOrWhiteSpace(request.OriginalCode) ? null : request.OriginalCode,
+            string.IsNullOrWhiteSpace(request.SuggestedCode) ? null : request.SuggestedCode);
 
         var saved = await store.AddAsync(record, ct);
         logger.LogInformation(
@@ -128,7 +147,43 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
         logger.LogInformation(
             "Fix proposal {ProposalId} for client {ClientId} decided: {Decision}.",
             proposalId, clientId, decision);
+
+        // The decision is the reviewer's lesson: an approval is an accept, a rejection a
+        // dismiss for the rule behind this proposal. Learning is best-effort — it must never
+        // fail the decision itself, so a failure is logged and the decision still stands.
+        await this.RecordLearningOutcomeAsync(decided, decision, ct);
+
         return ToResponse(saved);
+    }
+
+    private async Task RecordLearningOutcomeAsync(FixProposalRecord proposal, FixProposalStatus decision, CancellationToken ct)
+    {
+        if (reviewerMemoryService is null)
+        {
+            return;
+        }
+
+        var ruleKey = ReviewerMemoryRules.KeyForFixProposal(proposal.Source, proposal.FindingRef, proposal.Title);
+        var label = ReviewerMemoryRules.DisplayLabel(proposal.Title);
+        if (ruleKey is null || label is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var outcome = decision == FixProposalStatus.Approved
+                ? ReviewerMemoryOutcome.Accepted
+                : ReviewerMemoryOutcome.Dismissed;
+            await reviewerMemoryService.RecordOutcomeAsync(proposal.ClientId, ruleKey, label, proposal.Source, outcome, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to record reviewer-memory outcome for fix proposal {ProposalId}; the decision itself was saved.",
+                proposal.Id);
+        }
     }
 
     internal static FixProposalResponse ToResponse(FixProposalRecord record)
@@ -145,6 +200,17 @@ public sealed class FixProposalService(IFixProposalStore store, ILogger<FixPropo
             record.Status.ToString(),
             record.CreatedAt,
             record.DecidedAt,
-            record.DecisionReason);
+            record.DecisionReason,
+            record.RepositoryOwner,
+            record.RepositoryName,
+            record.BaseRef,
+            record.StartLine,
+            record.EndLine,
+            record.OriginalCode,
+            record.SuggestedCode,
+            record.DraftPrUrl,
+            record.DraftPrBranch,
+            record.DraftPrBaseBranch,
+            record.DraftPrCreatedAt);
     }
 }

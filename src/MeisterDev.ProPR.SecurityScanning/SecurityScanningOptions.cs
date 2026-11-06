@@ -72,6 +72,23 @@ public sealed class SecurityScanningOptions
     /// <summary>OSV.dev API base URL. Defaults to <c>https://api.osv.dev</c>.</summary>
     public string OsvBaseUrl { get; set; } = "https://api.osv.dev";
 
+    /// <summary>
+    ///     Directory where radar alert/state JSON files are stored (one pair per
+    ///     client). Defaults to <c>{WorkRoot}/aegis-radar</c>. Set
+    ///     <c>AEGIS_SECURITY_RADAR_ROOT</c> to a persistent path on durable
+    ///     deployments: the default work root is the OS temp directory.
+    /// </summary>
+    public string RadarRoot { get; set; } = string.Empty;
+
+    /// <summary>Master switch for the Dependency Radar worker. Defaults to true; the radar also needs the module enabled.</summary>
+    public bool RadarEnabled { get; set; } = true;
+
+    /// <summary>Seconds between radar sweeps. Defaults to 3600; clamped to a minimum of 60.</summary>
+    public int RadarSweepSeconds { get; set; } = 3600;
+
+    /// <summary>Default per-client radar watch interval, in minutes. Defaults to 360 (6 hours); clamped to 15–10080.</summary>
+    public int RadarDefaultIntervalMinutes { get; set; } = 360;
+
     /// <summary>Binds <c>AEGIS_SECURITY_*</c> / <c>MEISTER_SECURITY_*</c> keys onto this options instance.</summary>
     public static void Bind(SecurityScanningOptions options, IConfiguration configuration)
     {
@@ -121,6 +138,19 @@ public sealed class SecurityScanningOptions
         }
 
         options.OsvBaseUrl = Get("OSV_BASE_URL", "OSV_BASE_URL") ?? "https://api.osv.dev";
+
+        options.RadarRoot = Get("RADAR_ROOT", "RADAR_ROOT") ?? string.Empty;
+        options.RadarEnabled = bool.TryParse(Get("RADAR_ENABLED", "RADAR_ENABLED"), out var radarEnabled) ? radarEnabled : true;
+
+        if (int.TryParse(Get("RADAR_SWEEP_SECONDS", "RADAR_SWEEP_SECONDS"), out var sweepSeconds) && sweepSeconds > 0)
+        {
+            options.RadarSweepSeconds = Math.Max(sweepSeconds, 60);
+        }
+
+        if (int.TryParse(Get("RADAR_DEFAULT_INTERVAL_MINUTES", "RADAR_DEFAULT_INTERVAL_MINUTES"), out var radarInterval) && radarInterval > 0)
+        {
+            options.RadarDefaultIntervalMinutes = Math.Clamp(radarInterval, 15, 10080);
+        }
     }
 
     /// <summary>

@@ -11,6 +11,7 @@
         <ProjectReference Include="..\MeisterDev.ProPR.Domain\MeisterDev.ProPR.Domain.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.Application\MeisterDev.ProPR.Application.csproj"/>
         <ProjectReference Include="..\MeisterDev.ProPR.Infrastructure\MeisterDev.ProPR.Infrastructure.csproj"/>
+        <ProjectReference Include="..\MeisterDev.ProPR.CodeAnalysis\MeisterDev.ProPR.CodeAnalysis.csproj"/>
     </ItemGroup>
 
     <!-- Controllers and hosted workers ship with the feature, so it needs the web framework. -->

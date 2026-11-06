@@ -3,6 +3,8 @@
 
 using System.Text.Json;
 using System.Threading.Channels;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
+using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Infrastructure.Data;
 using MeisterDev.ProPR.Infrastructure.Data.Models;
 using MeisterDev.ProPR.SecurityScanning.Models;
@@ -92,6 +94,12 @@ public sealed partial class SecurityScanWorker(
         var db = scope.ServiceProvider.GetRequiredService<MeisterProPRDbContext>();
         var runner = scope.ServiceProvider.GetRequiredService<ISecurityScanEngineRunner>();
 
+        // Explicit custom review rules are enforced on scan findings too (upgrade +
+        // cite only — a scan finding comes from the engine, so a rule can never add
+        // one here). Loading is fail-closed: rules that cannot be loaded enforce
+        // nothing rather than failing the scan.
+        var customRules = await LoadCustomReviewRulesAsync(scope.ServiceProvider, job.ClientId, stoppingToken);
+
         var scan = await db.SecurityScans
             .FirstOrDefaultAsync(s => s.Id == job.ScanId && s.ClientId == job.ClientId, stoppingToken);
         if (scan is null)
@@ -145,7 +153,58 @@ public sealed partial class SecurityScanWorker(
             return;
         }
 
-        await this.PersistResultAsync(db, scan, job, result, stoppingToken);
+        await this.PersistResultAsync(db, scan, job, result, customRules, stoppingToken);
+    }
+
+    /// <summary>
+    ///     Loads the client's enabled custom review rules for scan enforcement. Empty
+    ///     when the service is not registered or loading fails — the scan proceeds
+    ///     unenforced rather than failing.
+    /// </summary>
+    private async Task<IReadOnlyList<CustomReviewRule>> LoadCustomReviewRulesAsync(IServiceProvider services, Guid clientId, CancellationToken ct)
+    {
+        try
+        {
+            var ruleService = services.GetService<ICustomReviewRuleService>();
+            return ruleService is null ? [] : await ruleService.ListEnabledAsync(clientId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to load custom review rules for client {ClientId}; scan will proceed without them", clientId);
+            return [];
+        }
+    }
+
+    /// <summary>
+    ///     Enforces custom review rules on one engine finding: a rule that literally
+    ///     matches the finding's file path, title, or evidence upgrades the severity
+    ///     (never downgrades) and cites the rule by name in the title. The first
+    ///     matching rule wins. No match returns the finding unchanged.
+    /// </summary>
+    private static EngineFinding ApplyCustomRules(EngineFinding finding, IReadOnlyList<CustomReviewRule> rules)
+    {
+        foreach (var rule in rules)
+        {
+            if (!rule.Enabled)
+            {
+                continue;
+            }
+
+            var content = string.Join("\n", new[] { finding.Title, finding.Evidence }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            if (!CustomReviewRules.Matches(rule, finding.FilePath, content, out _))
+            {
+                continue;
+            }
+
+            var upgraded = CustomReviewRules.UpgradeScanSeverity(rule.Severity, finding.Severity);
+            return finding with
+            {
+                Severity = upgraded,
+                Title = finding.Title + " " + CustomReviewRules.Citation(rule),
+            };
+        }
+
+        return finding;
     }
 
     private async Task PersistResultAsync(
@@ -153,10 +212,17 @@ public sealed partial class SecurityScanWorker(
         SecurityScanRecord scan,
         SecurityScanJob job,
         EngineScanResult result,
+        IReadOnlyList<CustomReviewRule> customRules,
         CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
         var seenFingerprints = new HashSet<string>(StringComparer.Ordinal);
+
+        // Enforce custom review rules on the engine findings before persistence.
+        // The fingerprint below is computed from the finding's scanner, rule id,
+        // package, and file:line — never from the title or severity — so enforcement
+        // never breaks regression detection.
+        var findings = result.Findings.Select(f => ApplyCustomRules(f, customRules)).ToList();
 
         // Findings added earlier in this batch live only in the change tracker
         // until SaveChanges runs, so the database lookup below cannot see them.
@@ -166,7 +232,7 @@ public sealed partial class SecurityScanWorker(
         // the whole scan on the unique (client, fingerprint) index.
         var addedInBatch = new Dictionary<string, SecurityFindingRecord>(StringComparer.Ordinal);
 
-        foreach (var finding in result.Findings)
+        foreach (var finding in findings)
         {
             var fingerprint = SecurityScanFingerprint.Compute(finding);
             seenFingerprints.Add(fingerprint);
@@ -244,7 +310,7 @@ public sealed partial class SecurityScanWorker(
             }
         }
 
-        var counts = result.Findings
+        var counts = findings
             .GroupBy(f => ParseSeverity(f.Severity))
             .ToDictionary(g => g.Key, g => g.Count());
         scan.CriticalCount = GetCount(counts, SecurityFindingSeverity.Critical);

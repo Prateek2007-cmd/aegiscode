@@ -55,6 +55,8 @@ internal static class GitHubProviderServiceCollectionExtensions
         services.TryAddScoped<GitHubWebhookPayloadParser>();
         services.TryAddScoped<GitHubReviewAssignmentProvider>();
         services.TryAddScoped<GitHubLifecyclePublicationService>();
+        services.TryAddScoped<IDraftPullRequestGateway, GitHubDraftPullRequestGateway>();
+        services.TryAddScoped<IScmCheckRunPoster, GitHubCheckRunPoster>();
         services.TryAddScoped<GitHubRepositoryExclusionFetcher>();
         services.TryAddScoped<GitHubReviewThreadStatusProvider>();
         services.TryAddScoped<GitHubReviewThreadStatusWriter>();

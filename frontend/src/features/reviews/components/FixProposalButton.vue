@@ -69,6 +69,14 @@ const props = defineProps<{
     line?: number | null
     remediation?: string | null
     confidence?: string | null
+    /** Exact patch data, when the finding carries it: stored on the proposal so an approved proposal can open a draft PR in one click. */
+    repositoryOwner?: string | null
+    repositoryName?: string | null
+    baseRef?: string | null
+    startLine?: number | null
+    endLine?: number | null
+    originalCode?: string | null
+    suggestedCode?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -108,6 +116,13 @@ async function draftFix(): Promise<void> {
             line: props.line ?? null,
             remediation: props.remediation ?? null,
             confidence: props.confidence ?? null,
+            repositoryOwner: props.repositoryOwner ?? null,
+            repositoryName: props.repositoryName ?? null,
+            baseRef: props.baseRef ?? null,
+            startLine: props.startLine ?? null,
+            endLine: props.endLine ?? null,
+            originalCode: props.originalCode ?? null,
+            suggestedCode: props.suggestedCode ?? null,
         }))
         state.value = 'created'
         emit('created', proposal)

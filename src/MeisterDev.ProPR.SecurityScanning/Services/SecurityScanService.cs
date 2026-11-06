@@ -19,6 +19,15 @@ public interface ISecurityScanService
     Task<StartSecurityScanResponse> StartScanAsync(Guid clientId, StartSecurityScanRequest request, Guid? userId, CancellationToken ct);
 
     Task<SecurityScanResponse?> GetScanAsync(Guid clientId, Guid scanId, CancellationToken ct);
+
+    /// <summary>
+    ///     Returns the newest scan for one repository URL, or <c>null</c> when the client never
+    ///     scanned it. The URL must already be normalized (see
+    ///     <see cref="SecurityScanUrlValidator.ValidateAndNormalize" />); the stored URLs are
+    ///     normalized the same way, so exact match is correct.
+    /// </summary>
+    Task<SecurityScanResponse?> GetLatestScanForRepositoryAsync(Guid clientId, string repositoryUrl, CancellationToken ct);
+
     Task<IReadOnlyList<SecurityScanResponse>> ListScansAsync(Guid clientId, int limit, int offset, CancellationToken ct);
     Task<bool> CancelScanAsync(Guid clientId, Guid scanId, CancellationToken ct);
 
@@ -83,6 +92,17 @@ public sealed class SecurityScanService(
         var scan = await db.SecurityScans
             .AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == scanId && s.ClientId == clientId, ct);
+        return scan is null ? null : await this.ToResponseAsync(scan, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<SecurityScanResponse?> GetLatestScanForRepositoryAsync(Guid clientId, string repositoryUrl, CancellationToken ct)
+    {
+        var scan = await db.SecurityScans
+            .AsNoTracking()
+            .Where(s => s.ClientId == clientId && s.RepositoryUrl == repositoryUrl)
+            .OrderByDescending(s => s.QueuedAt)
+            .FirstOrDefaultAsync(ct);
         return scan is null ? null : await this.ToResponseAsync(scan, ct);
     }
 

@@ -1455,6 +1455,186 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
                 Arg.Any<CancellationToken>());
     }
 
+    // A push for a covered repository reaches the push-scan trigger with the
+    // repository URL, branch, and head commit — and never touches review intake.
+    [Fact]
+    public async Task HandleAsync_PushForCoveredRepository_TriggersPushScanWithoutReviewIntake()
+    {
+        var configuration = CreateConfiguration([WebhookEventType.PushReceived]);
+        var host = new ProviderHostRef(ScmProvider.AzureDevOps, configuration.OrganizationUrl);
+        var repository = new RepositoryRef(host, "repo-1", "project", "project");
+        var ingressService = Substitute.For<IWebhookIngressService>();
+        var configurationRepository = Substitute.For<IWebhookConfigurationRepository>();
+        var deliveryLogRepository = Substitute.For<IWebhookDeliveryLogRepository>();
+        var providerRegistry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
+        var clientRegistry = Substitute.For<IClientRegistry>();
+        var secretProtectionCodec = Substitute.For<ISecretProtectionCodec>();
+        var synchronizationService = Substitute.For<IPullRequestSynchronizationService>();
+        var queue = Substitute.For<IWebhookDeliveryQueue>();
+        var trigger = Substitute.For<IPushScanTrigger>();
+        var scanId = Guid.NewGuid();
+        trigger.HandlePushAsync(Arg.Any<Guid>(), Arg.Any<PushScanTriggerRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new PushScanTriggerOutcome(PushScanTriggerOutcomeKind.Started, "Scan queued.", scanId));
+
+        configurationRepository.GetActiveByPathKeyAsync("path-key", Arg.Any<CancellationToken>())
+            .Returns(configuration);
+        providerRegistry.GetWebhookIngressService(ScmProvider.AzureDevOps).Returns(ingressService);
+        secretProtectionCodec.Unprotect(configuration.SecretCiphertext!, "WebhookSecret").Returns("webhook-secret");
+        ingressService.VerifyAsync(
+                configuration.ClientId,
+                host,
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<string>(),
+                "webhook-secret",
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        ingressService.ParseAsync(
+                configuration.ClientId,
+                host,
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new WebhookDeliveryEnvelope(
+                    host,
+                    "delivery-push-1",
+                    "push",
+                    "push",
+                    repository,
+                    null,
+                    new ReviewRevision("abc1234567890abcdef1234567890abcdef12345678", "def0000000000", null, null, null),
+                    "refs/heads/main",
+                    "refs/heads/main",
+                    null));
+        deliveryLogRepository.AddAsync(
+                default,
+                default,
+                default!,
+                default,
+                default,
+                default,
+                default,
+                default,
+                default,
+                default!,
+                default)
+            .ReturnsForAnyArgs(_ => Task.FromResult(CreateLogEntry(WebhookDeliveryOutcome.Accepted, 200)));
+
+        var sut = new HandleProviderWebhookDeliveryHandler(
+            configurationRepository,
+            deliveryLogRepository,
+            providerRegistry,
+            clientRegistry,
+            secretProtectionCodec,
+            NullLogger<HandleProviderWebhookDeliveryHandler>.Instance,
+            synchronizationService,
+            queue,
+            pushScanTrigger: trigger);
+
+        var result = await sut.HandleAsync(
+            new HandleProviderWebhookDeliveryCommand(
+                ScmProvider.AzureDevOps, "path-key", CreateHeaders(), "{}",
+                WebhookDeliveryProcessingMode.Process),
+            CancellationToken.None);
+
+        Assert.Equal(WebhookDeliveryOutcome.Accepted, result.DeliveryOutcome);
+        Assert.Equal(200, result.HttpStatusCode);
+        await trigger.Received(1).HandlePushAsync(
+            configuration.ClientId,
+            Arg.Is<PushScanTriggerRequest>(request =>
+                request.RepositoryUrl == "https://dev.azure.com/project/project"
+                && request.Branch == "main"
+                && request.HeadSha == "abc1234567890abcdef1234567890abcdef12345678"),
+            Arg.Any<CancellationToken>());
+        await synchronizationService.DidNotReceiveWithAnyArgs().SynchronizeAsync(default!, default);
+        await queue.DidNotReceiveWithAnyArgs().EnqueueAsync(default!, default);
+    }
+
+    // A push for a repository no filter covers is rejected before the trigger is
+    // ever called: no scan, and never a scan under the wrong client.
+    [Fact]
+    public async Task HandleAsync_PushForUncoveredRepository_IsRejectedWithoutTriggeringScan()
+    {
+        var configuration = CreateConfiguration([WebhookEventType.PushReceived], "other-repo");
+        var host = new ProviderHostRef(ScmProvider.AzureDevOps, configuration.OrganizationUrl);
+        var repository = new RepositoryRef(host, "repo-1", "project", "project");
+        var ingressService = Substitute.For<IWebhookIngressService>();
+        var configurationRepository = Substitute.For<IWebhookConfigurationRepository>();
+        var deliveryLogRepository = Substitute.For<IWebhookDeliveryLogRepository>();
+        var providerRegistry = MeisterDev.ProPR.TestSupport.LocalScmPolicies.CreateRuntimeSubstitute();
+        var clientRegistry = Substitute.For<IClientRegistry>();
+        var secretProtectionCodec = Substitute.For<ISecretProtectionCodec>();
+        var synchronizationService = Substitute.For<IPullRequestSynchronizationService>();
+        var queue = Substitute.For<IWebhookDeliveryQueue>();
+        var trigger = Substitute.For<IPushScanTrigger>();
+
+        configurationRepository.GetActiveByPathKeyAsync("path-key", Arg.Any<CancellationToken>())
+            .Returns(configuration);
+        providerRegistry.GetWebhookIngressService(ScmProvider.AzureDevOps).Returns(ingressService);
+        secretProtectionCodec.Unprotect(configuration.SecretCiphertext!, "WebhookSecret").Returns("webhook-secret");
+        ingressService.VerifyAsync(
+                configuration.ClientId,
+                host,
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<string>(),
+                "webhook-secret",
+                Arg.Any<CancellationToken>())
+            .Returns(true);
+        ingressService.ParseAsync(
+                configuration.ClientId,
+                host,
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>())
+            .Returns(
+                new WebhookDeliveryEnvelope(
+                    host,
+                    "delivery-push-2",
+                    "push",
+                    "push",
+                    repository,
+                    null,
+                    new ReviewRevision("abc1234567890abcdef1234567890abcdef12345678", "def0000000000", null, null, null),
+                    "refs/heads/main",
+                    "refs/heads/main",
+                    null));
+        deliveryLogRepository.AddAsync(
+                default,
+                default,
+                default!,
+                default,
+                default,
+                default,
+                default,
+                default,
+                default,
+                default!,
+                default)
+            .ReturnsForAnyArgs(_ => Task.FromResult(CreateLogEntry(WebhookDeliveryOutcome.Rejected, 404)));
+
+        var sut = new HandleProviderWebhookDeliveryHandler(
+            configurationRepository,
+            deliveryLogRepository,
+            providerRegistry,
+            clientRegistry,
+            secretProtectionCodec,
+            NullLogger<HandleProviderWebhookDeliveryHandler>.Instance,
+            synchronizationService,
+            queue,
+            pushScanTrigger: trigger);
+
+        var result = await sut.HandleAsync(
+            new HandleProviderWebhookDeliveryCommand(
+                ScmProvider.AzureDevOps, "path-key", CreateHeaders(), "{}",
+                WebhookDeliveryProcessingMode.Process),
+            CancellationToken.None);
+
+        Assert.Equal(WebhookDeliveryOutcome.Rejected, result.DeliveryOutcome);
+        Assert.Equal(404, result.HttpStatusCode);
+        await trigger.DidNotReceiveWithAnyArgs()
+            .HandlePushAsync(Arg.Any<Guid>(), Arg.Any<PushScanTriggerRequest>(), Arg.Any<CancellationToken>());
+    }
+
     private static Dictionary<string, string> CreateHeaders()
     {
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -1463,7 +1643,7 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
         };
     }
 
-    private static WebhookConfigurationDto CreateConfiguration(IReadOnlyList<WebhookEventType> enabledEvents)
+    private static WebhookConfigurationDto CreateConfiguration(IReadOnlyList<WebhookEventType> enabledEvents, string filterRepository = "repo-1")
     {
         return new WebhookConfigurationDto(
             Guid.NewGuid(),
@@ -1478,10 +1658,10 @@ public sealed class HandleProviderWebhookDeliveryHandlerTests
             [
                 new WebhookRepoFilterDto(
                     Guid.NewGuid(),
-                    "repo-1",
+                    filterRepository,
                     ["main"],
-                    new CanonicalSourceReferenceDto("azureDevOps", "repo-1"),
-                    "repo-1"),
+                    new CanonicalSourceReferenceDto("azureDevOps", filterRepository),
+                    filterRepository),
             ],
             SecretCiphertext: "ciphertext");
     }

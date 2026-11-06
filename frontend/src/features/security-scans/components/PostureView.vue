@@ -4,6 +4,11 @@
 
 <template>
   <section class="posture" aria-label="Findings posture">
+    <div v-if="radarNewAlerts.length > 0" class="posture-radar-banner" role="alert">
+      ⚠ Dependency Radar: {{ radarNewAlerts.length }}
+      {{ radarNewAlerts.length === 1 ? 'new alert' : 'new alerts' }} —
+      {{ firstRadarAlertLabel }}. See the Dependency Radar section below.
+    </div>
     <div class="posture-grid">
       <!-- Severity dial + stacked bar -->
       <div class="posture-block">
@@ -95,6 +100,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { RadarAlert } from '@/services/radarService'
 import type { SecurityFinding, SecurityScan, SecurityScanSummary } from '../types'
 import { SEVERITY_ORDER, severityColor } from '../types'
 import { aggregateFindingsByFile, summaryTotal } from '../scanInsights'
@@ -106,7 +112,15 @@ const props = defineProps<{
   /** Findings currently loaded on the findings page. */
   findings: SecurityFinding[]
   totalFindings: number
+  /** Open radar alerts (status New) for the banner. Empty by default — no banner. */
+  radarNewAlerts?: RadarAlert[]
 }>()
+
+const radarNewAlerts = computed(() => props.radarNewAlerts ?? [])
+const firstRadarAlertLabel = computed(() => {
+  const first = radarNewAlerts.value[0]
+  return first ? `${first.vulnId} for ${first.packageName}@${first.packageVersion}` : ''
+})
 
 const summary = computed(() => props.scan.summary)
 const totalFindings = computed(() => summaryTotal(props.scan.summary))
@@ -204,6 +218,15 @@ const heatMax = computed(() => Math.max(...heatEntries.value.map((e) => e.count)
 </script>
 
 <style scoped>
+.posture-radar-banner {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  color: #fecaca;
+}
 .posture {
   background: #0a1628;
   border: 1px solid rgba(56, 189, 248, 0.18);

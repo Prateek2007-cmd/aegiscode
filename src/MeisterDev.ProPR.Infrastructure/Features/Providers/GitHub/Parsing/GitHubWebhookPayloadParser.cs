@@ -26,6 +26,12 @@ internal sealed class GitHubWebhookPayloadParser(GitHubWebhookEventClassifier ev
         var deliveryId = ReadRequiredHeader(headers, "X-GitHub-Delivery");
         var classification = eventClassifier.Classify(eventName, root, configuredReviewer);
         var repository = ReadRepository(host, root);
+
+        if (string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase))
+        {
+            return this.ParsePush(host, deliveryId, classification, repository, root);
+        }
+
         var review = ReadReview(repository, root);
         var revision = ReadRevision(root);
 
@@ -40,6 +46,58 @@ internal sealed class GitHubWebhookPayloadParser(GitHubWebhookEventClassifier ev
             ReadOptionalString(root, "pull_request", "head", "ref"),
             ReadOptionalString(root, "pull_request", "base", "ref"),
             ReadActor(host, root));
+    }
+
+    /// <summary>
+    ///     Parses a GitHub push payload. A push has no pull request: the branch comes
+    ///     from <c>ref</c> (refs/heads/&lt;branch&gt;), the head commit from
+    ///     <c>after</c>, and the previous head from <c>before</c> (all zeros when the
+    ///     branch is new or deleted — the push-scan trigger decides what that means,
+    ///     the parser only reports it). Both branch slots carry the pushed branch so
+    ///     the webhook handler's repository/branch filter match applies to pushes
+    ///     the same way it applies to pull requests.
+    /// </summary>
+    private WebhookDeliveryEnvelope ParsePush(
+        ProviderHostRef host,
+        string deliveryId,
+        GitHubWebhookEventClassification classification,
+        RepositoryRef repository,
+        JsonElement root)
+    {
+        var branch = ReadOptionalString(root, "ref") is { } rawRef
+            ? StripRefsHeads(rawRef)
+            : null;
+        if (string.IsNullOrWhiteSpace(branch))
+        {
+            throw new InvalidOperationException("GitHub push payload is missing the required ref field.");
+        }
+
+        var headSha = ReadRequiredString(root, "after");
+        var baseSha = ReadOptionalString(root, "before");
+        if (string.IsNullOrWhiteSpace(baseSha))
+        {
+            baseSha = headSha;
+        }
+
+        return new WebhookDeliveryEnvelope(
+            host,
+            deliveryId,
+            classification.DeliveryKind,
+            "push",
+            repository,
+            null,
+            new ReviewRevision(headSha, baseSha, null, headSha, $"{baseSha}...{headSha}"),
+            branch,
+            branch,
+            ReadActor(host, root));
+    }
+
+    private static string StripRefsHeads(string branchName)
+    {
+        const string prefix = "refs/heads/";
+        return branchName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? branchName[prefix.Length..]
+            : branchName.Trim();
     }
 
     private static RepositoryRef ReadRepository(ProviderHostRef host, JsonElement root)

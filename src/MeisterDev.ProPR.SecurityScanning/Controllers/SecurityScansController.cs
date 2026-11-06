@@ -18,7 +18,10 @@ namespace MeisterDev.ProPR.SecurityScanning.Controllers;
 /// </summary>
 [ApiController]
 [Route("clients/{clientId:guid}/security-scans")]
-public sealed class SecurityScansController(ISecurityScanService scanService) : ControllerBase
+public sealed class SecurityScansController(
+    ISecurityScanService scanService,
+    IBlastRadiusService blastRadiusService,
+    ISecurityTrendsService trendsService) : ControllerBase
 {
     /// <summary>Starts a security scan of a repository. Returns 202 with the scan identity.</summary>
     /// <param name="clientId">Owning client. The caller must be a client administrator.</param>
@@ -232,6 +235,57 @@ public sealed class SecurityScansController(ISecurityScanService scanService) : 
                     new System.Text.Json.JsonSerializerOptions { WriteIndented = true })),
             "application/json",
             $"{scanId:N}.security-report.json");
+    }
+
+    /// <summary>
+    ///     Returns the blast-radius map for one finding: everything that calls into or
+    ///     imports the vulnerable code. The analysis clones the scanned repository
+    ///     afresh, so this can take a while on large repos. A 200 with
+    ///     Status "Unavailable" means the map could not be computed (reason included)
+    ///     — never an invented map.
+    /// </summary>
+    /// <response code="200">The blast-radius map (possibly Unavailable with a reason).</response>
+    /// <response code="401">Missing or invalid credentials.</response>
+    /// <response code="403">Caller has no role on this client.</response>
+    /// <response code="404">No such scan or finding for this client.</response>
+    [HttpGet("{scanId:guid}/findings/{findingId:guid}/blast-radius")]
+    [ProducesResponseType(typeof(BlastRadiusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetBlastRadius(Guid clientId, Guid scanId, Guid findingId, CancellationToken ct)
+    {
+        if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientUser) is { } denied)
+        {
+            return denied;
+        }
+
+        var result = await blastRadiusService.GetBlastRadiusAsync(clientId, scanId, findingId, ct);
+        return result is null ? this.NotFound() : this.Ok(result);
+    }
+
+    /// <summary>
+    ///     Returns the client's security posture over time: findings by severity
+    ///     per completed scan, mean time to resolve, and new-vs-fixed per scan.
+    ///     Every number comes from stored scans and findings. With fewer than
+    ///     two completed scans the response says there is not enough history
+    ///     yet and carries no trend points — a trend is never invented.
+    /// </summary>
+    /// <response code="200">The trend, or the not-enough-history response.</response>
+    /// <response code="401">Missing or invalid credentials.</response>
+    /// <response code="403">Caller has no role on this client.</response>
+    [HttpGet("trends")]
+    [ProducesResponseType(typeof(SecurityTrendsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetTrends(Guid clientId, CancellationToken ct)
+    {
+        if (AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientUser) is { } denied)
+        {
+            return denied;
+        }
+
+        return this.Ok(await trendsService.GetTrendsAsync(clientId, ct));
     }
 
     /// <summary>Suppresses a finding with a mandatory, audited reason.</summary>

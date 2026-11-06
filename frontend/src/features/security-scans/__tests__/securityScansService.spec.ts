@@ -13,6 +13,7 @@ vi.mock('@/services/api', () => ({ authedFetch: authedFetchMock }))
 vi.mock('@/app/runtime/runtimeContext', () => ({ getActiveRuntime: getActiveRuntimeMock }))
 
 import {
+  getBlastRadius,
   getScanFindings,
   getScanSbomJson,
   listSecurityScans,
@@ -88,5 +89,56 @@ describe('securityScansService', () => {
     authedFetchMock.mockResolvedValue(errJson(404, { error: 'No SBOM produced for this scan.' }))
     const res = await getScanSbomJson('client-1', 'scan-1')
     expect(res).toBeNull()
+  })
+
+  it('fetches the blast-radius map for a finding', async () => {
+    const map = {
+      status: 'Available',
+      reason: null,
+      seed: { kind: 'file', filePath: 'src/vuln.ts', symbol: 'vulnerable' },
+      affectedModules: [{ filePath: 'src/use.ts', callers: [{ name: 'run', kind: 'definition', startLine: 2, endLine: 4, referenceLines: [3] }], importLines: [] }],
+      entryPoints: [{ filePath: 'src/use.ts', definition: 'run', kind: 'definition', line: 3 }],
+      edges: [{ fromFile: 'src/use.ts', fromDefinition: 'run', fromLine: 3, toFile: 'src/vuln.ts', toSymbol: 'vulnerable', toLine: 1, verification: 'analyzer-confirmed' }],
+      notes: [],
+      filesScanned: 2,
+      skippedFiles: [],
+      totalSkipped: 0,
+      truncated: false,
+      analyzedAt: '2026-11-06T00:00:00Z',
+    }
+    authedFetchMock.mockResolvedValue(okJson(map))
+    const res = await getBlastRadius('client-1', 'scan-1', 'finding-1')
+    expect(res).toEqual(map)
+    expect(authedFetchMock.mock.calls[0][0]).toBe(
+      'https://api.test/clients/client-1/security-scans/scan-1/findings/finding-1/blast-radius',
+    )
+  })
+
+  it('passes an Unavailable blast-radius map through with its reason', async () => {
+    const map = {
+      status: 'Unavailable',
+      reason: 'The seed file is written in a language the analyzer does not support.',
+      seed: { kind: 'file', filePath: 'docs/notes.md' },
+      affectedModules: [],
+      entryPoints: [],
+      edges: [],
+      notes: [],
+      filesScanned: 0,
+      skippedFiles: [],
+      totalSkipped: 0,
+      truncated: false,
+      analyzedAt: '2026-11-06T00:00:00Z',
+    }
+    authedFetchMock.mockResolvedValue(okJson(map))
+    const res = await getBlastRadius('client-1', 'scan-1', 'finding-1')
+    expect(res.status).toBe('Unavailable')
+    expect(res.reason).toContain('does not support')
+  })
+
+  it('surfaces the server error message on blast-radius failure', async () => {
+    authedFetchMock.mockResolvedValue(errJson(404, { error: 'No such finding for this client.' }))
+    await expect(getBlastRadius('client-1', 'scan-1', 'finding-1')).rejects.toThrow(
+      /No such finding for this client/,
+    )
   })
 })

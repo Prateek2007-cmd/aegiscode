@@ -2,6 +2,7 @@
 // Licensed under the Elastic License 2.0. See LICENSE file in the project root for full license terms.
 
 using MeisterDev.ProPR.Api.Extensions;
+using MeisterDev.ProPR.Application.Features.Reviewing.Execution.Services;
 using MeisterDev.ProPR.Application.Interfaces;
 using MeisterDev.ProPR.Domain.Entities;
 using MeisterDev.ProPR.Domain.Enums;
@@ -35,6 +36,7 @@ public sealed partial class FindingDismissalController(ILogger<FindingDismissalC
         Guid clientId,
         [FromBody] DismissFindingRequest request,
         [FromServices] IThreadMemoryService memoryService,
+        [FromServices] IReviewerMemoryService? reviewerMemoryService = null,
         CancellationToken ct = default)
     {
         var auth = AuthHelpers.RequireClientRole(this.HttpContext, clientId, ClientRole.ClientAdministrator);
@@ -56,6 +58,36 @@ public sealed partial class FindingDismissalController(ILogger<FindingDismissalC
             ct);
 
         LogDismissalCreated(logger, record.Id, clientId);
+
+        // The dismissal is the reviewer's lesson for this kind of finding: count it toward
+        // the rule's memory so repeated dismissals can mute the rule. Learning is
+        // best-effort — it must never fail the dismissal itself, so a failure is logged
+        // and the dismissal record still stands.
+        if (reviewerMemoryService is not null)
+        {
+            try
+            {
+                var ruleKey = ReviewerMemoryRules.KeyForReviewFinding(request.FindingMessage);
+                var label = ReviewerMemoryRules.DisplayLabel(request.FindingMessage);
+                if (ruleKey is not null && label is not null)
+                {
+                    await reviewerMemoryService.RecordOutcomeAsync(
+                        clientId,
+                        ruleKey,
+                        label,
+                        ReviewerMemoryRules.ReviewSource,
+                        ReviewerMemoryOutcome.Dismissed,
+                        ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to record reviewer-memory outcome for dismissed finding {RecordId}; the dismissal itself was saved.",
+                    record.Id);
+            }
+        }
 
         return this.StatusCode(201, ToDto(record));
     }

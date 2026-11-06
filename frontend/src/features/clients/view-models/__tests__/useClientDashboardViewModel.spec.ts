@@ -13,6 +13,7 @@ import type {
 } from '@/features/security-scans/types'
 import { FixProposalsUnavailableError, type FixProposal } from '@/services/fixProposalsService'
 import type { PullRequestHistoryItem, PullRequestHistoryResponse } from '@/services/jobsService'
+import { RadarUnavailableError, type RadarAlert } from '@/services/radarService'
 
 function client(partial: Partial<ClientDetailDto> = {}): ClientDetailDto {
   return {
@@ -147,7 +148,31 @@ function happyService(overrides: Record<string, unknown> = {}) {
     getScanFindings: vi.fn().mockResolvedValue(findingsPage([finding()])),
     listFixProposals: vi.fn().mockResolvedValue([proposal()]),
     listPullRequestHistory: vi.fn().mockResolvedValue(historyResponse([reviewGroup()], 3)),
+    listRadarAlerts: vi.fn().mockResolvedValue([]),
     ...overrides,
+  }
+}
+
+function radarAlert(partial: Partial<RadarAlert> = {}): RadarAlert {
+  return {
+    id: 'alert-1',
+    scanId: 'scan-1',
+    repositoryUrl: 'https://github.com/acme/repo',
+    packageName: 'lodash',
+    packageVersion: '4.17.21',
+    ecosystem: 'npm',
+    vulnId: 'GHSA-new1',
+    cveId: 'CVE-2026-0001',
+    severity: 'Critical',
+    summary: 'Bad vuln',
+    fixedVersion: '4.17.22',
+    osvUrl: 'https://osv.dev/vulnerability/GHSA-new1',
+    firstSeenAt: '2026-11-06T00:00:00Z',
+    lastSeenAt: '2026-11-06T00:00:00Z',
+    status: 'New',
+    acknowledgedAt: null,
+    resolvedAt: null,
+    ...partial,
   }
 }
 
@@ -469,5 +494,54 @@ describe('useClientDashboardViewModel activity', () => {
 
     expect(vm.activity.value.filter((item) => item.kind === 'review')).toHaveLength(1)
     expect(vm.activity.value[0].id).toBe('review-job-1')
+  })
+})
+
+describe('useClientDashboardViewModel radar', () => {
+  it('loads radar alerts alongside the other sections', async () => {
+    const vm = useClientDashboardViewModel('client-1', {
+      autoLoad: false,
+      dashboardService: happyService({
+        listRadarAlerts: vi.fn().mockResolvedValue([radarAlert()]),
+      }),
+    })
+
+    await vm.refresh()
+
+    expect(vm.radarAlerts.value).toHaveLength(1)
+    expect(vm.radarAlerts.value[0].vulnId).toBe('GHSA-new1')
+    expect(vm.radarAlertsError.value).toBe('')
+    expect(vm.radarUnavailable.value).toBe(false)
+  })
+
+  it('reports radarUnavailable — not an error, not an empty list — when the API update is not deployed yet', async () => {
+    const vm = useClientDashboardViewModel('client-1', {
+      autoLoad: false,
+      dashboardService: happyService({
+        listRadarAlerts: vi.fn().mockRejectedValue(new RadarUnavailableError()),
+      }),
+    })
+
+    await vm.refresh()
+
+    expect(vm.radarAlerts.value).toEqual([])
+    expect(vm.radarUnavailable.value).toBe(true)
+    expect(vm.radarAlertsError.value).toBe('')
+  })
+
+  it('reports a radar load error without blanking the other sections', async () => {
+    const vm = useClientDashboardViewModel('client-1', {
+      autoLoad: false,
+      dashboardService: happyService({
+        listRadarAlerts: vi.fn().mockRejectedValue(new Error('radar down')),
+      }),
+    })
+
+    await vm.refresh()
+
+    expect(vm.radarAlerts.value).toEqual([])
+    expect(vm.radarUnavailable.value).toBe(false)
+    expect(vm.radarAlertsError.value).toMatch(/radar down/)
+    expect(vm.client?.displayName).toBe('Acme')
   })
 })

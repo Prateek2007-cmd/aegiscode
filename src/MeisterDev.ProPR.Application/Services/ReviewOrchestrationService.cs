@@ -71,7 +71,9 @@ public sealed partial class ReviewOrchestrationService(
     ITenantReasoningCapturePolicyProvider? reasoningCapturePolicies = null,
     IReviewAdmissionNotice? admissionNotice = null,
     IExecutionScopeAccessor? executionScopeAccessor = null,
-    IExecutionAdmission? executionAdmission = null) : IReviewJobProcessor, IReviewResultPublisher
+    IExecutionAdmission? executionAdmission = null,
+    IReviewerMemoryService? reviewerMemoryService = null,
+    ICustomReviewRuleService? customReviewRuleService = null) : IReviewJobProcessor, IReviewResultPublisher
 {
     private const string LocalWorkspacePreparedEventName = "local_workspace_prepared";
     private const string LocalWorkspaceFailedEventName = "local_workspace_failed";
@@ -886,6 +888,43 @@ public sealed partial class ReviewOrchestrationService(
             // here, so the published comment omits the section instead of showing invented content.
             publicationResult = PrOverviewSanitizer.Sanitize(publicationResult, pr.ChangedFiles);
 
+            // Rules the client muted through reviewer memory never reach the pull request: they
+            // are withheld here, counted, and named in the summary, while the persisted result
+            // keeps every finding — a muted finding is hidden from the pull request, never
+            // deleted from the review record. The memory panel shows which rules are muted and why.
+            var mutedRuleKeys = await LoadMutedRuleKeysAsync(job.ClientId, reviewerMemoryService, logger, ct);
+            var (memoryFilteredResult, mutedFindingCount) = ReviewerMemoryFilter.Apply(publicationResult, mutedRuleKeys);
+            if (mutedFindingCount > 0)
+            {
+                logger.LogInformation(
+                    "Withheld {MutedFindingCount} finding(s) muted by reviewer memory from review job {JobId}.",
+                    mutedFindingCount,
+                    job.Id);
+            }
+
+            publicationResult = memoryFilteredResult;
+
+            // Explicit per-client review rules are enforced here, after the memory
+            // filter and before the publication policy, so an upgraded severity is
+            // what the policy and the pull request actually see. A rule only ever
+            // matches literally against a real file path, real file content, or real
+            // finding text — it never invents a finding — and it only ever upgrades
+            // a severity, citing the rule by name. Loading is fail-closed: a rule
+            // set that cannot be loaded enforces nothing rather than failing the review.
+            var customRules = await LoadCustomReviewRulesAsync(job.ClientId, customReviewRuleService, logger, ct);
+            var (rulesResult, upgradedFindingCount, addedFindingCount) =
+                CustomReviewRules.Apply(publicationResult, customRules, pr.ChangedFiles);
+            if (upgradedFindingCount > 0 || addedFindingCount > 0)
+            {
+                logger.LogInformation(
+                    "Custom review rules upgraded {UpgradedFindingCount} finding(s) and added {AddedFindingCount} finding(s) for review job {JobId}.",
+                    upgradedFindingCount,
+                    addedFindingCount,
+                    job.Id);
+            }
+
+            publicationResult = rulesResult;
+
             // The client's post configuration governs SCM PUBLICATION only. The persisted result below keeps
             // every finding, so a withheld one is still visible in the review record ("no comment posted" is
             // not "no review"). The published summary carries the count, so what was held back is legible on
@@ -1304,6 +1343,12 @@ public sealed partial class ReviewOrchestrationService(
             ProtocolRecorder = protocolRecorder,
             Temperature = job.ReviewTemperature,
             PromptOverrides = await LoadPromptOverridesAsync(job.ClientId, promptOverrideService, logger, ct),
+
+            // The learned "do not flag" guidance for this client: one line per muted rule.
+            // The dismissed-patterns template already carries the "do not report" instruction,
+            // so these lines land under it. The seam was dormant until now — nothing ever
+            // populated DismissedPatterns — and reviewer memory is its first source.
+            DismissedPatterns = await LoadLearnedGuidanceAsync(job.ClientId, reviewerMemoryService, logger, ct),
             ReviewWorkspace = workspacePreparation.Workspace,
             OutputLanguage = outputLanguage,
             CaptureReasoning = captureReasoning,
@@ -1904,6 +1949,96 @@ public sealed partial class ReviewOrchestrationService(
                 "Failed to load prompt overrides for client {ClientId}; review will proceed with global defaults",
                 clientId);
             return new Dictionary<string, string>();
+        }
+    }
+
+    /// <summary>
+    ///     Loads the learned "do not flag" guidance for the client: one line per muted rule.
+    ///     Returns empty on null service, cancellation, or any exception (graceful degradation) —
+    ///     a review must never fail because learning is unavailable.
+    /// </summary>
+    private static async Task<IReadOnlyList<string>> LoadLearnedGuidanceAsync(
+        Guid clientId,
+        IReviewerMemoryService? service,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (service is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return await service.BuildPromptGuidanceAsync(clientId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to load reviewer-memory guidance for client {ClientId}; review will proceed without it",
+                clientId);
+            return [];
+        }
+    }
+
+    /// <summary>
+    ///     Loads the client's enabled custom review rules. Returns empty on null service,
+    ///     cancellation, or any exception (graceful degradation) — a rule set that cannot
+    ///     be loaded enforces nothing rather than failing the review.
+    /// </summary>
+    private static async Task<IReadOnlyList<CustomReviewRule>> LoadCustomReviewRulesAsync(
+        Guid clientId,
+        ICustomReviewRuleService? service,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (service is null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return await service.ListEnabledAsync(clientId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to load custom review rules for client {ClientId}; review will proceed without them",
+                clientId);
+            return [];
+        }
+    }
+
+    /// <summary>
+    ///     Loads the rule keys muted for the client. Returns empty on null service,
+    ///     cancellation, or any exception (graceful degradation) — a muted rule that cannot
+    ///     be loaded publishes normally rather than failing the review.
+    /// </summary>
+    private static async Task<IReadOnlySet<string>> LoadMutedRuleKeysAsync(
+        Guid clientId,
+        IReviewerMemoryService? service,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        if (service is null)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        try
+        {
+            return await service.GetMutedRuleKeysAsync(clientId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to load muted reviewer-memory rules for client {ClientId}; review will proceed without muting",
+                clientId);
+            return new HashSet<string>(StringComparer.Ordinal);
         }
     }
 

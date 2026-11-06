@@ -201,3 +201,69 @@ export function scanStatusHint(scan: SecurityScan): string {
     case 'Cancelled': return 'Cancelled.'
   }
 }
+
+/**
+ * Blast-radius map for one finding. Mirrors the C# records in
+ * MeisterDev.ProPR.SecurityScanning/Models/BlastRadiusModels.cs — keep them in sync.
+ * Every edge carries its verification: "analyzer-confirmed" (the structural
+ * analyzer confirmed a real code occurrence) or "import-match" (an import
+ * statement matched by name — never presented as a confirmed call).
+ */
+export interface BlastRadiusSeed {
+  kind: string
+  filePath?: string | null
+  packageName?: string | null
+  language?: string | null
+  symbol?: string | null
+}
+
+export interface BlastRadiusEdge {
+  fromFile: string
+  fromDefinition?: string | null
+  fromLine: number
+  toFile: string
+  toSymbol: string
+  toLine: number
+  verification: string
+}
+
+export interface BlastRadiusCaller {
+  name?: string | null
+  kind: string
+  startLine: number
+  endLine: number
+  referenceLines: number[]
+}
+
+export interface BlastRadiusAffectedModule {
+  filePath: string
+  callers: BlastRadiusCaller[]
+  importLines: number[]
+}
+
+export interface BlastRadiusEntryPoint {
+  filePath: string
+  definition?: string | null
+  kind: string
+  line: number
+}
+
+export interface BlastRadiusSkippedFile {
+  path: string
+  reason: string
+}
+
+export interface BlastRadiusResponse {
+  status: string
+  reason?: string | null
+  seed?: BlastRadiusSeed | null
+  affectedModules: BlastRadiusAffectedModule[]
+  entryPoints: BlastRadiusEntryPoint[]
+  edges: BlastRadiusEdge[]
+  notes: string[]
+  filesScanned: number
+  skippedFiles: BlastRadiusSkippedFile[]
+  totalSkipped: number
+  truncated: boolean
+  analyzedAt: string
+}

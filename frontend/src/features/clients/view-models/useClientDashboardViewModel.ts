@@ -40,6 +40,11 @@ import {
   type PullRequestHistoryItem,
   type PullRequestHistoryResponse,
 } from '@/services/jobsService'
+import {
+  isRadarUnavailable,
+  listRadarAlerts,
+  type RadarAlert,
+} from '@/services/radarService'
 
 export interface ClientDashboardActivityItem {
   id: string
@@ -80,6 +85,12 @@ export interface ClientDashboardData {
   fixProposalsUnavailable: Ref<boolean>
   /** The review-history groups behind the activity feed, most recently active first. */
   reviewGroups: Ref<PullRequestHistoryItem[]>
+  /** Radar alerts (new CVEs) for this client; [] when none were found. */
+  radarAlerts: Ref<RadarAlert[]>
+  /** Per-section error for the radar alerts load; '' when it loaded or the API is unavailable. */
+  radarAlertsError: Ref<string>
+  /** True when the radar API answered 404 — the API update is not deployed yet, not an empty alert list. */
+  radarUnavailable: Ref<boolean>
 }
 
 /** Injectable seams so tests can stub every source without touching the network. */
@@ -90,6 +101,7 @@ export interface ClientDashboardService {
   getScanFindings: (clientId: string, scanId: string, query: { limit?: number }) => Promise<PagedSecurityFindings>
   listFixProposals: (clientId: string) => Promise<FixProposal[]>
   listPullRequestHistory: (params: ListPullRequestHistoryParams) => Promise<PullRequestHistoryResponse>
+  listRadarAlerts: (clientId: string) => Promise<RadarAlert[]>
 }
 
 export interface UseClientDashboardViewModelOptions {
@@ -154,6 +166,7 @@ export function useClientDashboardViewModel(
   const getScanFindingsFn = options.dashboardService?.getScanFindings ?? getScanFindings
   const listFixProposalsFn = options.dashboardService?.listFixProposals ?? defaultListFixProposals
   const listPullRequestHistoryFn = options.dashboardService?.listPullRequestHistory ?? listPullRequestHistory
+  const listRadarAlertsFn = options.dashboardService?.listRadarAlerts ?? listRadarAlerts
   const autoLoad = options.autoLoad ?? true
 
   const client = ref<ClientDetailDto | null>(null)
@@ -169,6 +182,9 @@ export function useClientDashboardViewModel(
   const reviewsError = ref('')
   const fixProposalsError = ref('')
   const fixProposalsUnavailable = ref(false)
+  const radarAlerts = ref<RadarAlert[]>([])
+  const radarAlertsError = ref('')
+  const radarUnavailable = ref(false)
   const reviewsTotal = ref<number | null>(null)
   const pendingFixCount = ref<number | null>(null)
   const reviewGroups = ref<PullRequestHistoryItem[]>([])
@@ -325,6 +341,22 @@ export function useClientDashboardViewModel(
     }
   }
 
+  async function loadRadarSection(id: string): Promise<void> {
+    radarAlertsError.value = ''
+    radarUnavailable.value = false
+    try {
+      radarAlerts.value = await listRadarAlertsFn(id)
+    } catch (error) {
+      radarAlerts.value = []
+      if (isRadarUnavailable(error)) {
+        // The API update is not deployed yet: not an error state, and not an empty alert list.
+        radarUnavailable.value = true
+      } else {
+        radarAlertsError.value = errorMessage(error, 'Failed to load radar alerts.')
+      }
+    }
+  }
+
   async function refresh(): Promise<void> {
     const id = toValue(clientId)
     loading.value = true
@@ -339,6 +371,7 @@ export function useClientDashboardViewModel(
         loadScansSection(id),
         loadReviewsSection(id),
         loadFixProposalsSection(id),
+        loadRadarSection(id),
       ])
       await loadFindingsSection(id)
     } finally {
@@ -375,5 +408,8 @@ export function useClientDashboardViewModel(
     fixProposalsError,
     fixProposalsUnavailable,
     reviewGroups,
+    radarAlerts,
+    radarAlertsError,
+    radarUnavailable,
   }
 }

@@ -109,6 +109,24 @@
         <TriggerReviewCard :client-id="clientId" />
       </section>
 
+      <!-- Merge guard -->
+      <section class="dashboard-section" aria-label="Merge guard">
+        <h3 class="dashboard-section-title">Merge guard</h3>
+        <MergeGuardCard :client-id="clientId" />
+      </section>
+
+      <!-- Push scans -->
+      <section class="dashboard-section" aria-label="Push scans">
+        <h3 class="dashboard-section-title">Push scans</h3>
+        <PushScanCard :client-id="clientId" />
+      </section>
+
+      <!-- Ask your codebase -->
+      <section class="dashboard-section" aria-label="Ask your codebase">
+        <h3 class="dashboard-section-title">Ask your codebase</h3>
+        <CodeQaPanel :client-id="clientId" />
+      </section>
+
       <!-- Posture -->
       <section class="dashboard-section" aria-label="Latest scan posture">
         <h3 class="dashboard-section-title">Latest scan posture</h3>
@@ -118,8 +136,25 @@
           :scans="scans"
           :findings="latestFindings"
           :total-findings="latestScanTotal"
+          :radar-new-alerts="radarNewAlerts"
         />
         <p v-else class="empty-state">No scans yet — posture appears after the first scan</p>
+      </section>
+
+      <!-- Posture trends -->
+      <section class="dashboard-section" aria-label="Posture trends">
+        <h3 class="dashboard-section-title">Posture trends</h3>
+        <TrendsSection :client-id="clientId" />
+      </section>
+
+      <!-- Dependency Radar -->
+      <section class="dashboard-section" aria-label="Dependency Radar">
+        <h3 class="dashboard-section-title">Dependency Radar</h3>
+        <p v-if="radarUnavailable" class="empty-state">
+          Dependency Radar needs the API update — not available yet.
+        </p>
+        <p v-else-if="radarAlertsError" class="error" role="alert">{{ radarAlertsError }}</p>
+        <RadarSection v-else :client-id="clientId" />
       </section>
 
       <!-- Fix queue snapshot -->
@@ -137,6 +172,18 @@
         </div>
       </section>
 
+      <!-- Reviewer memory -->
+      <section class="dashboard-section" aria-label="Reviewer memory">
+        <h3 class="dashboard-section-title">Reviewer memory</h3>
+        <ReviewerMemoryPanel :client-id="clientId" />
+      </section>
+
+      <!-- Review rules -->
+      <section class="dashboard-section" aria-label="Review rules">
+        <h3 class="dashboard-section-title">Review rules</h3>
+        <ReviewRulesPanel :client-id="clientId" />
+      </section>
+
       <!-- Recent activity -->
       <section class="dashboard-section" aria-label="Recent activity">
         <h3 class="dashboard-section-title">Recent activity</h3>
@@ -152,12 +199,19 @@ import { RouterLink, useRoute } from 'vue-router'
 import { AppNavDrawer, AppTopBar, PageWithSidebar } from '@/components'
 import CountUp from '@/features/security-scans/components/CountUp.vue'
 import PostureView from '@/features/security-scans/components/PostureView.vue'
+import RadarSection from '@/features/security-scans/components/RadarSection.vue'
+import TrendsSection from '@/features/security-scans/components/TrendsSection.vue'
 import ReviewHistorySection from '@/features/reviews/components/ReviewHistorySection.vue'
 import { summaryTotal } from '@/features/security-scans/scanInsights'
 import { useClientDashboardViewModel } from '@/features/clients/view-models/useClientDashboardViewModel'
 import ClientDashboardActivitySection from '@/features/clients/components/ClientDashboardActivitySection.vue'
 import ClientDashboardScansSection from '@/features/clients/components/ClientDashboardScansSection.vue'
+import MergeGuardCard from '@/features/clients/components/MergeGuardCard.vue'
+import PushScanCard from '@/features/clients/components/PushScanCard.vue'
+import ReviewerMemoryPanel from '@/features/clients/components/ReviewerMemoryPanel.vue'
+import ReviewRulesPanel from '@/features/clients/components/ReviewRulesPanel.vue'
 import TriggerReviewCard from '@/features/clients/components/TriggerReviewCard.vue'
+import CodeQaPanel from '@/features/clients/components/CodeQaPanel.vue'
 import { formatDashboardDate } from '@/features/clients/components/clientDashboardFormatters'
 
 const route = useRoute()
@@ -185,7 +239,13 @@ const {
   fixProposalsUnavailable,
   activity,
   refresh,
+  radarAlerts,
+  radarAlertsError,
+  radarUnavailable,
 } = vm
+
+/** Open radar alerts only — the posture banner shows what still needs a human look. */
+const radarNewAlerts = computed(() => radarAlerts.value.filter((a) => a.status === 'New'))
 
 const latestScanTotal = computed(() =>
   latestScan.value ? summaryTotal(latestScan.value.summary) : 0,
